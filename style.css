@@ -355,11 +355,12 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card{width:52px !important;height:76px !important;box-shadow:0 3px 8px rgba(0,0,0,.4) !important;z-index:3 !important}
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
-  .trick-card.played-seat-0{left:50% !important;top:70% !important}
-  .trick-card.played-seat-1{left:64% !important;top:60% !important}
-  .trick-card.played-seat-2{left:64% !important;top:40% !important}
-  .trick-card.played-seat-3{left:36% !important;top:40% !important}
-  .trick-card.played-seat-4{left:36% !important;top:60% !important}
+  /* 場札の座標：プレイヤー席の内側に来るように調整 */
+  .trick-card.played-seat-0{left:50% !important;top:76% !important}
+  .trick-card.played-seat-1{left:74% !important;top:62% !important}
+  .trick-card.played-seat-2{left:74% !important;top:38% !important}
+  .trick-card.played-seat-3{left:26% !important;top:38% !important}
+  .trick-card.played-seat-4{left:26% !important;top:62% !important}
 
   .kitty-view{min-height:44px !important;gap:5px !important}
   .kitty-view .card{width:38px !important;height:54px !important;box-shadow:0 3px 8px rgba(0,0,0,.3) !important}
@@ -449,8 +450,9 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card{width:46px !important;height:66px !important}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:20px !important}
-  .trick-card.played-seat-1{left:62% !important}
-  .trick-card.played-seat-4{left:38% !important}
+  /* 場札の座標（390px以下用） */
+  .trick-card.played-seat-1{left:72% !important}
+  .trick-card.played-seat-4{left:28% !important}
   .center-table{width:50vw !important}
   .hand .card{width:54px !important;height:80px !important;margin-left:-16px !important}
   .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
