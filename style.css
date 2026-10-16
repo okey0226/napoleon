@@ -436,22 +436,22 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
   .bid-history-row small{font-size:7.5px}
   .open-label{font-size:9px;margin-right:2px}
 
-  /* ---- 手札 ---- */
+  /* ---- 手札：大きく、上に ---- */
   .hand-dock{
     height:auto !important;
-    min-height:96px !important;
-    max-height:120px !important;
-    padding:14px 0 6px 0 !important;
+    min-height:108px !important;
+    max-height:132px !important;
+    padding:16px 0 4px 0 !important;
     flex-shrink:0;
     display:flex;
     flex-direction:column;
     justify-content:flex-end
   }
-  .hand-label{font-size:10px !important;left:8px !important;top:2px !important;color:#c5d8c9 !important;font-weight:600 !important}
+  .hand-label{font-size:10px !important;left:8px !important;top:3px !important;color:#c5d8c9 !important;font-weight:600 !important}
   .hand{
     height:auto !important;
-    min-height:74px !important;
-    padding:0 8px 4px !important;
+    min-height:84px !important;
+    padding:0 6px 2px !important;
     gap:0 !important;
     display:flex !important;
     align-items:flex-end !important;
@@ -460,21 +460,21 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
     overflow-y:visible !important
   }
   .hand .card{
-    width:42px !important;
-    height:60px !important;
-    margin-left:-12px !important;
+    width:48px !important;
+    height:68px !important;
+    margin-left:-15px !important;
     flex-shrink:0;
     transition:transform .12s
   }
   .hand .card:first-child{margin-left:0 !important}
-  .hand .card .rank{font-size:12px !important;left:4px !important;top:3px !important}
-  .hand .card .suit{font-size:11px !important;left:4px !important;top:16px !important}
-  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-9px) !important}
+  .hand .card .rank{font-size:14px !important;left:4px !important;top:3px !important}
+  .hand .card .suit{font-size:13px !important;left:4px !important;top:18px !important}
+  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-10px) !important}
 
   .hand.discard-mode{padding:0 8px 8px !important;gap:6px !important;justify-content:flex-start !important}
-  .hand.discard-mode .card{width:52px !important;height:74px !important;flex:0 0 52px !important;margin-left:0 !important}
-  .hand.discard-mode .card .rank{font-size:14px !important;left:5px !important;top:5px !important}
-  .hand.discard-mode .card .suit{font-size:13px !important;left:5px !important;top:20px !important}
+  .hand.discard-mode .card{width:56px !important;height:80px !important;flex:0 0 56px !important;margin-left:0 !important}
+  .hand.discard-mode .card .rank{font-size:15px !important;left:5px !important;top:5px !important}
+  .hand.discard-mode .card .suit{font-size:14px !important;left:5px !important;top:22px !important}
 
   /* ---- パネル ---- */
   .action-panel{
@@ -539,13 +539,13 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
   .player-seat.pos-3{left:3% !important}
   .player-seat.pos-4{left:3% !important}
   .center-table{width:36vw !important}
-  .hand .card{width:38px !important;height:54px !important;margin-left:-11px !important}
-  .hand .card .rank{font-size:11px !important;left:3px !important;top:2px !important}
-  .hand .card .suit{font-size:10px !important;left:3px !important;top:13px !important}
-  .hand-dock{min-height:88px !important;max-height:110px !important}
-  .hand{min-height:66px !important}
+  .hand .card{width:42px !important;height:60px !important;margin-left:-13px !important}
+  .hand .card .rank{font-size:13px !important;left:3px !important;top:2px !important}
+  .hand .card .suit{font-size:12px !important;left:3px !important;top:15px !important}
+  .hand-dock{min-height:98px !important;max-height:120px !important}
+  .hand{min-height:76px !important}
   .kitty-view .card{width:32px !important;height:46px !important}
   .kitty-view .card .rank{font-size:11px !important}
   .kitty-view .card .suit{font-size:11px !important;top:14px !important}
-  .hand.discard-mode .card{width:46px !important;height:66px !important;flex:0 0 46px !important}
+  .hand.discard-mode .card{width:50px !important;height:72px !important;flex:0 0 50px !important}
 }
