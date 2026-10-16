@@ -1,0 +1,12 @@
+name = "napoleon"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "napoleon-db"
+database_id = "97c86f88-a3bc-4adb-b3c5-f1e986db26b4"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
