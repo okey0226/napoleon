@@ -233,7 +233,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
 .dialog-inner button{width:100%;margin-top:16px}
 
 /* ============================================================ */
-/* ============ モバイル：楕円横長 + 手札を上部に ============= */
+/* ============ モバイル：楕円横長 + 場札コンパクト配置 ======= */
 /* ============================================================ */
 @media(max-width:760px){
   /* トップバー */
@@ -348,19 +348,19 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-card{padding:2px 4px !important;border-radius:3px !important;background:rgba(225,188,112,.18) !important;color:#f5e6c0 !important;font-size:8px !important;font-weight:700 !important;line-height:1 !important;white-space:nowrap !important}
   .taken-card.red{color:#f5b3a8 !important;background:rgba(198,69,63,.25) !important}
 
-  /* 中央の場札：楕円の内側に収める */
+  /* 中央の場札：楕円の中央にコンパクト配置 */
   .center-table{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:55vw !important;min-height:0 !important;gap:2px !important;z-index:1 !important;margin:0 !important}
   .center-caption{font-size:10px !important;color:#b5d8c9 !important;font-weight:600 !important;letter-spacing:.12em !important;margin-bottom:2px !important}
   .trick-cards{position:absolute !important;inset:0 !important;z-index:3 !important;width:100% !important;height:100% !important;pointer-events:none !important}
-  .trick-card{width:52px !important;height:76px !important;box-shadow:0 3px 8px rgba(0,0,0,.4) !important;z-index:3 !important}
-  .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
-  .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
-  /* 場札の座標：プレイヤー席の内側に来るように調整 */
-  .trick-card.played-seat-0{left:50% !important;top:76% !important}
-  .trick-card.played-seat-1{left:74% !important;top:62% !important}
-  .trick-card.played-seat-2{left:74% !important;top:38% !important}
-  .trick-card.played-seat-3{left:26% !important;top:38% !important}
-  .trick-card.played-seat-4{left:26% !important;top:62% !important}
+  .trick-card{width:50px !important;height:72px !important;box-shadow:0 3px 8px rgba(0,0,0,.4) !important;z-index:3 !important}
+  .trick-card .rank{font-size:15px !important;left:5px !important;top:4px !important}
+  .trick-card .suit{font-size:14px !important;left:5px !important;top:21px !important}
+  /* 場札の座標：楕円の中央にコンパクトに配置（席の内側） */
+  .trick-card.played-seat-3{left:36% !important;top:38% !important}
+  .trick-card.played-seat-2{left:64% !important;top:38% !important}
+  .trick-card.played-seat-4{left:36% !important;top:52% !important}
+  .trick-card.played-seat-1{left:64% !important;top:52% !important}
+  .trick-card.played-seat-0{left:50% !important;top:64% !important}
 
   .kitty-view{min-height:44px !important;gap:5px !important}
   .kitty-view .card{width:38px !important;height:54px !important;box-shadow:0 3px 8px rgba(0,0,0,.3) !important}
@@ -447,12 +447,14 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-cards{max-width:66px !important}
   .taken-card{font-size:7.5px !important;padding:2px 3px !important}
   .taken-label{font-size:6.5px !important}
-  .trick-card{width:46px !important;height:66px !important}
+  .trick-card{width:44px !important;height:64px !important}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
-  .trick-card .suit{font-size:13px !important;left:4px !important;top:20px !important}
-  /* 場札の座標（390px以下用） */
-  .trick-card.played-seat-1{left:72% !important}
-  .trick-card.played-seat-4{left:28% !important}
+  .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
+  .trick-card.played-seat-3{left:35% !important;top:38% !important}
+  .trick-card.played-seat-2{left:65% !important;top:38% !important}
+  .trick-card.played-seat-4{left:35% !important;top:52% !important}
+  .trick-card.played-seat-1{left:65% !important;top:52% !important}
+  .trick-card.played-seat-0{left:50% !important;top:64% !important}
   .center-table{width:50vw !important}
   .hand .card{width:54px !important;height:80px !important;margin-left:-16px !important}
   .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
