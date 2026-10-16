@@ -8,5 +8,5 @@ database_name = "napoleon-db"
 database_id = "97c86f88-a3bc-4adb-b3c5-f1e986db26b4"
 
 [assets]
-directory = "./public"
+directory = "."
 binding = "ASSETS"
