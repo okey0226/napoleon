@@ -177,3 +177,87 @@
   .kitty-view .card .rank{font-size:13px}
   .kitty-view .card .suit{font-size:13px;top:19px}
 }
+/* ===== ゲーム画面：モバイル最終調整（最優先） ===== */
+@media(max-width:760px){
+  .game-screen{max-width:100vw;height:100dvh;min-height:0;padding:4px 6px 0;display:flex;flex-direction:column;overflow:hidden}
+  .game-head{height:34px;padding:0 2px;gap:4px;flex-shrink:0}
+  .game-head .back-button{font-size:11px;padding:2px 0;white-space:nowrap}
+  .game-meta{gap:4px;font-size:9px;flex:1;min-width:0;justify-content:center}
+  .game-meta>span{white-space:nowrap}
+  .game-meta b{font-size:12px}
+  .mode-tag,.rating-tag{padding:3px 6px;font-size:8px}
+  .phase-label{font-size:9px;min-width:0;text-align:right;white-space:nowrap}
+  .contract-info{min-height:24px;font-size:10px;padding:2px 8px;margin:0 auto 3px;gap:5px;flex-shrink:0}
+  .table-message{min-height:22px;font-size:10px;padding:3px 9px;margin:2px auto 3px;width:96%;flex-shrink:0}
+
+  /* テーブル：楕円を小さく、席は楕円の縁に沿わせる */
+  .table-area{min-height:0;flex:1;position:relative;padding:0;display:block;overflow:hidden}
+  .table-area:before{inset:18% 14% 22%;border-radius:50%}
+  .players-ring{position:absolute;inset:0;pointer-events:none}
+
+  .player-seat{position:absolute;width:68px;max-width:68px;min-width:0;padding:4px 5px;font-size:9px;border-radius:8px}
+  .player-seat .seat-name{font-size:9px;line-height:1.15}
+  .player-seat .seat-role{font-size:7.5px;margin-top:2px}
+  .com-badge{font-size:6.5px;padding:1px 3px;margin-left:2px}
+  .taken-cards{max-width:58px;margin-top:2px;gap:1px}
+  .taken-card{padding:1px 3px;font-size:6.5px}
+  .taken-label{font-size:6.5px}
+  .seat-role.deputy-status{padding:2px 5px;font-size:7px}
+
+  /* 席の座標：画面端から離す */
+  .player-seat.pos-0{bottom:16%;left:50%;transform:translateX(-50%)}
+  .player-seat.pos-1{bottom:30%;right:8%;top:auto}
+  .player-seat.pos-2{top:16%;right:10%}
+  .player-seat.pos-3{top:16%;left:10%}
+  .player-seat.pos-4{bottom:30%;left:8%}
+
+  /* 中央テーブル */
+  .center-table{position:absolute;top:52%;left:50%;transform:translate(-50%,-50%);width:42vw;min-height:0;gap:2px;z-index:1}
+  .center-caption{font-size:9px}
+  .trick-cards{position:absolute;inset:0;z-index:2;width:100%;height:100%}
+  .trick-card{width:34px;height:50px}
+  .trick-card .rank{font-size:11px;left:3px;top:3px}
+  .trick-card .suit{font-size:10px;left:4px;top:16px}
+  .trick-card.played-seat-0{left:50%;top:70%}
+  .trick-card.played-seat-1{left:72%;top:64%}
+  .trick-card.played-seat-2{left:72%;top:44%}
+  .trick-card.played-seat-3{left:28%;top:44%}
+  .trick-card.played-seat-4{left:28%;top:64%}
+
+  .kitty-view{min-height:52px;gap:3px}
+  .kitty-view .card{width:40px;height:58px}
+  .kitty-view .card .rank{font-size:13px;left:4px;top:4px}
+  .kitty-view .card .suit{font-size:13px;left:4px;top:18px}
+
+  .hand-dock{height:92px;padding-top:13px;flex-shrink:0}
+  .hand-label{font-size:9px;left:6px;top:2px}
+  .hand{height:72px;padding:0 6px 6px;gap:0;display:flex;align-items:flex-end;justify-content:center;overflow-x:auto;overflow-y:visible}
+  .hand .card{width:40px;height:58px;margin-left:-13px;flex-shrink:0}
+  .hand .card:first-child{margin-left:0}
+  .hand .card .rank{font-size:11px;left:3px;top:3px}
+  .hand .card .suit{font-size:10px;left:4px;top:15px}
+  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-9px)}
+}
+
+@media(max-width:390px){
+  .game-screen{padding:3px 4px 0}
+  .game-head{height:32px}
+  .game-meta{gap:3px;font-size:8.5px}
+  .game-meta b{font-size:11px}
+  .mode-tag,.rating-tag{padding:2px 5px;font-size:7.5px}
+  .player-seat{width:62px;max-width:62px;padding:3px 4px}
+  .player-seat .seat-name{font-size:8.5px}
+  .player-seat.pos-1{right:6%}
+  .player-seat.pos-2{right:8%}
+  .player-seat.pos-3{left:8%}
+  .player-seat.pos-4{left:6%}
+  .center-table{width:38vw}
+  .hand .card{width:36px;height:52px;margin-left:-11px}
+  .hand .card .rank{font-size:10px}
+  .hand .card .suit{font-size:9px;top:13px}
+  .hand-dock{height:84px}
+  .hand{height:66px}
+  .kitty-view .card{width:36px;height:52px}
+  .kitty-view .card .rank{font-size:12px}
+  .kitty-view .card .suit{font-size:12px;top:17px}
+}
