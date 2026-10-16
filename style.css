@@ -280,12 +280,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     display:flex !important;
     flex-direction:column !important;
     overflow:hidden !important;
-    background:#0b2620 !important;
-    position:fixed !important;
-    top:48px !important;
-    left:0 !important;
-    right:0 !important;
-    bottom:0 !important
+    background:#0b2620 !important
   }
 
   /* --- ヘッダー：1行 --- */
@@ -311,7 +306,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   /* === テーブル領域：楕円を横長に ============= */
   /* ============================================= */
   .table-area{
-    flex:1 1 auto !important;
+    flex:1 1 60% !important;
     min-height:0 !important;
     position:relative !important;
     padding:0 !important;
@@ -324,7 +319,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .table-area:before{
     content:'' !important;
     position:absolute !important;
-    inset:20% 4% 20% !important;
+    inset:22% 3% 22% !important;
     border:1.5px solid rgba(211,235,215,.2) !important;
     border-radius:50% !important;
     background:radial-gradient(ellipse at 50% 50%,rgba(18,96,70,.85) 0%,rgba(11,74,55,.8) 55%,rgba(8,59,47,.7) 100%) !important;
@@ -384,15 +379,15 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   /* ============================================= */
   .hand-dock{
     flex:0 0 auto !important;
-    min-height:0 !important;
-    max-height:none !important;
+    min-height:100px !important;
+    max-height:130px !important;
     height:auto !important;
-    padding:12px 0 2px 0 !important;
+    padding:12px 0 4px 0 !important;
     margin:0 !important;
     flex-shrink:0 !important;
     display:flex !important;
     flex-direction:column !important;
-    justify-content:flex-start !important;
+    justify-content:center !important;
     align-items:center !important;
     background:linear-gradient(0deg,rgba(3,16,13,.95),rgba(3,16,13,.6)) !important;
     border-top:1px solid rgba(225,188,112,.35) !important;
