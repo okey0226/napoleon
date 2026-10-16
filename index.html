@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#102c25">
+  <title>Napoleon</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/home.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#home" aria-label="Napoleon ホーム">N<span>♠</span></a><div class="top-actions"><button id="profile-open" class="primary-button profile-nav">プレイヤー登録</button><button id="account-chip" class="account-chip hidden" type="button"></button></div></header>
+  <main id="app">
+    <section id="home-screen" class="screen home-screen">
+      <div class="home-overview"><div class="home-copy"><div class="eyebrow">TRICK-TAKING CARD GAME</div><h1>Napoleon</h1></div>
+      <section id="leaderboard" class="leaderboard" aria-labelledby="leaderboard-title"><div class="leaderboard-heading"><div><div class="eyebrow">ELO + ART</div><h2 id="leaderboard-title">TOP PLAYERS</h2></div><button id="show-ranking" class="leaderboard-count" type="button" aria-expanded="false">VIEW TOP 50</button></div><div id="rating-leaders" class="rating-leaders"><div class="leaderboard-loading">LOADING RANKINGS...</div></div></section>
+      </div>
+      <section id="my-rating" class="my-rating hidden" aria-label="自分のレート"></section>
+      <article class="ranked-featured"><div class="ranked-mark">◆</div><div class="ranked-copy"><div class="eyebrow">RATED · 10 ROUNDS</div><h2>レートバトル</h2></div><div class="ranked-action"><button id="start-ranked" class="rank-button">対戦相手を探す</button><span id="queue-status" class="micro-copy"></span><span id="concurrent-count" class="micro-copy">同接: --人</span></div></article>
+      <div class="mode-grid">
+        <article class="mode-card"><div class="mode-mark green">♠</div><div><h2>COM戦</h2><p>強力なCOM4人とすぐに対戦。</p></div><div class="inline-choice"><span class="micro-copy">強力なCOM 4人</span><button id="start-com" class="primary-button">対戦する</button></div></article>
+        <article class="mode-card"><div class="mode-mark blue">↗</div><div><h2>友達対戦</h2><p>合言葉で対戦。空席には強力なCOMが入ります。</p></div><div class="inline-choice"><label for="com-count">COM</label><select id="com-count"><option value="1">1人</option><option value="2">2人</option><option value="3">3人</option><option value="4" selected>4人</option></select><span class="micro-copy">強力なCOM</span><input id="friend-code" maxlength="8" placeholder="合言葉"><button id="create-friend" class="secondary-button">部屋を作る</button><button id="join-friend" class="quiet-button">参加</button></div></article>
+      </div>
+      <div class="home-bottom"><button id="show-record" class="text-button">PROFILE / RANKINGS</button><span class="rules-note">競りは順番制です。持ち時間は1人30秒。</span></div>
+    </section>
+
+    <section id="profile-screen" class="screen narrow-screen hidden">
+      <button class="back-button" data-go-home>← 戻る</button><div class="eyebrow">PLAYER CARD</div><h1>プレイヤー登録</h1><p class="subcopy">対戦成績を保存するには、プレイヤーIDを登録してください。</p>
+      <form id="profile-form" class="form-card" onsubmit="return false"><label>プレイヤーID<input id="account-id" autocomplete="username" maxlength="20" placeholder="英数字 3〜20文字"></label><label>パスワード<input id="account-password" type="password" autocomplete="new-password" minlength="8" placeholder="8文字以上"></label><div class="form-actions"><button type="button" id="register-account" class="primary-button">新規登録</button><button type="button" id="login-account" class="secondary-button">ログイン</button></div><p class="micro-copy">パスワードはソルト付きハッシュで保存します。</p></form>
+      <div id="profile-summary" class="profile-summary hidden"></div>
+    </section>
+
+    <section id="game-screen" class="screen game-screen hidden">
+      <div class="game-head"><button id="leave-game" class="back-button">← メニュー</button><div class="game-meta"><span>第 <b id="round-label">1</b> 局</span><span id="game-mode-label" class="mode-tag">COM戦</span><span class="rating-tag"><span id="rating-caption">RATE</span> <b id="rating-label">1000</b></span></div><button id="game-log-open" class="game-log-trigger hidden" type="button">局ログ <span id="game-log-count">0</span></button><div id="phase-label" class="phase-label">準備中</div></div>
+      <div id="contract-info" class="contract-info hidden" aria-live="polite"></div>
+      <div id="table-message" class="table-message" aria-live="polite">配札しています</div>
+      <div class="table-area">
+        <div id="players-ring" class="players-ring"></div>
+        <div id="trick-cards" class="trick-cards" aria-label="場札"></div>
+        <div class="center-table"><div class="center-caption">場札</div><div id="kitty-view" class="kitty-view"></div><div id="auction-clock" class="auction-clock hidden"></div></div>
+        <div id="auction-panel" class="action-panel hidden"></div>
+        <div id="call-panel" class="action-panel hidden"></div>
+        <div id="play-panel" class="action-panel hidden"></div>
+        <div id="result-panel" class="result-panel hidden"></div>
+      </div>
+      <div class="hand-dock" id="hand-dock"><div class="hand-label">あなたの手札 <span id="hand-count"></span></div><div id="hand" class="hand"></div></div>
+    </section>
+
+    <section id="records-screen" class="screen narrow-screen hidden"><button class="back-button" data-go-home>← 戻る</button><div class="eyebrow">PLAYER PROFILE</div><h1>MY STATS</h1><div id="records-content" class="records-content"><p class="subcopy">プレイヤー登録すると、レートと対戦履歴を確認できます。</p></div></section>
+  </main>
+  <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title"><div class="game-log-head"><div><div class="eyebrow">COM MATCH</div><h2 id="game-log-title">局ログ</h2></div><button id="game-log-close" class="quiet-button" type="button">閉じる</button></div><div id="game-log-list" class="game-log-list" aria-live="polite"></div></dialog>
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="message-dialog"><div class="dialog-inner"><div id="dialog-eyebrow" class="eyebrow">Napoleon</div><h2 id="dialog-title"></h2><div id="dialog-card" class="dialog-card-slot hidden"></div><p id="dialog-body"></p><button id="dialog-ok" class="primary-button">OK</button></div></dialog>
+
+</body>
+</html>
