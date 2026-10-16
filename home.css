@@ -136,3 +136,66 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
  .home-bottom{gap:7px}
  .rules-note{font-size:9px}
 }
+/* ===== モバイルゲーム画面の最終調整 ===== */
+@media(max-width:760px){
+  .game-screen{height:100dvh;min-height:0;padding:4px 6px 0;display:flex;flex-direction:column;overflow:hidden}
+  .game-head{height:34px;display:flex;align-items:center;justify-content:space-between;gap:4px;flex-shrink:0}
+  .game-head .back-button{font-size:11px;padding:2px 0;white-space:nowrap}
+  .game-meta{display:flex;align-items:center;gap:4px;font-size:9px;flex:1;min-width:0;justify-content:center}
+  .game-meta>span{white-space:nowrap}
+  .game-meta b{font-size:12px}
+  .mode-tag,.rating-tag{padding:3px 6px;font-size:8px;white-space:nowrap}
+  .phase-label{font-size:9px;min-width:0;text-align:right;white-space:nowrap}
+  .contract-info{min-height:24px;font-size:10px;padding:2px 8px;margin:0 auto 3px;gap:5px;flex-shrink:0}
+  .table-message{min-height:22px;font-size:10px;padding:3px 9px;margin:2px auto 3px;width:96%;flex-shrink:0}
+  .table-area{min-height:0;flex:1;position:relative;padding:0;display:block;overflow:hidden}
+  .table-area:before{inset:5% 5% 5%}
+  .players-ring{position:absolute;inset:0}
+  .player-seat{position:absolute;width:72px;max-width:72px;min-width:0;padding:4px 5px;font-size:9px;border-radius:8px}
+  .player-seat .seat-name{font-size:9.5px;line-height:1.1}
+  .player-seat .seat-role{font-size:7.5px;margin-top:2px}
+  .com-badge{font-size:6.5px;padding:1px 3px;margin-left:2px}
+  .taken-cards{max-width:62px;margin-top:2px;gap:1px}
+  .taken-card{padding:1px 3px;font-size:6.5px}
+  .taken-label{font-size:6.5px}
+  .player-seat.pos-0{bottom:2%;left:50%;transform:translateX(-50%)}
+  .player-seat.pos-1{bottom:26%;right:0;top:auto}
+  .player-seat.pos-2{top:0;right:0}
+  .player-seat.pos-3{top:0;left:0}
+  .player-seat.pos-4{bottom:26%;left:0}
+  .center-table{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:60vw;min-height:0;gap:2px;z-index:1}
+  .center-caption{font-size:9px}
+  .trick-cards{position:absolute;inset:0;z-index:2;width:100%;height:100%}
+  .trick-card{width:34px;height:50px}
+  .trick-card .rank{font-size:11px;left:3px;top:3px}
+  .trick-card .suit{font-size:10px;left:4px;top:16px}
+  .kitty-view{min-height:52px;gap:3px}
+  .kitty-view .card{width:40px;height:58px}
+  .kitty-view .card .rank{font-size:13px;left:4px;top:4px}
+  .kitty-view .card .suit{font-size:13px;left:4px;top:18px}
+  .hand-dock{height:94px;padding-top:13px;flex-shrink:0}
+  .hand-label{font-size:9px;left:6px;top:2px}
+  .hand{height:74px;padding:0 6px 6px;gap:0;display:flex;align-items:flex-end;justify-content:center;overflow-x:auto;overflow-y:visible}
+  .hand .card{width:40px;height:58px;margin-left:-13px;flex-shrink:0}
+  .hand .card:first-child{margin-left:0}
+  .hand .card .rank{font-size:11px;left:3px;top:3px}
+  .hand .card .suit{font-size:10px;left:4px;top:15px}
+  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-9px)}
+  .action-panel{bottom:auto;top:50%;left:50%;transform:translate(-50%,-50%);width:92%;max-width:380px;padding:11px;z-index:15}
+  .result-panel{width:92%;max-height:80dvh;padding:15px}
+}
+
+@media(max-width:390px){
+  .game-screen{padding:3px 4px 0}
+  .game-head{height:32px}
+  .game-meta{gap:3px;font-size:8.5px}
+  .game-meta b{font-size:11px}
+  .mode-tag,.rating-tag{padding:2px 5px;font-size:7.5px}
+  .player-seat{width:66px;max-width:66px;padding:3px 4px}
+  .player-seat .seat-name{font-size:8.5px}
+  .hand .card{width:36px;height:52px;margin-left:-11px}
+  .hand .card .rank{font-size:10px}
+  .hand .card .suit{font-size:9px;top:13px}
+  .hand-dock{height:86px}
+  .hand{height:68px}
+}
