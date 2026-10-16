@@ -245,10 +245,10 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
 /* ============================================================ */
 @media(max-width:760px){
   /* ---- トップバー ---- */
-  .topbar{height:56px;padding-inline:14px}
-  .brand{width:36px;height:36px;border-radius:11px;font-size:20px}
-  .profile-nav{min-height:38px;padding:7px 11px;font-size:11px}
-  #app{min-height:calc(100vh - 56px)}
+  .topbar{height:52px;padding-inline:12px}
+  .brand{width:34px;height:34px;border-radius:10px;font-size:19px}
+  .profile-nav{min-height:36px;padding:6px 10px;font-size:11px}
+  #app{min-height:calc(100vh - 52px)}
 
   /* ---- ホーム ---- */
   .home-screen{padding:16px 14px 20px}
@@ -278,27 +278,24 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
   .mode-card h2{margin:1px 0 4px;font-size:15px}
   .mode-card p{font-size:11px;line-height:1.45}
   .inline-choice{gap:8px;margin-top:2px;padding-top:10px}
-  .mode-card:first-child .inline-choice{align-items:center}
   .home-bottom{align-items:flex-start;gap:12px;margin-top:12px;padding-top:12px}
   .text-button{flex:none;padding:3px 0;font-size:10px}
   .rules-note{max-width:none;font-size:10px;line-height:1.45;text-align:right}
   .my-rating{padding:16px 14px 12px;margin-bottom:14px}
-
-  /* ---- プロフィール ---- */
   .narrow-screen{padding:18px 16px}
   .narrow-screen h1{font-size:28px}
 
   /* ---- ゲーム画面 ---- */
   .game-screen{
     max-width:100vw !important;
-    height:calc(100dvh - 56px) !important;
+    height:calc(100dvh - 52px) !important;
     min-height:0 !important;
     padding:4px 6px 0 !important;
     display:flex;
     flex-direction:column;
     overflow:hidden
   }
-  .game-head{height:34px;padding:0 2px;gap:4px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
+  .game-head{height:32px;padding:0 2px;gap:4px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
   .game-head .back-button{font-size:11px;padding:2px 0;white-space:nowrap}
   .game-meta{display:flex;align-items:center;gap:4px;font-size:9px;flex:1;min-width:0;justify-content:center}
   .game-meta>span{white-space:nowrap}
@@ -308,31 +305,31 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
   .phase-label{font-size:9px;min-width:0;text-align:right;white-space:nowrap}
 
   .contract-info{
-    min-height:24px !important;
+    min-height:22px !important;
     font-size:10px !important;
     padding:2px 8px !important;
-    margin:0 auto 3px !important;
+    margin:0 auto 2px !important;
     gap:5px !important;
     flex-shrink:0;
-    border-radius:7px
+    border-radius:6px
   }
   .contract-bid{font-size:11px}
   .contract-call-label,.contract-pending{font-size:9px}
-  .contract-info .contract-card{width:20px;height:28px}
-  .contract-info .contract-card .rank{font-size:8px;left:3px;top:3px}
-  .contract-info .contract-card .suit{font-size:8px;left:3px;top:11px}
+  .contract-info .contract-card{width:18px;height:26px}
+  .contract-info .contract-card .rank{font-size:7px;left:2px;top:2px}
+  .contract-info .contract-card .suit{font-size:7px;left:2px;top:10px}
 
   .table-message{
-    min-height:22px !important;
+    min-height:20px !important;
     font-size:10px !important;
-    padding:3px 9px !important;
-    margin:2px auto 3px !important;
+    padding:2px 8px !important;
+    margin:2px auto 2px !important;
     width:96% !important;
     flex-shrink:0;
-    border-radius:12px
+    border-radius:10px
   }
 
-  /* ---- テーブル領域：楕円を控えめに、席を内側に ---- */
+  /* ---- テーブル領域 ---- */
   .table-area{
     min-height:0 !important;
     flex:1;
@@ -344,81 +341,117 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
   .table-area:before{
     content:'' !important;
     position:absolute !important;
-    inset:20% 18% 22% !important;
+    inset:22% 20% 26% !important;
     border:1px solid rgba(211,235,215,.17) !important;
     border-radius:50% !important;
     background:radial-gradient(ellipse,#126046 0%,#0b4a37 53%,#083b2f 100%) !important;
-    box-shadow:inset 0 0 40px rgba(0,0,0,.28) !important
+    box-shadow:inset 0 0 35px rgba(0,0,0,.28) !important
   }
   .players-ring{position:absolute !important;inset:0 !important;pointer-events:none}
 
   .player-seat{
     position:absolute !important;
-    width:68px !important;
-    max-width:68px !important;
+    width:72px !important;
+    max-width:72px !important;
     min-width:0 !important;
     padding:4px 5px !important;
     font-size:9px !important;
     border-radius:8px !important;
-    text-align:center
+    text-align:center;
+    z-index:5
   }
-  .player-seat .seat-name{font-size:9px !important;line-height:1.15;overflow-wrap:anywhere}
+  .player-seat .seat-name{font-size:9.5px !important;line-height:1.15;overflow-wrap:anywhere;font-weight:700}
   .player-seat .seat-role{font-size:7.5px !important;margin-top:2px}
   .com-badge{font-size:6.5px !important;padding:1px 3px !important;margin-left:2px}
   .seat-role.deputy-status{padding:2px 5px !important;font-size:7px !important}
   .lead-badge{font-size:8px !important;margin-top:2px}
   .lead-badge i{width:6px;height:6px !important}
-  .taken-cards{max-width:58px !important;margin-top:2px !important;gap:1px !important}
-  .taken-card{padding:1px 3px !important;font-size:6.5px !important;border-radius:3px}
-  .taken-label{font-size:6.5px !important}
 
-  /* ---- 席の座標：中央寄りに ---- */
-  .player-seat.pos-0{bottom:14% !important;left:50% !important;top:auto !important;right:auto !important;transform:translateX(-50%) !important}
-  .player-seat.pos-1{bottom:32% !important;right:6% !important;top:auto !important;left:auto !important;transform:none !important}
-  .player-seat.pos-2{top:12% !important;right:6% !important;bottom:auto !important;left:auto !important;transform:none !important}
-  .player-seat.pos-3{top:12% !important;left:6% !important;bottom:auto !important;right:auto !important;transform:none !important}
-  .player-seat.pos-4{bottom:32% !important;left:6% !important;top:auto !important;right:auto !important;transform:none !important}
+  .taken-cards{
+    display:flex !important;
+    justify-content:center !important;
+    align-items:center !important;
+    flex-wrap:wrap !important;
+    gap:2px !important;
+    max-width:72px !important;
+    margin:3px auto 0 !important
+  }
+  .taken-label{
+    flex-basis:100% !important;
+    font-size:7px !important;
+    line-height:1 !important;
+    color:#e8d7a9 !important;
+    font-weight:700 !important;
+    letter-spacing:.03em
+  }
+  .taken-card{
+    padding:2px 3px !important;
+    border-radius:3px !important;
+    background:rgba(225,188,112,.14) !important;
+    color:#f0e0b6 !important;
+    font-size:7.5px !important;
+    font-weight:700 !important;
+    line-height:1 !important;
+    white-space:nowrap
+  }
+  .taken-card.red{color:#f0a89e !important;background:rgba(198,69,63,.18) !important}
+
+  .player-seat.pos-0{bottom:12% !important;left:50% !important;top:auto !important;right:auto !important;transform:translateX(-50%) !important}
+  .player-seat.pos-1{bottom:30% !important;right:4% !important;top:auto !important;left:auto !important;transform:none !important}
+  .player-seat.pos-2{top:10% !important;right:4% !important;bottom:auto !important;left:auto !important;transform:none !important}
+  .player-seat.pos-3{top:10% !important;left:4% !important;bottom:auto !important;right:auto !important;transform:none !important}
+  .player-seat.pos-4{bottom:30% !important;left:4% !important;top:auto !important;right:auto !important;transform:none !important}
 
   .center-table{
     position:absolute !important;
     top:50% !important;
     left:50% !important;
     transform:translate(-50%,-50%) !important;
-    width:44vw !important;
+    width:42vw !important;
     min-height:0 !important;
     gap:2px !important;
     z-index:1
   }
-  .center-caption{font-size:9px}
+  .center-caption{font-size:9px;color:#c5d8c9}
   .trick-cards{position:absolute !important;inset:0 !important;z-index:2;width:100%;height:100%;pointer-events:none}
   .trick-card{width:34px !important;height:50px !important}
   .trick-card .rank{font-size:11px !important;left:3px !important;top:3px !important}
   .trick-card .suit{font-size:10px !important;left:4px !important;top:16px !important}
-  .trick-card.played-seat-0{left:50% !important;top:68% !important}
-  .trick-card.played-seat-1{left:70% !important;top:62% !important}
-  .trick-card.played-seat-2{left:70% !important;top:44% !important}
-  .trick-card.played-seat-3{left:30% !important;top:44% !important}
-  .trick-card.played-seat-4{left:30% !important;top:62% !important}
+  .trick-card.played-seat-0{left:50% !important;top:70% !important}
+  .trick-card.played-seat-1{left:72% !important;top:62% !important}
+  .trick-card.played-seat-2{left:72% !important;top:42% !important}
+  .trick-card.played-seat-3{left:28% !important;top:42% !important}
+  .trick-card.played-seat-4{left:28% !important;top:62% !important}
 
-  .kitty-view{min-height:48px !important;gap:3px !important}
-  .kitty-view .card{width:38px !important;height:54px !important}
+  .kitty-view{min-height:44px !important;gap:3px !important}
+  .kitty-view .card{width:36px !important;height:52px !important}
   .kitty-view .card .rank{font-size:12px !important;left:4px !important;top:4px !important}
-  .kitty-view .card .suit{font-size:12px !important;left:4px !important;top:17px !important}
+  .kitty-view .card .suit{font-size:12px !important;left:4px !important;top:16px !important}
 
   .auction-clock{font-size:10px;padding:2px 7px}
   .bid-history{margin-top:6px;padding-top:4px}
   .bid-history-title{font-size:8px}
-  .bid-history-list{max-height:56px}
+  .bid-history-list{max-height:52px}
   .bid-history-row{grid-template-columns:26px minmax(0,1fr) auto;gap:4px;font-size:9px}
   .bid-history-row small{font-size:7.5px}
   .open-label{font-size:9px;margin-right:2px}
 
   /* ---- 手札 ---- */
-  .hand-dock{height:88px !important;padding-top:12px !important;flex-shrink:0}
-  .hand-label{font-size:9px !important;left:6px !important;top:2px !important}
+  .hand-dock{
+    height:auto !important;
+    min-height:96px !important;
+    max-height:120px !important;
+    padding:14px 0 6px 0 !important;
+    flex-shrink:0;
+    display:flex;
+    flex-direction:column;
+    justify-content:flex-end
+  }
+  .hand-label{font-size:10px !important;left:8px !important;top:2px !important;color:#c5d8c9 !important;font-weight:600 !important}
   .hand{
-    height:68px !important;
-    padding:0 6px 6px !important;
+    height:auto !important;
+    min-height:74px !important;
+    padding:0 8px 4px !important;
     gap:0 !important;
     display:flex !important;
     align-items:flex-end !important;
@@ -427,18 +460,19 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
     overflow-y:visible !important
   }
   .hand .card{
-    width:38px !important;
-    height:55px !important;
+    width:42px !important;
+    height:60px !important;
     margin-left:-12px !important;
-    flex-shrink:0
+    flex-shrink:0;
+    transition:transform .12s
   }
   .hand .card:first-child{margin-left:0 !important}
-  .hand .card .rank{font-size:11px !important;left:3px !important;top:3px !important}
-  .hand .card .suit{font-size:10px !important;left:4px !important;top:14px !important}
-  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-8px) !important}
+  .hand .card .rank{font-size:12px !important;left:4px !important;top:3px !important}
+  .hand .card .suit{font-size:11px !important;left:4px !important;top:16px !important}
+  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-9px) !important}
 
   .hand.discard-mode{padding:0 8px 8px !important;gap:6px !important;justify-content:flex-start !important}
-  .hand.discard-mode .card{width:50px !important;height:72px !important;flex:0 0 50px !important;margin-left:0 !important}
+  .hand.discard-mode .card{width:52px !important;height:74px !important;flex:0 0 52px !important;margin-left:0 !important}
   .hand.discard-mode .card .rank{font-size:14px !important;left:5px !important;top:5px !important}
   .hand.discard-mode .card .suit{font-size:13px !important;left:5px !important;top:20px !important}
 
@@ -490,26 +524,28 @@ dialog::backdrop{background:rgba(0,0,0,.67);backdrop-filter:blur(4px)}
 
 @media(max-width:390px){
   .game-screen{padding:3px 4px 0 !important}
-  .game-head{height:30px}
+  .game-head{height:28px}
   .game-meta{gap:3px;font-size:8.5px}
   .game-meta b{font-size:11px}
   .mode-tag,.rating-tag{padding:2px 5px;font-size:7.5px}
   .phase-label{font-size:8.5px}
-  .player-seat{width:60px !important;max-width:60px !important;padding:3px 4px !important}
-  .player-seat .seat-name{font-size:8px !important}
+  .player-seat{width:64px !important;max-width:64px !important;padding:3px 4px !important}
+  .player-seat .seat-name{font-size:8.5px !important}
   .player-seat .seat-role{font-size:7px !important}
-  .player-seat.pos-1{right:5% !important}
-  .player-seat.pos-2{right:5% !important}
-  .player-seat.pos-3{left:5% !important}
-  .player-seat.pos-4{left:5% !important}
-  .center-table{width:38vw !important}
-  .hand .card{width:34px !important;height:50px !important;margin-left:-10px !important}
-  .hand .card .rank{font-size:10px !important;left:3px !important;top:2px !important}
-  .hand .card .suit{font-size:9px !important;left:3px !important;top:12px !important}
-  .hand-dock{height:80px !important}
-  .hand{height:62px !important}
-  .kitty-view .card{width:34px !important;height:48px !important}
+  .taken-cards{max-width:66px !important}
+  .taken-card{font-size:7px !important;padding:1.5px 2.5px !important}
+  .player-seat.pos-1{right:3% !important}
+  .player-seat.pos-2{right:3% !important}
+  .player-seat.pos-3{left:3% !important}
+  .player-seat.pos-4{left:3% !important}
+  .center-table{width:36vw !important}
+  .hand .card{width:38px !important;height:54px !important;margin-left:-11px !important}
+  .hand .card .rank{font-size:11px !important;left:3px !important;top:2px !important}
+  .hand .card .suit{font-size:10px !important;left:3px !important;top:13px !important}
+  .hand-dock{min-height:88px !important;max-height:110px !important}
+  .hand{min-height:66px !important}
+  .kitty-view .card{width:32px !important;height:46px !important}
   .kitty-view .card .rank{font-size:11px !important}
-  .kitty-view .card .suit{font-size:11px !important;top:15px !important}
+  .kitty-view .card .suit{font-size:11px !important;top:14px !important}
   .hand.discard-mode .card{width:46px !important;height:66px !important;flex:0 0 46px !important}
 }
