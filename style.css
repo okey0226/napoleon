@@ -591,3 +591,6 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .hand.discard-mode .card{width:50px !important;height:74px !important;flex:0 0 50px !important}
   .kitty-view .card{width:34px !important;height:48px !important}
 }
+@media(max-width:760px){
+  body{background:#ff0000 !important}
+}
