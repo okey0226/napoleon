@@ -11,3 +11,6 @@ database_id = "97c86f88-a3bc-4adb-b3c5-f1e986db26b4"
 directory = "."
 binding = "ASSETS"
 run_worker_first = ["/api/*", "/ws", "/room"]
+
+[triggers]
+crons = ["0 * * * *"]
