@@ -96,16 +96,13 @@ function getStrongestUnplayedTrump(playedCards, trumpSuit) {
   const playedIds = new Set(playedCards.map(c => c.id));
   const candidates = [];
   
-  // マイティ(♠A)
   if (!playedIds.has('♠A')) candidates.push({ suit: '♠', rank: 'A', id: '♠A' });
-  // 正J
   if (!playedIds.has(trumpSuit + 'J')) candidates.push({ suit: trumpSuit, rank: 'J', id: trumpSuit + 'J' });
-  // 裏J
+  
   const allSuits = ['♣', '♦', '♥', '♠'];
   const sameColorSuit = allSuits.find(s => s !== trumpSuit && isSameColor(s, trumpSuit));
   if (sameColorSuit && !playedIds.has(sameColorSuit + 'J')) candidates.push({ suit: sameColorSuit, rank: 'J', id: sameColorSuit + 'J' });
   
-  // 切り札のA, K, Q, ...
   const RANKS_NO_J = ['A', 'K', 'Q', '10', '9', '8', '7', '6', '5', '4', '3', '2'];
   for (const r of RANKS_NO_J) {
     const id = trumpSuit + r;
@@ -146,25 +143,21 @@ export function chooseCardToPlay(ctx) {
   const low = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
   const safeLow = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick)).filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat !== seat)[0];
   
-  // --- リード時 ---
   if (!trick.length) {
     if (isNapoleon) {
       const isSuitContract = contract.suit !== 'NT';
 
-      // 1周目の例外：多色A
       if (trickNo === 0) {
         const otherAces = legal.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== contract.suit);
         if (otherAces.length) return otherAces[0];
       }
 
-      // 2周目以降のセイム2狙い
       const twos = legal.filter(c => c.rank === '2' && c.suit !== contract.suit);
       if (twos.length && trickNo > 0) {
         const playedSuitCount = playedCards.filter(pc => pc.suit === twos[0].suit).length;
         if (playedSuitCount === 0) return twos[0];
       }
 
-      // 切り札のカウンティングと最強判定
       if (isSuitContract) {
         const trumpSuit = contract.suit;
         const trumps = legal.filter(c => c.suit === trumpSuit);
@@ -172,7 +165,6 @@ export function chooseCardToPlay(ctx) {
         const counting = countAllianceTrumps(ctx);
         
         if (trumps.length) {
-          // 連合軍が切り札を持っていないと判断できるなら、切り札を温存して別スートのヒラを回す
           if (counting && counting.allianceTrumps <= 0) {
             const nonTrumps = legal.filter(c => c.suit !== trumpSuit);
             if (nonTrumps.length) {
@@ -184,17 +176,13 @@ export function chooseCardToPlay(ctx) {
           const myStrongest = trumps.sort((a, b) => cardPower(contract, trickNo, b, [{ seat, card: b }]) - cardPower(contract, trickNo, a, [{ seat, card: a }]))[0];
           
           if (strongestUnplayed && myStrongest.id === strongestUnplayed.id) {
-            // 自分が最強を持っている -> それを切る
             return myStrongest;
           }
           
-          // 自分が最強を持っていない -> 連合軍が最強を持っている
-          // 弱い切り札を切って敵の最強を釣り出す
           return trumps.sort((a, b) => cardPower(contract, trickNo, a, [{ seat, card: a }]) - cardPower(contract, trickNo, b, [{ seat, card: b }]))[0];
         }
       }
 
-      // 宣言スートがない、またはNTの場合
       const bestSuit = strongestSuit(hand, isSuitContract ? SUITS.filter(s => s !== contract.suit) : SUITS);
       const bestSuitCards = legal.filter(c => c.suit === bestSuit);
       if (bestSuitCards.length) {
@@ -207,7 +195,6 @@ export function chooseCardToPlay(ctx) {
 
       return low(legal);
     } else {
-      // 連合軍のリード
       let candidates = legal;
       if (contract.suit !== 'NT' && legal.some(c => c.suit !== contract.suit)) {
         candidates = legal.filter(c => c.suit !== contract.suit);
@@ -226,7 +213,6 @@ export function chooseCardToPlay(ctx) {
     }
   }
 
-  // --- フォロー時 ---
   if (isNapoleon && trickNo > 0) {
     const twos = legal.filter(c => c.rank === '2' && c.suit !== contract.suit);
     if (twos.length) {
