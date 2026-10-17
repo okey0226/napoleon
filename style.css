@@ -371,7 +371,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   /* 中央の場札：対称配置 */
   .center-table{position:absolute !important;top:46% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:260px !important;height:260px !important;min-height:0 !important;z-index:1 !important;margin:0 !important;display:flex !important;align-items:center !important;justify-content:center !important}
   .center-caption{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-size:11px !important;color:#b5d8c9 !important;font-weight:600 !important;letter-spacing:.12em !important;z-index:1 !important}
-  
+
   .trick-cards{
     position:absolute !important;
     top:50% !important;
@@ -393,7 +393,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   }
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
-  
+
   /* 各プレイヤーの位置に対応した左右対称の配置 */
   .trick-card.played-seat-3{left:25% !important;top:22% !important} /* 左上 (COM3) */
   .trick-card.played-seat-2{left:75% !important;top:22% !important} /* 右上 (COM2) */
@@ -552,7 +552,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     border-radius: 8px !important;
     box-shadow: 0 4px 15px rgba(0,0,0,.6) !important;
   }
-  
+
   /* パネル内のテキストやプレビューを小さくして高さを抑える */
   .play-confirm-preview{margin:2px auto 6px !important;gap:8px !important}
   .play-confirm-preview .card{width:36px !important;height:52px !important}
@@ -587,7 +587,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .contract-info .contract-card{width:20px !important;height:28px !important}
   .contract-info .contract-card .rank{font-size:10px !important}
   .contract-info .contract-card .suit{font-size:10px !important;top:13px !important}
-  
+
   .table-message{min-height:18px !important;height:18px !important;font-size:9px !important;padding:0 8px !important}
   .player-seat{width:70px !important;max-width:70px !important;padding:4px 5px !important}
   .player-seat .seat-name{font-size:9.5px !important}
@@ -595,13 +595,13 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-cards{max-width:66px !important}
   .taken-card{font-size:7.5px !important;padding:2px 3px !important}
   .taken-label{font-size:6.5px !important}
-  
+
   .center-table{width:220px !important;height:220px !important}
   .trick-cards{width:220px !important;height:220px !important}
   .trick-card{width:46px !important;height:66px !important}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
-  
+
   .hand .card{width:54px !important;height:80px !important;margin-left:-16px !important}
   .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
   .hand .card .suit{font-size:15px !important;left:4px !important;top:22px !important}
@@ -609,4 +609,22 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .kitty-view .card{width:56px !important;height:78px !important}
   .kitty-view .card .rank{font-size:20px !important;left:5px !important;top:5px !important}
   .kitty-view .card .suit{font-size:18px !important;left:5px !important;top:25px !important}
+}
+
+/* ============================================================ */
+/* ============ キャリブレーション表（追加）=================== */
+/* ============================================================ */
+.calibration-table{margin:6px 0 4px;padding:6px 8px;border:1px solid rgba(225,188,112,.16);border-radius:7px;background:rgba(0,0,0,.18);text-align:left}
+.calibration-title{color:#9bb0a4;font-size:9px;letter-spacing:.05em;margin-bottom:4px;font-weight:600}
+.calibration-row{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;align-items:end}
+.calibration-row>span{color:#8fa69a;font-size:9px;font-weight:400;text-align:center;line-height:1.1}
+.calibration-row>b{display:block;color:#e8d7a9;font-size:11px;font-weight:700;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums}
+.calibration-row>.peak{color:#f3d48e}
+.calibration-row>b.peak{font-size:13px;color:#f7dc9a;text-shadow:0 0 6px rgba(247,220,154,.4)}
+@media(max-width:760px){
+  .calibration-table{margin:4px 0 3px;padding:5px 6px}
+  .calibration-title{font-size:8px;margin-bottom:3px}
+  .calibration-row>span{font-size:8px}
+  .calibration-row>b{font-size:9px}
+  .calibration-row>b.peak{font-size:11px}
 }
