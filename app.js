@@ -1,6 +1,6 @@
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 const CALIBRATION={13:0.82,14:0.75,15:0.65,16:0.55,17:0.42,18:0.30,19:0.18,20:0.08};
-const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null};let toastTimer;
+const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','profile-screen','game-screen','records-screen'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='home-screen'){loadLeaderboard();loadAccount();startPresence()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence')$('concurrent-count').textContent='同接: '+m.count+'人'}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -22,7 +22,6 @@ function showOpenKitty(){const label=document.createElement('span');label.classN
 function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r,id:s+r})));for(let i=d.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
-// ★キャリブレーション表HTML
 function calibrationTableHTML(){
   const entries=Object.entries(CALIBRATION).map(([b,p])=>{
     const isPeak=Number(b)===16;
@@ -31,72 +30,36 @@ function calibrationTableHTML(){
   return '<div class="calibration-table"><div class="calibration-title">この立ちの平均勝率（目安）</div><div class="calibration-row">'+entries+'</div></div>';
 }
 
-// ★SOLO時の最低立ち：5位が勝って4位を超えるのに必要な枚数
 function soloMinimumBid(gap, mult){
   return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult)));
 }
 
-// ★チーム構成に基づく最低立ち数（4ケース + SOLO強制判定）
 function computeTeamMinBid(scores, mult, napSeat, deputySeat){
   const ranked=scores.map((s,i)=>({s,i})).sort((a,b)=>a.s-b.s||a.i-b.i);
   const S5=ranked[0].s, S4=ranked[1].s, S3=ranked[2].s;
   const bottomSeat=ranked[0].i, fourthSeat=ranked[1].i;
   const m=Math.max(1, mult);
   const f=(gap,denom)=>Math.floor(Math.max(0,gap)/denom);
-
-  // Case A：5位=NAP、4位=副官（両条件必須、破綻時はSOLO強制）
   if(napSeat===bottomSeat && deputySeat===fourthSeat){
-    const a=13+f(S4-S5, 2*m);   // 5位>4位
-    const b=13+f(S3-S4, 4*m);   // 4位>3位（副官の勝つインセンティブ）
-    const raw=Math.max(a,b);
-    const broken=b>20;          // 4位が勝っても3位超えられない
-    const soloBid=soloMinimumBid(S4-S5, m);
-    return {
-      minBid: broken ? Math.min(20, soloBid) : Math.min(20, raw),
-      rawMin: broken ? soloBid : raw,
-      canOvertake: (broken ? soloBid : raw) <= 20,
-      incentiveBroken: broken,
-      soloRequired: broken,
-      soloMinBid: Math.min(20, soloBid),
-      soloRawMin: soloBid,
-      soloPossible: soloBid <= 20,
-      case: 'A',
-      details: { S3, S4, S5, needNapOverDeputy: a, needDeputyOverThird: b, soloNeed: soloBid }
-    };
+    const a=13+f(S4-S5, 2*m), b=13+f(S3-S4, 4*m), raw=Math.max(a,b);
+    const broken=b>20, soloBid=soloMinimumBid(S4-S5, m);
+    return { minBid: broken?Math.min(20,soloBid):Math.min(20,raw), rawMin: broken?soloBid:raw, canOvertake: (broken?soloBid:raw)<=20, incentiveBroken: broken, soloRequired: broken, soloMinBid: Math.min(20,soloBid), soloRawMin: soloBid, soloPossible: soloBid<=20, case: 'A', details: { S3, S4, S5, needNapOverDeputy: a, needDeputyOverThird: b, soloNeed: soloBid } };
   }
-
-  // Case B：4位=NAP、5位=副官
   if(napSeat===fourthSeat && deputySeat===bottomSeat){
-    const a=13+f(S3-S4, 6*m);
-    const b=13+f(S3-S5, 4*m);
-    const c=13+f(S4-S5, 2*m);
-    const raw=Math.max(a,b,c);
-    return {
-      minBid: Math.min(20, raw), rawMin: raw,
-      canOvertake: raw <= 20,
-      incentiveBroken: a > 20 || b > 20,
-      soloRequired: false,
-      case: 'B',
-      details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c }
-    };
+    const a=13+f(S3-S4, 6*m), b=13+f(S3-S5, 4*m), c=13+f(S4-S5, 2*m), raw=Math.max(a,b,c);
+    return { minBid: Math.min(20,raw), rawMin: raw, canOvertake: raw<=20, incentiveBroken: a>20||b>20, soloRequired: false, case: 'B', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c } };
   }
-
-  // Case C：5位=NAP、4位が連合軍（副官は別）
   if(napSeat===bottomSeat && deputySeat!==fourthSeat){
     const raw=13+f(S4-S5, 6*m);
-    return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } };
+    return { minBid: Math.min(20,raw), rawMin: raw, canOvertake: raw<=20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } };
   }
-
-  // Case D：4位=NAP、5位が連合軍
   if(napSeat===fourthSeat && deputySeat!==bottomSeat){
     const raw=13+f(S4-S5, 6*m);
-    return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'D', details: { S3, S4, S5, needNapLoss: raw } };
+    return { minBid: Math.min(20,raw), rawMin: raw, canOvertake: raw<=20, incentiveBroken: false, soloRequired: false, case: 'D', details: { S3, S4, S5, needNapLoss: raw } };
   }
-
   return null;
 }
 
-// ★SOLO強制が必要かどうか（5位がNAP かつ Case A破綻）
 function isSoloForced(){
   if(g.round<10 || !g.contract) return false;
   const ranked=g.matchScores.map((s,i)=>({s,i})).sort((a,b)=>a.s-b.s||a.i-b.i);
@@ -105,6 +68,33 @@ function isSoloForced(){
   const fourthSeat=ranked[1].i;
   const r=computeTeamMinBid(g.matchScores, g.mult, bottomSeat, fourthSeat);
   return r?.soloRequired === true;
+}
+
+// ★追加：Aがセイム2・切り札被せで取られ得るか判定
+function isSafeToCashAce(suit, seat){
+  if(!g.contract) return false;
+  if(suit==='♠') return true; // ♠Aはマイティ、無敵
+  // セイム2リスク（初回トリックは除外）
+  if(g.trickNo>0){
+    const twoPlayed=g.playedCards.some(c=>c.id===suit+'2');
+    if(!twoPlayed){
+      const anyVoid=[0,1,2,3,4].some(s=>s!==seat&&g.voids[s]&&g.voids[s][suit]);
+      if(!anyVoid) return false; // 全員フォロー可能→セイム2成立リスク
+    }
+  }
+  // 切り札被せリスク（敵がそのスートにボイドしている場合）
+  if(g.contract.suit!=='NT'&&g.contract.suit!==suit){
+    for(let s=0;s<5;s++){
+      if(s===seat) continue;
+      if(g.contract.revealedCall){
+        if(s===g.contract.nap||(!g.contract.solo&&s===g.contract.deputy)) continue;
+      }else{
+        if(s===g.contract.nap) continue;
+      }
+      if(g.voids[s]&&g.voids[s][suit]) return false; // 敵がボイド→切り札で取られる可能性
+    }
+  }
+  return true;
 }
 
 function startLocal(){
@@ -125,6 +115,8 @@ function startLocal(){
   g.matchContracts=[];
   g.bidHistory=[];
   g.lastTrickWinner=null;
+  g.playedCards=[];
+  g.voids=[{},{},{},{},{}];
   g.matchStats=Array.from({length:5},()=>({declarerAttempts:0,declarerSuccesses:0,exactAttempts:0,exactSuccesses:0,boldAttempts:0,boldSuccesses:0,soloAttempts:0,soloSuccesses:0,deputyAttempts:0,deputySuccesses:0,artAttempts:0,dramaticPlays:0,allyFeedAttempts:0,allyFeedSuccesses:0,bidTotal:0}));
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
@@ -144,6 +136,8 @@ function roundStart(){
   g.trickNo=0;
   g.points=[0,0,0,0,0];
   g.roundArt=Array(5).fill(0);
+  g.playedCards=[];
+  g.voids=[{},{},{},{},{}];
   g.players.forEach(p=>{p.roundTaken=[];p.roundPoints=0;});
   addGameLog('配札');
   $('round-label').textContent=g.round;
@@ -211,7 +205,6 @@ function playoffBidHints(scores,rule,mult){
   return hints.length?'同点になり得る立ち：'+hints.join('、'):'この点差で同点になる立ちはありません'
 }
 
-// ★オールラスト前ポップアップ（4ケース + SOLO）
 function announceRound(round,rule){
   if(g.announcedRound===round||round<9)return;
   g.announcedRound=round;
@@ -548,7 +541,6 @@ function auctionEnd(w){
   kittyStart()
 }
 
-// ★SOLO強制対応の副官指名UI
 function callUi(){
   g.phase='call';
   phase('副官指名');
@@ -629,8 +621,6 @@ function kittyStart(){
   g.points[n]+=kittyPoints.length;
   g.players[n].taken.push(...kittyPoints);
   sort(g.players[n].hand);
-
-  // ★SOLO強制時は自分の手札から指名
   const forceSolo=isSoloForced();
   if(forceSolo){
     const hand=g.players[n].hand;
@@ -765,11 +755,19 @@ function chooseLocalBotCard(i){
   if(isDeputy){const choice=chooseLocalDeputyCard(i,h);if(choice)return choice}
   if(level===1)return h[Math.floor(Math.random()*h.length)];
 
+  // ★修正②：リード選択で危険なAを温存
   if(!g.trick.length){
     const leadValue=c=>cardValue(c)+(c.rank==='A'?3:c.rank==='K'?1:0)+g.players[i].hand.filter(x=>x.suit===c.suit).length*.25;
-    const strongLead=h.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
+    // セイム2・切り札被せリスクのあるAを除外
+    const safeH=h.filter(c=>{
+      if(c.rank!=='A')return true;
+      if(c.id==='♠A')return true;
+      return isSafeToCashAce(c.suit,i);
+    });
+    const candidates=safeH.length?safeH:h;
+    const strongLead=candidates.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
     if(strongLead.length&&Math.random()<0.4)return strongLead.sort((a,b)=>leadValue(b)-leadValue(a))[0];
-    return h.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0]
+    return candidates.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0]
   }
 
   const winningCards=h.filter(c=>winning(g.trick.concat([{player:i,card:c}])).player===i),
@@ -838,6 +836,17 @@ function chooseLocalDeputyCard(i,h){
     if(lastSeat){
       const delayed=safeTeamWins.filter(card=>!isRole(card));
       if(delayed.length){const points=delayed.filter(isFace);return (points.length?points:delayed).sort((a,b)=>cardValue(b)-cardValue(a))[0]}
+    }
+    // ★修正①：ナポレオン側が既に安全に勝っている場合、役札を温存
+    const current=winning();
+    if(sideOf(current.player)===ownSide){
+      const nonRole=h.filter(c=>!isRole(c));
+      if(nonRole.length){
+        const candidate=low(nonRole);
+        if(!canEnemyOvertake(candidate)){
+          return candidate; // 安全に低札を出せる→役札を温存
+        }
+      }
     }
     if(trumpSuit==='NT'&&call?.rank==='A'&&call.id!=='♠A'&&led===call.suit&&g.trickNo>0){
       const allFollowed=g.trick.every(entry=>entry.card.suit===led),
@@ -912,7 +921,15 @@ function play(i,c){
   let h=g.players[i].hand;
   h.splice(h.findIndex(x=>x.id===c.id),1);
   g.trick.push({player:i,card:c});
-  // ★artAttempts：芸術札を出した瞬間に記録
+  // ★カードカウンティング：プレイ済みカード・ボイド情報を記録
+  g.playedCards.push({suit:c.suit,rank:c.rank,id:c.id});
+  if(g.trick.length>1){
+    const ledSuit=g.trick[0].card.suit;
+    if(c.suit!==ledSuit){
+      if(!g.voids[i])g.voids[i]={};
+      g.voids[i][ledSuit]=true;
+    }
+  }
   if(artfulCard({player:i,card:c},g.trick)){
     g.matchStats[i].artAttempts=(g.matchStats[i].artAttempts||0)+1;
   }
@@ -957,7 +974,6 @@ function play(i,c){
   g.phase='trick-end';
   const winningEntry=winning(),w=winningEntry.player,
     taken=g.trick.filter(e=>POINT.includes(e.card.rank)).map(e=>e.card);
-  // ★dramaticPlays
   if(taken.length>=3&&artfulCard(winningEntry,g.trick)){
     g.matchStats[w].dramaticPlays=(g.matchStats[w].dramaticPlays||0)+1;
     if(g.roundArt[w]<2)g.roundArt[w]++;
@@ -966,7 +982,6 @@ function play(i,c){
   g.players[w].taken.push(...taken);
   g.players[w].roundTaken.push(...taken);
   g.players[w].roundPoints=(g.players[w].roundPoints||0)+taken.length;
-  // ★allyFeed
   if(!g.contract.solo&&g.contract.deputy>=0&&g.contract.deputy!==g.contract.nap){
     const deputyEntry=g.trick.find(e=>e.player===g.contract.deputy);
     if(deputyEntry&&POINT.includes(deputyEntry.card.rank)){
@@ -995,7 +1010,6 @@ function play(i,c){
   },1250)
 }
 
-// ★キャリブレーション式レート計算
 function finalRatingDeltas(scores,art,ratings,matchStats,contracts){
   const meanArt=art.reduce((n,x)=>n+x,0)/5;
   const cs=contracts||[];
@@ -1031,13 +1045,7 @@ function finalRatingDeltas(scores,art,ratings,matchStats,contracts){
     if(rank===1)delta+=0.5;
     else if(rank===5)delta-=0.5;
     delta-=0.05*cs.length;
-    return {
-      seat,
-      delta:Math.round(delta*10)/10,
-      placement:rank,
-      art:art[seat]-meanArt,
-      breakdown:{rounds,rank}
-    };
+    return {seat,delta:Math.round(delta*10)/10,placement:rank,art:art[seat]-meanArt,breakdown:{rounds,rank}};
   })
 }
 
@@ -1061,18 +1069,7 @@ function finishGame(){
 
   try{
     const lastPlacePenalty=g.matchScores.filter(s=>s>g.matchScores[0]).length===4?1:0;
-    fetch('/api/ai/report',{
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({
-        napoleonWon:(()=>{const cc=g.contract,side=cc.solo?[cc.nap]:[cc.nap,cc.deputy],pts=side.reduce((n,i)=>n+g.points[i],0);return pts>=cc.num;})(),
-        exactWins:g.roundArt.filter(a=>a>=4).length,
-        lastPlacePenalty
-      })
-    }).then(r=>r.json()).then(d=>{
-      if(d.weights)Object.assign(g.aiWeights,d.weights);
-      if(d.games&&$('ai-level'))$('ai-level').textContent='AI LV '+d.games;
-    }).catch(()=>{});
+    fetch('/api/ai/report',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({napoleonWon:(()=>{const cc=g.contract,side=cc.solo?[cc.nap]:[cc.nap,cc.deputy],pts=side.reduce((n,i)=>n+g.points[i],0);return pts>=cc.num;})(),exactWins:g.roundArt.filter(a=>a>=4).length,lastPlacePenalty})}).then(r=>r.json()).then(d=>{if(d.weights)Object.assign(g.aiWeights,d.weights);if(d.games&&$('ai-level'))$('ai-level').textContent='AI LV '+d.games;}).catch(()=>{});
   }catch{}
 
   let finalRule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null,
@@ -1086,28 +1083,12 @@ function finishGame(){
     g.players.forEach((_,i)=>{if(i!==c.nap&&i!==c.deputy)scores[i]=-sign*unit})
   }
   const art=g.roundArt.slice();
-  if(success&&pts===c.num){
-    art[c.nap]+=2;
-    if(!c.solo)art[c.deputy]+=1;
-    if(c.num>=15){art[c.nap]+=2;if(!c.solo)art[c.deputy]+=1}
-  }
+  if(success&&pts===c.num){art[c.nap]+=2;if(!c.solo)art[c.deputy]+=1;if(c.num>=15){art[c.nap]+=2;if(!c.solo)art[c.deputy]+=1}}
   if(c.solo)art[c.nap]+=success?4:2;
   if(!success&&!c.solo&&c.num-pts>=3){art[c.nap]-=2;art[c.deputy]-=1}
   for(let i=0;i<5;i++){g.matchScores[i]+=scores[i];g.matchArt[i]+=art[i]}
 
-  // ★契約スナップショット蓄積
-  g.matchContracts.push({
-    round:g.round,
-    nap:c.nap,
-    deputy:c.deputy,
-    num:c.num,
-    suit:c.suit,
-    solo:c.solo,
-    points:pts,
-    napWin:success,
-    revealTrickNo:c.revealTrickNo??null,
-    takenPoints:g.players.map(p=>p.roundPoints||0)
-  });
+  g.matchContracts.push({round:g.round,nap:c.nap,deputy:c.deputy,num:c.num,suit:c.suit,solo:c.solo,points:pts,napWin:success,revealTrickNo:c.revealTrickNo??null,takenPoints:g.players.map(p=>p.roundPoints||0)});
 
   const replayAllLast=!!(finalRule&&scores[finalRule.bottomSeat]>0&&g.matchScores[finalRule.bottomSeat]===g.matchScores[finalRule.fourthSeat]);
   if(replayAllLast)g.playoff=true;
@@ -1183,15 +1164,7 @@ function announceCall(card,onConfirm,online=false){
   slot.replaceChildren(cardEl(card,'announcement-card'));
   $('dialog-body').textContent=online?'全員が確認すると最初のトリックが始まります。':'確認して、最初のトリックを始めます。';
   $('dialog-ok').textContent=online?'確認':'最初のトリックへ';
-  $('dialog-ok').onclick=()=>{
-    d.close();
-    slot.classList.add('hidden');
-    slot.replaceChildren();
-    $('dialog-eyebrow').classList.remove('hidden');
-    $('dialog-eyebrow').textContent='Napoleon';
-    $('dialog-ok').textContent='OK';
-    if(onConfirm)onConfirm()
-  };
+  $('dialog-ok').onclick=()=>{d.close();slot.classList.add('hidden');slot.replaceChildren();$('dialog-eyebrow').classList.remove('hidden');$('dialog-eyebrow').textContent='Napoleon';$('dialog-ok').textContent='OK';if(onConfirm)onConfirm()};
   d.showModal()
 }
 
@@ -1217,10 +1190,7 @@ async function account(path){
   try{
     let r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,password})}),d=await r.json();
     if(!r.ok)throw Error(d.error||'処理できませんでした');
-    g.account=d;
-    renderAccount();
-    toast('登録しました');
-    records()
+    g.account=d;renderAccount();toast('登録しました');records()
   }catch(e){toast(e.message)}
 }
 
@@ -1234,8 +1204,7 @@ async function loadAccount(){
 }
 
 function renderHomeRating(d){
-  const box=$('my-rating');
-  if(!box)return;
+  const box=$('my-rating');if(!box)return;
   if(!d){box.classList.add('hidden');return}
   box.classList.remove('hidden');
   if(d.unregistered){
@@ -1247,11 +1216,9 @@ function renderHomeRating(d){
 }
 
 async function loadLeaderboard(){
-  const section=$('leaderboard'),box=$('rating-leaders');
-  if(!section||!box)return;
+  const section=$('leaderboard'),box=$('rating-leaders');if(!section||!box)return;
   try{
-    const response=await fetch('/api/rating/top');
-    if(!response.ok)throw Error();
+    const response=await fetch('/api/rating/top');if(!response.ok)throw Error();
     const leaders=(await response.json()).slice(0,g.leaderboardExpanded?50:3);
     if(!leaders.length){section.classList.add('hidden');return}
     section.classList.remove('hidden');
@@ -1259,9 +1226,7 @@ async function loadLeaderboard(){
     $('show-ranking').textContent=g.leaderboardExpanded?'TOP 3':'VIEW TOP 50';
     $('show-ranking').setAttribute('aria-expanded',String(g.leaderboardExpanded));
     box.innerHTML=leaders.map((player,i)=>{
-      const username=String(player.username||player.id||'player'),
-        href='https://websim.com/@'+encodeURIComponent(username),
-        avatar='https://images.websim.com/avatar/'+encodeURIComponent(username);
+      const username=String(player.username||player.id||'player'),href='https://websim.com/@'+encodeURIComponent(username),avatar='https://images.websim.com/avatar/'+encodeURIComponent(username);
       return '<article class="rating-leader rank-'+(i+1)+'"><span class="leader-place">'+String(i+1).padStart(2,'0')+'</span><a class="leader-person" href="'+escapeHTML(href)+'" target="_blank" rel="noopener noreferrer"><img src="'+escapeHTML(avatar)+'" alt="" loading="lazy"><span>@'+escapeHTML(username)+'</span></a><strong>'+Number(player.rating||0)+'<small> pt</small></strong></article>'
     }).join('')
   }catch{section.classList.add('hidden')}
@@ -1271,17 +1236,11 @@ function escapeHTML(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':
 
 async function records(){
   screen('records-screen');
-  if(!g.account){
-    $('records-content').innerHTML='<p class="subcopy">REGISTER TO UNLOCK PLAYER STATS.</p><button id="records-register" class="primary-button">プレイヤー登録</button>';
-    $('records-register').onclick=()=>screen('profile-screen');
-    return
-  }
+  if(!g.account){$('records-content').innerHTML='<p class="subcopy">REGISTER TO UNLOCK PLAYER STATS.</p><button id="records-register" class="primary-button">プレイヤー登録</button>';$('records-register').onclick=()=>screen('profile-screen');return}
   try{
     const response=await fetch('/api/account/me?id='+encodeURIComponent(g.account.id));
     if(!response.ok)throw Error('UNABLE TO LOAD PLAYER STATS.');
-    const d=await response.json();
-    g.account=d;
-    renderAccount();
+    const d=await response.json();g.account=d;renderAccount();
     $('records-content').innerHTML='<div class="mypage-head"><div class="profile-emblem large">♠</div><div class="mypage-identity"><div class="eyebrow">PLAYER CARD</div><h2>'+escapeHTML(d.id)+'</h2></div><div class="mypage-rating"><span>RATE</span><strong>'+d.rating+'</strong></div></div><div class="record-stats"><div class="record-stat"><span>MATCHES</span><b>'+d.games+'</b></div><div class="record-stat"><span>WINS</span><b>'+d.wins+'</b></div><div class="record-stat"><span>LOSSES</span><b>'+d.losses+'</b></div></div>'
   }catch{$('records-content').textContent='UNABLE TO LOAD PLAYER STATS.'}
 }
@@ -1298,16 +1257,7 @@ async function online(mode,roomCode,bots,botLevel=3){
       ws.onopen=()=>resolve({ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()});
       ws.onerror=reject
     });
-    g.mySeat=-1;
-    g.privateHand=[];
-    g.onlineState=null;
-    g.onlineDiscard=new Set();
-    g.onlineSelectedCard=null;
-    g.onlineBid=13;
-    g.onlineSuit='♠';
-    g.onlineRank='A';
-    g.announcedCallRound=null;
-    g.announcedRound=null;
+    g.mySeat=-1;g.privateHand=[];g.onlineState=null;g.onlineDiscard=new Set();g.onlineSelectedCard=null;g.onlineBid=13;g.onlineSuit='♠';g.onlineRank='A';g.announcedCallRound=null;g.announcedRound=null;
     ['auction-panel','call-panel','play-panel','result-panel'].forEach(id=>$(id).classList.add('hidden'));
     screen('game-screen');
     $('game-mode-label').textContent=mode==='ranked'?'RANKED':'FRIEND MATCH';
@@ -1340,18 +1290,14 @@ document.querySelectorAll('[data-go-home]').forEach(b=>b.onclick=()=>screen('hom
 $('leave-game').onclick=()=>{closeOnline();screen('home-screen')};
 $('register-account').onclick=()=>account('/api/account/register');
 $('login-account').onclick=()=>account('/api/account/login');
-loadAccount();
-loadLeaderboard();
+loadAccount();loadLeaderboard();
 setInterval(()=>{if(g.onlineState&&['prep','call','discard','play'].includes(g.onlineState.phase)&&g.onlineState.deadline)$('auction-clock').textContent=Math.max(0,Math.ceil((g.onlineState.deadline-Date.now())/1000))+'秒'},250);
 
 function sendGame(action){g.room?.send({type:'game',action:action})}
 
 function renderOnline(){
-  const s=g.onlineState;
-  if(!s)return;
-  g.round=s.round||1;
-  g.playoff=!!s.playoff;
-  g.appealInfo=s.appealInfo||'';
+  const s=g.onlineState;if(!s)return;
+  g.round=s.round||1;g.playoff=!!s.playoff;g.appealInfo=s.appealInfo||'';
   if(s.phase!=='play'||s.active!==g.mySeat)g.onlineSelectedCard=null;
   g.matchScores=s.matchScores||g.matchScores;
   g.players=s.players.map(p=>({name:p.name,bot:p.bot,hand:Array(p.handCount).fill(null),taken:p.taken||[]}));
@@ -1375,16 +1321,14 @@ function renderOnline(){
   const clock=$('auction-clock');
   if(['prep','call','discard','play'].includes(s.phase)&&s.deadline){clock.classList.remove('hidden');clock.textContent=Math.max(0,Math.ceil((s.deadline-Date.now())/1000))+'秒'}
   else clock.classList.add('hidden');
-  drawOnlineHand();
-  drawOnlineControls(s);
+  drawOnlineHand();drawOnlineControls(s);
   if(s.phase==='call-reveal'){
     if(g.announcedCallRound!==s.round){g.announcedCallRound=s.round;announceCall(g.contract.call,()=>sendGame({type:'confirm-call'}),true)}
   }else{
     if(g.announcedCallRound!==null){
       const d=$('message-dialog'),slot=$('dialog-card');
       if(d.open)d.close();
-      slot.classList.add('hidden');
-      slot.replaceChildren();
+      slot.classList.add('hidden');slot.replaceChildren();
       $('dialog-eyebrow').classList.remove('hidden');
       $('dialog-eyebrow').textContent='Napoleon';
       $('dialog-ok').textContent='OK';
@@ -1396,8 +1340,7 @@ function renderOnline(){
 }
 
 function drawOnlineSeats(s){
-  const box=$('players-ring');
-  box.replaceChildren();
+  const box=$('players-ring');box.replaceChildren();
   const leadSeat=s.phase==='play'&&s.trick?.length?s.trick[0].seat:s.lastTrickWinner;
   s.players.forEach((p,i)=>{
     const e=document.createElement('div');
@@ -1416,8 +1359,7 @@ function drawOnlineHand(){
   $('game-screen').classList.toggle('discarding',discarding);
   box.replaceChildren();
   (g.privateHand||[]).forEach(c=>{
-    const e=cardEl(c,'');
-    const legal=(g.onlineLegal||[]).includes(c.id);
+    const e=cardEl(c,''),legal=(g.onlineLegal||[]).includes(c.id);
     if(g.onlineState?.phase==='discard'&&g.mySeat===g.onlineState.active){
       const protectedCall=g.mySeat===g.onlineState.contract?.nap&&g.onlineState.contract?.call?.id===c.id;
       e.classList.add('playable');
