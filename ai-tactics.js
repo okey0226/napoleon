@@ -1,4 +1,4 @@
-import { SUITS, RANKS, SV, defaultStrategy } from './constants.js';
+import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy } from './constants.js';
 
 // ==========================================
 // 1. 基本ルールとカードの強さ判定
@@ -50,16 +50,41 @@ export function handStrength(hand) {
   return hand.reduce((n, c) => n + (RANKS.indexOf(c.rank) > 9 ? 1.25 : RANKS.indexOf(c.rank) > 7 ? 0.45 : 0) + (c.rank === "A" ? 0.35 : 0), 0) + suitValue(hand, strongestSuit(hand)) * 0.3;
 }
 
+// ★変更: 期待レートが最大になる宣言枚数を計算
 export function shouldBid(hand, currentHigh, minBid, params) {
   const strength = handStrength(hand);
   const bestSuit = strongestSuit(hand);
   const cap = 13 + Math.min(9, Math.floor(strength / 1.3));
-  if (strength <= params.bidThreshold || cap < minBid) return null;
-  if (Math.random() > Math.min(1, (strength - params.bidThreshold) / 3)) return null;
+  
+  let bestNum = null;
+  let maxExpected = -1;
 
-  const num = Math.max(minBid, 13 + Math.min(9, Math.floor((strength - 2) / 1.7)));
-  if (currentHigh.num < 13) return { num, suit: bestSuit };
-  if (num > currentHigh.num) return { num, suit: bestSuit };
+  const targetMin = Math.max(minBid, currentHigh.num + 1, 13);
+  
+  for (let num = targetMin; num <= cap; num++) {
+    const baseRate = CALIBRATION[Math.min(20, Math.max(13, num))];
+    const required = 1.3 * (num - 13);
+    const diff = strength - required;
+    // 強さの差を勝率に反映（係数0.05）
+    const pWin = Math.max(0, Math.min(1, baseRate + diff * 0.05));
+    
+    // 期待レート上昇: (勝率 - 平均勝率) * 難易度 * 8
+    const expected = (pWin - baseRate) * (num - 12) * 8;
+    
+    if (expected > maxExpected) {
+      maxExpected = expected;
+      bestNum = num;
+    }
+  }
+
+  // 期待値がプラスになるなら、リスク許容度に応じた確率で宣言
+  if (bestNum !== null && maxExpected > 0) {
+    const bidChance = Math.min(1, maxExpected / 5) + params.riskTolerance * 0.2;
+    if (Math.random() < bidChance) {
+      return { num: bestNum, suit: bestSuit };
+    }
+  }
+  
   return null;
 }
 
@@ -72,14 +97,53 @@ export function chooseDiscard(hand, trump) {
   return hand.slice().sort((a, b) => value(a) - value(b)).slice(0, 2);
 }
 
+// ★変更: 指名カードの高度な戦術ルール
 export function chooseDeputyCall(hand, discard, trump, level, bid) {
   const used = new Set([...hand, ...discard].map(c => c.id));
+  const sameColor = (a, b) => (a === '♣' || a === '♠') === (b === '♣' || b === '♠');
+  
+  // 1. 自分が持っていない役札を優先度順にリストアップ
+  const roleCards = [];
+  if (!used.has('♠A')) roleCards.push({ suit: '♠', rank: 'A', id: '♠A' });
+  
+  if (trump !== 'NT') {
+    if (!used.has(trump + 'J')) roleCards.push({ suit: trump, rank: 'J', id: trump + 'J' });
+    const sameColorSuit = SUITS.find(s => s !== trump && sameColor(s, trump));
+    if (sameColorSuit && !used.has(sameColorSuit + 'J')) roleCards.push({ suit: sameColorSuit, rank: 'J', id: sameColorSuit + 'J' });
+  }
+
+  if (roleCards.length > 0) {
+    return roleCards[0];
+  }
+
+  // 2. 全ての役札を持っている（または捨てた）場合
+  const myAces = hand.filter(c => c.rank === 'A');
+  for (const ace of myAces) {
+    const suitCount = hand.filter(c => c.suit === ace.suit).length;
+    if (suitCount >= 2) {
+      const two = { suit: ace.suit, rank: '2', id: ace.suit + '2' };
+      if (!used.has(two.id)) return two;
+    }
+  }
+
+  // 3. それを満たさない時は「自分がAを持っていないスート」の2またはAを指名
+  for (const suit of SUITS) {
+    if (hand.some(c => c.suit === suit && c.rank === 'A')) continue;
+    if (hand.some(c => c.suit === suit && c.rank === '2')) {
+      const two = { suit, rank: '2', id: suit + '2' };
+      if (!used.has(two.id)) return two;
+    }
+  }
+  for (const suit of SUITS) {
+    if (hand.some(c => c.suit === suit && c.rank === 'A')) continue;
+    const ace = { suit, rank: 'A', id: suit + 'A' };
+    if (!used.has(ace.id)) return ace;
+  }
+
+  // 4. フォールバック
   const cands = [];
   for (const s of SUITS) for (const r of RANKS) if (!used.has(s + r)) cands.push({ suit: s, rank: r, id: s + r });
   if (!cands.length) return { suit: "♠", rank: "A", id: "♠A" };
-  
-  const score = c => (c.rank === "A" ? 10 : c.rank === "K" ? 6 : c.rank === "Q" ? 3 : 0) - hand.filter(x => x.suit === c.suit).length * 1.5;
-  cands.sort((a, b) => score(b) - score(a));
   return cands[0];
 }
 
@@ -147,7 +211,7 @@ export function chooseCardToPlay(ctx) {
     if (isNapoleon) {
       const isSuitContract = contract.suit !== 'NT';
 
-      if (trickNo === 0) {
+      if (trickNo === 0 && isSuitContract) {
         const otherAces = legal.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== contract.suit);
         if (otherAces.length) return otherAces[0];
       }
@@ -181,6 +245,15 @@ export function chooseCardToPlay(ctx) {
           
           return trumps.sort((a, b) => cardPower(contract, trickNo, a, [{ seat, card: a }]) - cardPower(contract, trickNo, b, [{ seat, card: b }]))[0];
         }
+      } else {
+        const strongLeads = legal.filter(c => c.rank === 'A' || c.rank === '2' || c.id === '♠A');
+        const weakLeads = legal.filter(c => !strongLeads.includes(c));
+        
+        if (trickNo >= 4 && strongLeads.length) {
+          return strongLeads.sort((a, b) => cardPower(contract, trickNo, b, [{ seat, card: b }]) - cardPower(contract, trickNo, a, [{ seat, card: a }]))[0];
+        }
+        if (weakLeads.length) return low(weakLeads);
+        return low(legal);
       }
 
       const bestSuit = strongestSuit(hand, isSuitContract ? SUITS.filter(s => s !== contract.suit) : SUITS);
@@ -235,6 +308,20 @@ export function chooseCardToPlay(ctx) {
   const pointInTrick = trick.some(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank));
   const winningCards = legal.filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat === seat);
   
+  if (isNapoleon && contract.suit === 'NT') {
+    const current = winningEntry(contract, trickNo, trick);
+    const isEnemyWinning = current && current.seat !== contract.nap && (!contract.solo && current.seat !== contract.deputy);
+    if (isEnemyWinning && !pointInTrick && trickNo >= 4) {
+      if (winningCards.length) return low(winningCards);
+    }
+    if (isEnemyWinning && !pointInTrick && trickNo < 4) {
+      return low(legal);
+    }
+    if (isEnemyWinning && pointInTrick) {
+      if (winningCards.length) return low(winningCards);
+    }
+  }
+
   if (winningCards.length && (pointInTrick || trick.length === 4 || (isNapoleon && !isCurrentNapWinning))) {
     return low(winningCards);
   }
@@ -253,6 +340,7 @@ export function chooseDeputyCard(ctx) {
   
   const roleCards = legal.filter(isRole);
   const low = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
+  const safeLow = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick)).filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat !== seat)[0];
 
   if (!trick.length) {
     const winningLeads = legal.filter(c => c.rank === 'A' || c.rank === '2' || (contract.suit !== 'NT' && c.suit === contract.suit && c.rank === 'J'));
