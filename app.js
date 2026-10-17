@@ -1484,23 +1484,40 @@ function renderStrategyLab({strategies,insights,generations}){
     const btn=$('run-selfplay'),status=$('selfplay-status');
     btn.disabled=true;
     status.textContent='自己対戦100局を実行中…（数秒かかります）';
-    try{
-      const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});
-      if(!res.ok){
-        const errData=await res.json().catch(()=>({}));
-        throw new Error(errData.error || `HTTP ${res.status}`);
+
+    const doRun = async () => {
+      const res = await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
       }
-      const data=await res.json();
-      if(data.ok){
-        status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;
-        await loadTopStrategy();
-        await loadStrategyLab();
-      }else{
-        status.textContent='エラー: '+(data.error||'unknown');
+      return data;
+    };
+
+    try {
+      let data;
+      try {
+        data = await doRun();
+      } catch (e) {
+        if (e.message && e.message.includes('no such table')) {
+          status.textContent='初回データベースセットアップ中…';
+          const setupRes = await fetch('/api/setup-db');
+          if (!setupRes.ok) throw new Error('データベースの初期化に失敗しました');
+          
+          status.textContent='自己対戦100局を実行中…（再試行）';
+          data = await doRun();
+        } else {
+          throw e;
+        }
       }
-    }catch(e){
+
+      status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;
+      await loadTopStrategy();
+      await loadStrategyLab();
+
+    } catch(e) {
       status.textContent='実行できませんでした: ' + (e.message || 'ネットワークエラー');
-    }finally{
+    } finally {
       btn.disabled=false;
     }
   };
