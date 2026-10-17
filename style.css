@@ -233,7 +233,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
 .dialog-inner button{width:100%;margin-top:16px}
 
 /* ============================================================ */
-/* ============ モバイル：楕円横長 + 場札グリッド配置 ======= */
+/* ============ モバイル：楕円横長 + 場札絶対配置 ============= */
 /* ============================================================ */
 @media(max-width:760px){
   /* トップバー */
@@ -348,8 +348,8 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-card{padding:2px 4px !important;border-radius:3px !important;background:rgba(225,188,112,.18) !important;color:#f5e6c0 !important;font-size:8px !important;font-weight:700 !important;line-height:1 !important;white-space:nowrap !important}
   .taken-card.red{color:#f5b3a8 !important;background:rgba(198,69,63,.25) !important}
 
-  /* 中央の場札：Gridレイアウトで十字に固定 */
-  .center-table{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:200px !important;height:200px !important;min-height:0 !important;z-index:1 !important;margin:0 !important;display:flex !important;align-items:center !important;justify-content:center !important}
+  /* 中央の場札：絶対配置で五角形に固定 */
+  .center-table{position:absolute !important;top:46% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:240px !important;height:240px !important;min-height:0 !important;z-index:1 !important;margin:0 !important;display:flex !important;align-items:center !important;justify-content:center !important}
   .center-caption{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-size:11px !important;color:#b5d8c9 !important;font-weight:600 !important;letter-spacing:.12em !important;z-index:1 !important}
   
   .trick-cards{
@@ -357,32 +357,29 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     top:50% !important;
     left:50% !important;
     transform:translate(-50%,-50%) !important;
-    width:200px !important;
-    height:200px !important;
-    display:grid !important;
-    grid-template-columns:1fr 1fr !important;
-    grid-template-rows:1fr 1fr 1fr !important;
-    gap:0 !important;
+    width:240px !important;
+    height:240px !important;
     z-index:3 !important;
     pointer-events:none !important;
+    display:block !important;
   }
   .trick-card{
-    position:static !important;
-    transform:none !important;
+    position:absolute !important;
+    transform:translate(-50%,-50%) !important;
     width:52px !important;
     height:74px !important;
     box-shadow:0 3px 8px rgba(0,0,0,.4) !important;
-    margin:auto !important;
+    margin:0 !important;
   }
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
   
-  /* Gridの配置 */
-  .trick-card.played-seat-3{ grid-column: 1; grid-row: 1; align-self: center; justify-self: center; } /* 左上 */
-  .trick-card.played-seat-2{ grid-column: 2; grid-row: 1; align-self: center; justify-self: center; } /* 右上 */
-  .trick-card.played-seat-4{ grid-column: 1; grid-row: 2; align-self: center; justify-self: center; } /* 左下 */
-  .trick-card.played-seat-1{ grid-column: 2; grid-row: 2; align-self: center; justify-self: center; } /* 右下 */
-  .trick-card.played-seat-0{ grid-column: 1 / 3; grid-row: 3; align-self: end; justify-self: center; } /* 下中央 */
+  /* 五角形（十字）配置 */
+  .trick-card.played-seat-3{left:20% !important;top:20% !important} /* 左上 */
+  .trick-card.played-seat-2{left:80% !important;top:20% !important} /* 右上 */
+  .trick-card.played-seat-4{left:20% !important;top:60% !important} /* 左下 */
+  .trick-card.played-seat-1{left:80% !important;top:60% !important} /* 右下 */
+  .trick-card.played-seat-0{left:50% !important;top:85% !important} /* 下 */
 
   /* オープン表示（かなり大きく） */
   .kitty-view{min-height:84px !important;gap:10px !important;margin-bottom:16px !important;display:flex !important;justify-content:center !important;align-items:center !important}
@@ -575,8 +572,8 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-card{font-size:7.5px !important;padding:2px 3px !important}
   .taken-label{font-size:6.5px !important}
   
-  .center-table{width:180px !important;height:180px !important}
-  .trick-cards{width:180px !important;height:180px !important}
+  .center-table{width:200px !important;height:200px !important}
+  .trick-cards{width:200px !important;height:200px !important}
   .trick-card{width:46px !important;height:66px !important}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
