@@ -1,4 +1,4 @@
-import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy } from './constants.js';
+import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, winningEntry } from './ai-tactics.js';
 
 function simRound(hands, round, matchScores, params) {
@@ -16,7 +16,7 @@ function simRound(hands, round, matchScores, params) {
   if (high.player < 0) high = { num: 13, suit: SUITS[0], player: matchScores.indexOf(Math.min(...matchScores)) };
 
   const nap = high.player, trump = high.suit, num = high.num;
-  const contractBase = { nap, suit: trump, solo: false, deputy: -1 }; // 基本契約
+  const contractBase = { nap, suit: trump, solo: false, deputy: -1 };
   hands[nap].push(...kitty); sortHand(hands[nap]);
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
@@ -63,7 +63,8 @@ function simRound(hands, round, matchScores, params) {
         if (!voids[seat]) voids[seat] = {};
         voids[seat][trick[0].card.suit] = true;
       }
-      played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id });
+      // ★修正: seat を記録
+      played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat: seat });
       if (!revealed && chosen.id === call.id) revealed = true;
       trick.push({ seat, card: chosen });
       hands[seat] = hand.filter(c => c.id !== chosen.id);
