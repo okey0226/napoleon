@@ -349,18 +349,30 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .taken-card.red{color:#f5b3a8 !important;background:rgba(198,69,63,.25) !important}
 
   /* 中央の場札：楕円の中央にコンパクト配置 */
-  .center-table{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:55vw !important;min-height:0 !important;gap:2px !important;z-index:1 !important;margin:0 !important}
+  .center-table{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:70vw !important;height:50vw !important;max-width:300px !important;max-height:220px !important;min-height:0 !important;gap:2px !important;z-index:1 !important;margin:0 !important;display:flex !important;align-items:center !important;justify-content:center !important}
   .center-caption{font-size:10px !important;color:#b5d8c9 !important;font-weight:600 !important;letter-spacing:.12em !important;margin-bottom:2px !important}
-  .trick-cards{position:absolute !important;inset:0 !important;z-index:3 !important;width:100% !important;height:100% !important;pointer-events:none !important}
+  .trick-cards{
+    position:absolute !important;
+    top:50% !important;
+    left:50% !important;
+    transform:translate(-50%,-50%) !important;
+    width:70vw !important;
+    height:50vw !important;
+    max-width:300px !important;
+    max-height:220px !important;
+    z-index:3 !important;
+    pointer-events:none !important;
+    display:block !important
+  }
   .trick-card{width:50px !important;height:72px !important;box-shadow:0 3px 8px rgba(0,0,0,.4) !important;z-index:3 !important}
   .trick-card .rank{font-size:15px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:14px !important;left:5px !important;top:21px !important}
   /* 場札の座標：楕円の中央にコンパクトに配置（席の内側） */
-  .trick-card.played-seat-3{left:36% !important;top:38% !important}
-  .trick-card.played-seat-2{left:64% !important;top:38% !important}
-  .trick-card.played-seat-4{left:36% !important;top:52% !important}
-  .trick-card.played-seat-1{left:64% !important;top:52% !important}
-  .trick-card.played-seat-0{left:50% !important;top:64% !important}
+  .trick-card.played-seat-3{left:22% !important;top:22% !important}
+  .trick-card.played-seat-2{left:78% !important;top:22% !important}
+  .trick-card.played-seat-4{left:22% !important;top:62% !important}
+  .trick-card.played-seat-1{left:78% !important;top:62% !important}
+  .trick-card.played-seat-0{left:50% !important;top:82% !important}
 
   .kitty-view{min-height:44px !important;gap:5px !important}
   .kitty-view .card{width:38px !important;height:54px !important;box-shadow:0 3px 8px rgba(0,0,0,.3) !important}
@@ -450,12 +462,12 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card{width:44px !important;height:64px !important}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
-  .trick-card.played-seat-3{left:35% !important;top:38% !important}
-  .trick-card.played-seat-2{left:65% !important;top:38% !important}
-  .trick-card.played-seat-4{left:35% !important;top:52% !important}
-  .trick-card.played-seat-1{left:65% !important;top:52% !important}
-  .trick-card.played-seat-0{left:50% !important;top:64% !important}
-  .center-table{width:50vw !important}
+  .trick-card.played-seat-3{left:22% !important;top:22% !important}
+  .trick-card.played-seat-2{left:78% !important;top:22% !important}
+  .trick-card.played-seat-4{left:22% !important;top:62% !important}
+  .trick-card.played-seat-1{left:78% !important;top:62% !important}
+  .trick-card.played-seat-0{left:50% !important;top:82% !important}
+  .center-table{width:70vw !important;height:50vw !important;max-width:300px !important;max-height:220px !important}
   .hand .card{width:54px !important;height:80px !important;margin-left:-16px !important}
   .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
   .hand .card .suit{font-size:15px !important;left:4px !important;top:22px !important}
