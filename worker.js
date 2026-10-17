@@ -1,5 +1,5 @@
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand } from './constants.js';
-import { winningEntry, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, cardPower } from './ai-tactics.js';
+import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 
 export const schema = [
