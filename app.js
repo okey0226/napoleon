@@ -21,6 +21,24 @@ function showOpenKitty(){const label=document.createElement('span');label.classN
 function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r,id:s+r})));for(let i=d.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
+// ===== 役札判定の整理 =====
+function isMighty(c){return c.id==='♠A'}
+function isTrumpJ(c,suit){return suit!=='NT'&&c.rank==='J'&&c.suit===suit}
+function isOffJ(c,suit){
+  if(suit==='NT'||c.rank!=='J'||c.suit===suit)return false;
+  const isBlack=(s)=>s==='♣'||s==='♠';
+  return isBlack(c.suit)===isBlack(suit);
+}
+function isCalledCard(c){
+  return g.contract?.call&&c.id===g.contract.call.id;
+}
+function isRoleCard(c,suit){
+  return isMighty(c)||isTrumpJ(c,suit)||isOffJ(c,suit)||isCalledCard(c);
+}
+function isSame2(c,trick){
+  return c.id==='♥Q'&&trick.some(x=>x.card.id==='♠A');
+}
+
 function startLocal(){
   closeOnline();
   g.localLog=[];
@@ -484,7 +502,6 @@ function kittyStart(){
     return
   }
   let discardPool=g.players[n].hand.slice();
-  // 強いカード（A,K,Q,J,10）は残し、弱いカードを捨てる
   discardPool.sort((a,b)=>cardValue(a)-cardValue(b));
   let drop=discardPool.slice(0,2);
   g.players[n].hand=g.players[n].hand.filter(c=>!drop.includes(c));
@@ -605,13 +622,10 @@ function chooseLocalBotCard(i){
   const napPoints=g.points.reduce((n,x,seat)=>n+(seat===g.contract.nap||!g.contract.solo&&seat===g.contract.deputy?x:0),0);
   const alliancePoints=g.points.reduce((n,x,seat)=>n+(seat!==g.contract.nap&&(g.contract.solo||seat!==g.contract.deputy)?x:0),0);
 
-  // 副官の判定
   const isDeputy=i!==g.contract.nap&&!g.contract.solo&&(g.contract.revealedCall?i===g.contract.deputy:g.players[i].hand.some(c=>c.id===g.contract.call?.id));
   const calledLead=isDeputy&&g.trick.length>0&&g.trick[0].player===g.contract.nap&&(g.trick[0].card.suit===g.contract.call?.suit||g.contract.suit!=='NT'&&g.trick[0].card.suit===g.contract.suit);
 
-  // 副官が親のリードに応える場合は専用ロジック
   if(calledLead){const choice=chooseLocalDeputyCard(i,h);if(choice)return choice}
-  // ナポレオン軍が既に立ちを達成している（オーバーしないようにする）場合
   if(level>=2&&napSide&&g.contract.num<20&&napPoints>=g.contract.num&&alliancePoints===0){
     if(!g.trick.length)return low(h);
     const safe=h.filter(c=>winning(g.trick.concat([{player:i,card:c}])).player!==i);
@@ -620,16 +634,13 @@ function chooseLocalBotCard(i){
   if(isDeputy){const choice=chooseLocalDeputyCard(i,h);if(choice)return choice}
   if(level===1)return h[Math.floor(Math.random()*h.length)];
 
-  // リード時
   if(!g.trick.length){
     const leadValue=c=>cardValue(c)+(c.rank==='A'?3:c.rank==='K'?1:0)+g.players[i].hand.filter(x=>x.suit===c.suit).length*.25;
-    // 強い札（A、マイティ、J）があれば優先的に出す
     const strongLead=h.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
     if(strongLead.length&&Math.random()<0.4)return strongLead.sort((a,b)=>leadValue(b)-leadValue(a))[0];
     return h.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0]
   }
 
-  // フォロー時
   const winningCards=h.filter(c=>winning(g.trick.concat([{player:i,card:c}])).player===i),
     current=winning().player,
     points=g.trick.filter(e=>POINT.includes(e.card.rank)).length,
@@ -640,11 +651,8 @@ function chooseLocalBotCard(i){
     const safe=h.filter(c=>winning(g.trick.concat([{player:i,card:c}])).player!==i);
     return low(safe.length?safe:h)
   }
-  // 相手が勝っていて、かつ得点札があるなら勝ちに行く
   if(winningCards.length&&(points>0||g.trick.length===4||level===3&&points>=2))return low(winningCards);
-  // 得点札がなく、レベル3なら温存する（捨てる）
   if(level===3&&points===0&&g.trick.length<4){
-    // 相手が勝つなら弱いカードを捨てる
     return low(h)
   }
   return low(h)
@@ -654,7 +662,6 @@ function chooseLocalDeputyCard(i,h){
   const contract=g.contract,nap=contract.nap,call=contract.call,trumpSuit=contract.suit,ownSide='nap',led=g.trick[0]?.card.suit,lastSeat=g.trick.length===4;
   const sideOf=seat=>seat===nap||(!contract.solo&&(contract.revealedCall?seat===contract.deputy:g.players[seat].hand.some(c=>c.id===call?.id)))?'nap':'alliance';
   const isFace=card=>POINT.includes(card.rank),sameColor=(a,b)=>['♣','♠'].includes(a)===['♣','♠'].includes(b);
-  const isRole=card=>card.id===call?.id||card.id==='♠A'||trumpSuit!=='NT'&&card.rank==='J'&&(card.suit===trumpSuit||sameColor(card.suit,trumpSuit));
   const winnerWith=card=>winning(g.trick.concat([{player:i,card}]));
   const teamWinningCards=h.filter(card=>sideOf(winnerWith(card).player)===ownSide);
   const canEnemyOvertake=card=>{
@@ -697,7 +704,7 @@ function chooseLocalDeputyCard(i,h){
   const calledLead=g.trick[0].player===nap&&(led===call?.suit||trumpSuit!=='NT'&&led===trumpSuit);
   if(calledLead){
     if(lastSeat){
-      const delayed=safeTeamWins.filter(card=>!isRole(card));
+      const delayed=safeTeamWins.filter(card=>!isRoleCard(card,trumpSuit));
       if(delayed.length){const points=delayed.filter(isFace);return (points.length?points:delayed).sort((a,b)=>cardValue(b)-cardValue(a))[0]}
     }
     if(trumpSuit==='NT'&&call?.rank==='A'&&call.id!=='♠A'&&led===call.suit&&g.trickNo>0){
@@ -708,7 +715,7 @@ function chooseLocalDeputyCard(i,h){
     }
     if(trumpSuit==='NT'&&call?.rank==='2'){const called=h.find(card=>card.id===call.id);if(called)return called}
     const called=h.find(card=>card.id===call?.id);if(called)return called;
-    const roleCards=h.filter(isRole);
+    const roleCards=h.filter(card=>isRoleCard(card,trumpSuit));
     if(roleCards.length)return roleCards.sort((a,b)=>cardPower({player:i,card:b},g.trick.concat([{player:i,card:b}]))-cardPower({player:i,card:a},g.trick.concat([{player:i,card:a}])))[0];
   }
 
@@ -735,7 +742,6 @@ function playTurn(){
     if(g.phase!=='play')return;
     const chosen=chooseLocalBotCard(g.active);
     const legalCardsList=legal(g.active);
-    // 万が一無効なカードや undefined が返った場合は、ランダムな合法手を出す
     if(chosen&&legalCardsList.some(x=>x.id===chosen.id)){
       play(g.active,chosen)
     }else if(legalCardsList.length){
