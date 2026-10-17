@@ -808,50 +808,48 @@ function play(i,c){
   },1250)
 }
 
+// ===== 新レート計算 =====
+function declarerReward(bid){
+  return 3 + (bid - 13) * 1.5 + Math.max(0, bid - 15) * Math.max(0, bid - 15) * 0.8;
+}
+function declarerPenalty(bid){
+  return 2 + (bid - 13) * 2.0;
+}
 function finalRatingDeltas(scores,art,ratings,matchStats){
   const meanArt=art.reduce((n,x)=>n+x,0)/5;
   return scores.map((score,seat)=>{
     const stat=matchStats[seat]||{};
     let delta=0;
-    
     const declarerAttempts=stat.declarerAttempts||0;
     const declarerSuccesses=stat.declarerSuccesses||0;
+    const bidTotal=stat.bidTotal||0;
     const exactSuccesses=stat.exactSuccesses||0;
     const boldSuccesses=stat.boldSuccesses||0;
-    const soloSuccesses=stat.soloSuccesses||0;
     const soloAttempts=stat.soloAttempts||0;
-    const bidTotal=stat.bidTotal||0;
-    
-    if(declarerAttempts>0){
-      delta+=declarerAttempts*1.5;
-      delta+=declarerSuccesses*2.0;
-      delta+=exactSuccesses*3.0;
-      delta+=boldSuccesses*5.0;
-      const failures=declarerAttempts-declarerSuccesses;
-      delta-=failures*2.0;
-      const avgBid=bidTotal/declarerAttempts;
-      delta+=Math.max(0,avgBid-13)*0.5;
-    }
-    
+    const soloSuccesses=stat.soloSuccesses||0;
     const deputyAttempts=stat.deputyAttempts||0;
     const deputySuccesses=stat.deputySuccesses||0;
+    if(declarerAttempts>0){
+      const avgBid=bidTotal/Math.max(1,declarerAttempts);
+      const failures=declarerAttempts-declarerSuccesses;
+      delta+=declarerSuccesses*declarerReward(avgBid);
+      delta-=failures*declarerPenalty(avgBid);
+      delta+=exactSuccesses*3.0;
+      delta+=boldSuccesses*5.0;
+    }
+    if(soloAttempts>0){
+      delta+=soloAttempts*0.5;
+      delta+=soloSuccesses*8.0;
+    }
     if(deputyAttempts>0){
       delta+=deputyAttempts*0.5;
       delta+=deputySuccesses*1.5;
     }
-    
-    if(soloAttempts>0){
-      delta+=soloAttempts*2.0;
-      delta+=soloSuccesses*6.0;
-    }
-    
     const rank=1+scores.filter(s=>s>score).length;
     if(rank===5)delta-=5.0;
     else if(rank===4)delta-=1.5;
     else if(rank===1)delta+=2.0;
-    
     delta+=(art[seat]-meanArt)*0.5;
-    
     return {
       seat,
       delta:Math.round(delta*10)/10,
