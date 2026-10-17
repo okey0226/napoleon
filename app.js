@@ -1470,7 +1470,7 @@ function renderStrategyLab({strategies,insights,generations}){
 
   wrap.innerHTML=`
     <div class="strategy-actions">
-      <button id="run-selfplay" class="primary-button">自己対戦を実行（1000局）</button>
+      <button id="run-selfplay" class="primary-button">自己対戦を実行（100局）</button>
       <button id="refresh-strategy" class="secondary-button">再読み込み</button>
       <span id="selfplay-status" class="micro-copy"></span>
     </div>
@@ -1483,9 +1483,13 @@ function renderStrategyLab({strategies,insights,generations}){
   $('run-selfplay').onclick=async()=>{
     const btn=$('run-selfplay'),status=$('selfplay-status');
     btn.disabled=true;
-    status.textContent='自己対戦1000局を実行中…（10〜20秒かかります）';
+    status.textContent='自己対戦100局を実行中…（数秒かかります）';
     try{
-      const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:1000})});
+      const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
       const data=await res.json();
       if(data.ok){
         status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;
@@ -1495,7 +1499,7 @@ function renderStrategyLab({strategies,insights,generations}){
         status.textContent='エラー: '+(data.error||'unknown');
       }
     }catch(e){
-      status.textContent='実行できませんでした';
+      status.textContent='実行できませんでした: ' + (e.message || 'ネットワークエラー');
     }finally{
       btn.disabled=false;
     }
