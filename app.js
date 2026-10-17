@@ -1212,4 +1212,132 @@ function drawOnlineSeats(s){
     const role=p.approved?'承認済み':p.role||'';
     e.classList.toggle('deputy-seat',role==='副官');
     e.innerHTML='<div class="seat-name">'+p.name+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(leadSeat===i?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';
-    addTakenCards(e
+    addTakenCards(e,p.taken);
+    box.append(e)
+  })
+}
+
+function drawOnlineHand(){
+  const box=$('hand'),scrollLeft=box.scrollLeft,discarding=g.onlineState?.phase==='discard'&&g.mySeat===g.onlineState.active;
+  box.classList.toggle('discard-mode',discarding);
+  $('game-screen').classList.toggle('discarding',discarding);
+  box.replaceChildren();
+  (g.privateHand||[]).forEach(c=>{
+    const e=cardEl(c,'');
+    const legal=(g.onlineLegal||[]).includes(c.id);
+    if(g.onlineState?.phase==='discard'&&g.mySeat===g.onlineState.active){
+      const protectedCall=g.mySeat===g.onlineState.contract?.nap&&g.onlineState.contract?.call?.id===c.id;
+      e.classList.add('playable');
+      e.classList.toggle('protected',protectedCall);
+      e.classList.toggle('selected',g.onlineDiscard?.has(c.id));
+      e.onclick=()=>{
+        if(protectedCall){toast('指名札は捨てられません');return}
+        g.onlineDiscard=g.onlineDiscard||new Set();
+        if(g.onlineDiscard.has(c.id))g.onlineDiscard.delete(c.id);
+        else if(g.onlineDiscard.size<2)g.onlineDiscard.add(c.id);
+        const selected=g.onlineDiscard.has(c.id);
+        e.classList.toggle('selected',selected);
+        e.setAttribute('aria-pressed',String(selected));
+        const count=$('online-discard-count'),confirm=$('online-discard');
+        if(count)count.textContent=g.onlineDiscard.size+' / 2 SELECTED';
+        if(confirm)confirm.disabled=g.onlineDiscard.size!==2
+      }
+    }else if(g.onlineState?.phase==='play'&&g.mySeat===g.onlineState.active&&legal){
+      e.classList.add('playable');
+      e.classList.toggle('selected',g.onlineSelectedCard===c.id);
+      e.onclick=()=>{g.onlineSelectedCard=g.onlineSelectedCard===c.id?null:c.id;drawOnlineHand();drawOnlineControls(g.onlineState)}
+    }
+    box.append(e)
+  });
+  if(discarding)box.scrollLeft=scrollLeft;
+  $('hand-count').textContent=(g.privateHand||[]).length+'枚'
+}
+
+function drawOnlineControls(s){
+  ['auction-panel','call-panel','play-panel'].forEach(id=>$(id).classList.add('hidden'));
+  if(s.phase==='appeal-offer'||s.phase==='appeal-response'){
+    const p=$('auction-panel');p.classList.remove('hidden');
+    if(s.phase==='appeal-offer'){
+      p.innerHTML=g.mySeat===s.active?'<div class="panel-title">オーラス・アピール</div><div class="micro-copy">4位に各J・マイティの所持を尋ねますか？</div><div class="panel-row"><button id="online-appeal" class="small-action">アピールする</button><button id="online-appeal-skip" class="small-action pass">競りへ進む</button></div>':'<div class="panel-title">5位のアピール選択待ち</div>';
+      if(g.mySeat===s.active){$('online-appeal').onclick=()=>sendGame({type:'appeal'});$('online-appeal-skip').onclick=()=>sendGame({type:'skip-appeal'})}
+    }else{
+      p.innerHTML=g.mySeat===s.active?'<div class="panel-title">5位からアピール</div><div class="micro-copy">所持するJ・マイティを申告するか、申告せず立つか選んでください。</div><div class="panel-row"><button id="online-appeal-disclose" class="small-action">札を申告する</button><button id="online-appeal-stand" class="small-action pass">申告せず立つ</button></div>':'<div class="panel-title">4位のアピール回答待ち</div>';
+      if(g.mySeat===s.active){$('online-appeal-disclose').onclick=()=>sendGame({type:'appeal-declare'});$('online-appeal-stand').onclick=()=>sendGame({type:'appeal-stand'})}
+    }
+    return
+  }
+  if(s.phase==='auction'){
+    const p=$('auction-panel');p.classList.remove('hidden');
+    const high=s.auction.high,minBid=s.auction.minBid||13,
+      historyPanel=bidHistoryHTML(s.bidHistory,seat=>s.players[seat]?.name||'COM'),
+      ruleNote=s.round>=10?'<div class="micro-copy">オールラスト · 最低宣言 '+minBid+' · 得点2倍 · 立ち必須</div>':'';
+    if(!s.auction.active.includes(g.mySeat)){p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+(high.num<13?'なし':s.players[high.player].name+' · '+high.num+high.suit)+'</strong></div><div class="micro-copy">承認済み</div>'+ruleNote+historyPanel;return}
+    let suit=g.onlineSuit||'♠',bid=Math.max(minBid,g.onlineBid||13);
+    g.onlineBid=bid;
+    p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+(high.num<13?'なし':s.players[high.player].name+' · '+high.num+high.suit)+'</strong></div>'+ruleNote+'<div class="panel-row">'+['♣','♦','♥','♠','NT'].map(x=>'<button class="suit-choice '+(x===suit?'selected':'')+'" data-osuit="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row"><button class="small-action" id="online-minus">−</button><span class="bid-number">'+bid+'</span><button class="small-action" id="online-plus">＋</button></div><div class="panel-row"><button class="small-action pass" id="online-approve" '+(high.player===g.mySeat&&s.auction.active.length>1||s.round>=10&&high.num<13?'disabled':'')+'>承認</button><button class="small-action" id="online-bid">宣言する</button></div>'+historyPanel;
+    p.querySelectorAll('[data-osuit]').forEach(b=>b.onclick=()=>{g.onlineSuit=b.dataset.osuit;sendGame({type:'auction-activity'});drawOnlineControls(s)});
+    $('online-minus').onclick=()=>{g.onlineBid=Math.max(minBid,bid-1);sendGame({type:'auction-activity'});drawOnlineControls(s)};
+    $('online-plus').onclick=()=>{g.onlineBid=Math.min(20,bid+1);sendGame({type:'auction-activity'});drawOnlineControls(s)};
+    $('online-approve').onclick=()=>{sendGame({type:'auction-activity'});sendGame({type:'approve'})};
+    $('online-bid').onclick=()=>{sendGame({type:'auction-activity'});sendGame({type:'bid',num:bid,suit:suit})};
+    return
+  }
+  if(s.phase==='call'&&s.active===g.mySeat){
+    const p=$('call-panel');p.classList.remove('hidden');
+    let suit=g.onlineSuit||'♠',rank=g.onlineRank||'A';
+    const discarded=(s.kitty||[]).some(c=>c.suit===suit&&c.rank===rank);
+    p.innerHTML='<div class="panel-title">副官に指名するカード</div><div class="call-card-preview"><div id="online-call-preview"></div><div><div class="micro-copy">今回の指名</div><strong>'+suit+rank+'</strong><div class="call-warning">'+(discarded?'捨て札は指名できません':'自分の手札ならひとり立ち')+'</div></div></div><div class="panel-row">'+['♣','♦','♥','♠'].map(x=>'<button class="suit-choice '+(x===suit?'selected ':'')+(x==='♥'||x==='♦'?'red':'')+'" data-csuit="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row call-ranks">'+RANKS.map(x=>'<button class="small-action call-rank-choice '+(x===rank?'selected':'')+'" data-crank="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row"><button id="online-call" class="small-action" '+(discarded?'disabled':'')+'>決定</button></div>';
+    p.querySelector('#online-call-preview').replaceChildren(cardEl({suit,rank},'call-preview-card'));
+    p.querySelectorAll('[data-csuit]').forEach(b=>b.onclick=()=>{g.onlineSuit=b.dataset.csuit;drawOnlineControls(s)});
+    p.querySelectorAll('[data-crank]').forEach(b=>b.onclick=()=>{g.onlineRank=b.dataset.crank;drawOnlineControls(s)});
+    $('online-call').onclick=()=>sendGame({type:'call',suit:suit,rank:rank});
+    return
+  }
+  if(s.phase==='discard'&&s.active===g.mySeat){
+    const p=$('call-panel');p.classList.remove('hidden');
+    p.innerHTML='<div class="panel-title">手札から2枚を選んで捨ててください</div><div class="panel-row"><span class="micro-copy" id="online-discard-count">'+(g.onlineDiscard?.size||0)+' / 2 SELECTED</span><button id="online-discard" class="small-action" '+(g.onlineDiscard?.size===2?'':'disabled')+'>決定</button></div>';
+    $('online-discard').onclick=()=>sendGame({type:'discard',cards:Array.from(g.onlineDiscard||[])});
+    return
+  }
+  if(s.phase==='play'&&s.active===g.mySeat){
+    const p=$('play-panel');p.classList.remove('hidden');
+    const card=(g.privateHand||[]).find(c=>c.id===g.onlineSelectedCard&&(g.onlineLegal||[]).includes(c.id));
+    if(!card){g.onlineSelectedCard=null;p.innerHTML='<div class="panel-title">出すカードを手札から選んでください</div>';return}
+    p.innerHTML='<div class="panel-title">このカードを出しますか？</div><div class="play-confirm-preview"><div id="online-play-card"></div><span class="micro-copy">選択中</span></div><div class="play-confirm-actions"><button id="cancel-online-play" class="small-action">選び直す</button><button id="confirm-online-play" class="primary-button">出す</button></div>';
+    p.querySelector('#online-play-card').replaceChildren(cardEl(card,'play-confirm-card'));
+    p.querySelector('#cancel-online-play').onclick=()=>{g.onlineSelectedCard=null;drawOnlineHand();drawOnlineControls(s)};
+    p.querySelector('#confirm-online-play').onclick=()=>{const id=g.onlineSelectedCard;if(!id||!(g.onlineLegal||[]).includes(id))return;g.onlineSelectedCard=null;p.innerHTML='<div class="panel-title">カードを送信中…</div>';drawOnlineHand();sendGame({type:'play',card:id})};
+    return
+  }
+}
+
+function showOnlineResult(s){
+  const r=$('result-panel'),result=s.result,final=s.phase==='result',
+    format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),
+    scores=result.scoreChanges||[];
+  r.classList.remove('hidden');
+  let content;
+  if(final){
+    const rating=result.ratingChanges?.[g.mySeat],
+      rows=s.players.map((p,i)=>{
+        const change=result.ratingChanges?.[i],
+          roundDelta=Number((result.scoreChanges||[]).find(x=>x.seat===i)?.delta||0),
+          rawArt=Number((result.matchArt||[])[i]||0),
+          delta=change?format(change.delta):'—',
+          b=change?.breakdown||{};
+        return '<div class="round-score-row"><span>'+p.name+' · ROUND Δ '+format(roundDelta)+' · MATCH '+format((result.matchScores||[])[i]||0)+' / ART '+format(rawArt)+'</span><strong class="'+(change?.delta<0?'score-down':'score-up')+'">'+(s.mode==='ranked'?'RATE Δ ':'')+delta+'<small>順位 '+(b.rank||'—')+' · 立ち '+(b.declarerSuccesses||0)+'/'+(b.declarerAttempts||0)+' · EXACT '+(b.exactSuccesses||0)+' · BOLD '+(b.boldSuccesses||0)+' · 副官 '+(b.deputySuccesses||0)+' · SOLO '+(b.soloSuccesses||0)+'</small></strong></div>'
+      }).join(''),
+      summary=s.mode==='ranked'&&rating?'<p>NEW RATE '+rating.rating+' · Δ '+format(rating.delta)+'</p>':'<p>MATCH COMPLETE</p>';
+    content='<div class="eyebrow">MATCH COMPLETE</div><h2>RATE BREAKDOWN</h2>'+summary+'<div class="round-score-list">'+rows+'</div><button id="online-home" class="primary-button">BACK TO MENU</button>'
+  }else{
+    const rows=s.players.map((p,i)=>{
+      const score=scores.find(x=>x.seat===i),
+        role=score?.role==='ナポレオン'?'NAP':score?.role==='副官'?'DEPUTY':'ALLY';
+      return '<div class="round-score-row"><span>'+p.name+' · '+role+'</span><strong>ROUND Δ '+format(score?.delta||0)+'<small>TOTAL '+format((result.matchScores||[])[i]||0)+'</small></strong></div>'
+    }).join('');
+    content='<div class="eyebrow">ROUND '+String(result.round).padStart(2,'0')+' · RESULT</div><h2>'+(result.made?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+result.bid+result.suit+' · POINTS '+result.points+(result.solo?' · SOLO':'')+'</p><div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div><button id="next-online-round" class="primary-button">'+(result.allLastReplay?'ALL-LAST AGAIN':'NEXT ROUND')+'</button>'
+  }
+  r.innerHTML=content;
+  if(final)$('online-home').onclick=()=>{closeOnline();screen('home-screen')};
+  else $('next-online-round').onclick=()=>sendGame({type:'next-round'})
+}
