@@ -257,7 +257,8 @@ function playCard(m, seat, id, room, env) {
   const previous = m.trick.length ? winningEntry(m.contract, m.trickNo, m.trick) : null, hand = m.seats[seat].hand, teamOf = i => i === m.contract.nap || !m.contract.solo && i === m.contract.deputy ? "nap" : "alliance", feedOpportunity = !!(previous && previous.seat !== seat && m.contract.revealedCall && teamOf(previous.seat) === teamOf(seat) && legal.some(x => ["10", "J", "Q", "K", "A"].includes(x.rank))), feedCard = feedOpportunity && ["10", "J", "Q", "K", "A"].includes(card.rank);
   hand.splice(hand.findIndex(x => x.id === id), 1);
   m.trick.push({ seat, card, feedOpportunity, feedCard });
-  m.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id });
+  // ★修正: seat を記録
+  m.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat: seat });
   if (m.trick.length > 1) { const ledSuit = m.trick[0].card.suit; if (card.suit !== ledSuit) { if (!m.voids[seat]) m.voids[seat] = {}; m.voids[seat][ledSuit] = true; } }
   const reveal = m.contract.call?.id === card.id && !m.contract.revealedCall; let raisedNotice = "";
   if (reveal) {
@@ -330,7 +331,7 @@ function botAction(m, room) {
       hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
       playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
       isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy),
-      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap) : false,
+      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
       isRevealed: m.contract.revealedCall,
       isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
       lastSeat: m.trick.length === 4,
