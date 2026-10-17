@@ -218,7 +218,14 @@ function simRatingDeltas(matchScores,matchArt,contracts){
     return{delta:Math.round(delta*10)/10};
   });
 }
+
+// ★修正：実行直前に必ずテーブルの存在を確認・作成する
 async function runSelfPlayBatch(env,matchCount=1000){
+  try{
+    await env.DB.batch(schema.map(sql=>env.DB.prepare(sql)));
+  }catch(e){
+    console.error("DB schema check failed in runSelfPlayBatch",e);
+  }
   let existing=[];
   try{const{results}=await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC LIMIT 5").all();existing=results}catch{}
   const baseline=existing.length?existing.map(r=>JSON.parse(r.params)):[defaultStrategy()];
