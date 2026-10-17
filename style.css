@@ -277,7 +277,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     min-height:0 !important;
     padding:0 !important;
     margin:0 !important;
-    display:flex !important;
+    /* display:flex !important; を削除（hiddenを有効にするため） */
     flex-direction:column !important;
     overflow:hidden !important;
     background:#0b2620 !important
@@ -374,10 +374,12 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card.played-seat-1{left:78% !important;top:62% !important}
   .trick-card.played-seat-0{left:50% !important;top:82% !important}
 
-  .kitty-view{min-height:44px !important;gap:5px !important}
-  .kitty-view .card{width:38px !important;height:54px !important;box-shadow:0 3px 8px rgba(0,0,0,.3) !important}
-  .kitty-view .card .rank{font-size:13px !important;left:4px !important;top:4px !important}
-  .kitty-view .card .suit{font-size:12px !important;left:4px !important;top:17px !important}
+  /* オープン表示（かなり大きく） */
+  .kitty-view{min-height:84px !important;gap:10px !important;margin-bottom:16px !important;display:flex !important;justify-content:center !important;align-items:center !important}
+  .kitty-view .card{width:72px !important;height:100px !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
+  .kitty-view .card .rank{font-size:24px !important;left:6px !important;top:6px !important}
+  .kitty-view .card .suit{font-size:22px !important;left:6px !important;top:30px !important}
+  .kitty-view .open-label{font-size:14px !important;font-weight:800 !important;margin-right:8px !important;color:#e1bc70 !important}
 
   .auction-clock{font-size:10px !important;padding:2px 7px !important}
   .bid-history{margin-top:6px !important;padding-top:4px !important}
@@ -415,7 +417,6 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     position:relative !important;
     display:flex !important;
     justify-content:center !important;
-    margin-bottom:12px !important;
     z-index:5 !important;
     order: -1 !important; /* パネルより上に表示 */
   }
@@ -423,7 +424,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
     position:relative !important;
     top:auto !important;left:auto !important;bottom:auto !important;
     transform:none !important;
-    margin:0 auto !important;
+    margin:0 auto 20px !important;
     z-index:10 !important;
     width:92% !important;
     max-width:360px !important;
@@ -559,5 +560,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
   .hand .card .suit{font-size:15px !important;left:4px !important;top:22px !important}
   .hand.discard-mode .card{width:54px !important;height:80px !important;flex:0 0 54px !important}
-  .kitty-view .card{width:34px !important;height:48px !important}
+  .kitty-view .card{width:56px !important;height:78px !important}
+  .kitty-view .card .rank{font-size:20px !important;left:5px !important;top:5px !important}
+  .kitty-view .card .suit{font-size:18px !important;left:5px !important;top:25px !important}
 }
