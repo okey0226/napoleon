@@ -12,5 +12,6 @@ directory = "."
 binding = "ASSETS"
 run_worker_first = ["/api/*", "/ws", "/room"]
 
+# ▼ ここが最重要：1時間おき（毎時0分）に自動で自己対戦を回す設定 ▼
 [triggers]
 crons = ["0 * * * *"]
