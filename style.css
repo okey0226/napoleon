@@ -387,7 +387,6 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
 
-  /* 下段の場札を外側へ */
   .trick-card.played-seat-3{left:28% !important;top:22% !important}
   .trick-card.played-seat-2{left:72% !important;top:22% !important}
   .trick-card.played-seat-4{left:20% !important;top:55% !important}
@@ -415,14 +414,14 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important}
   .game-screen.auctioning .action-panel{position:relative !important;top:auto !important;left:auto !important;bottom:auto !important;transform:none !important;margin:0 auto 20px !important;z-index:10 !important;width:92% !important;max-width:360px !important}
 
-  /* 手札：上部に寄せて大きく */
+  /* 手札：画面幅に収まるように重なりを深く */
   .hand-dock{flex:0 0 auto !important;min-height:120px !important;max-height:160px !important;height:auto !important;padding:6px 0 22px 0 !important;margin:0 !important;flex-shrink:0 !important;display:flex !important;flex-direction:column !important;justify-content:center !important;align-items:center !important;background:linear-gradient(0deg,rgba(3,16,13,.95),rgba(3,16,13,.6)) !important;border-top:1px solid rgba(225,188,112,.35) !important;position:relative !important;z-index:20 !important}
   .hand-label{position:absolute !important;top:2px !important;left:10px !important;font-size:10px !important;color:#e8d7a9 !important;font-weight:700 !important;letter-spacing:.06em !important}
-  .hand{height:auto !important;min-height:0 !important;padding:0 4px !important;margin:0 !important;gap:0 !important;display:flex !important;align-items:center !important;justify-content:center !important;overflow-x:auto !important;overflow-y:visible !important;width:100% !important}
-  .hand .card{width:70px !important;height:102px !important;margin-left:-22px !important;flex-shrink:0 !important;transition:transform .12s !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
+  .hand{height:auto !important;min-height:0 !important;padding:0 4px !important;margin:0 !important;gap:0 !important;display:flex !important;align-items:center !important;justify-content:center !important;overflow-x:hidden !important;overflow-y:visible !important;width:100% !important}
+  .hand .card{width:62px !important;height:90px !important;margin-left:-28px !important;flex-shrink:0 !important;transition:transform .12s !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
   .hand .card:first-child{margin-left:0 !important}
-  .hand .card .rank{font-size:22px !important;left:6px !important;top:5px !important;font-weight:900 !important}
-  .hand .card .suit{font-size:21px !important;left:6px !important;top:31px !important}
+  .hand .card .rank{font-size:20px !important;left:5px !important;top:4px !important;font-weight:900 !important}
+  .hand .card .suit{font-size:19px !important;left:5px !important;top:28px !important}
   .hand .card.playable:hover,.hand .card.selected{transform:translateY(-14px) !important}
 
   .game-screen.discarding .hand-dock{min-height:180px !important;max-height:210px !important;padding:14px 0 4px 0 !important;flex:0 0 auto !important}
@@ -450,7 +449,6 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
 
   .toast{font-size:11px !important;padding:9px 13px !important;bottom:16px !important}
 
-  /* Mypage / strategy lab モバイル */
   .performance-grid{grid-template-columns:1fr}
   .performance-card{padding:12px 14px}
   .performance-card>strong{font-size:22px}
@@ -488,9 +486,9 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
 
-  .hand .card{width:62px !important;height:90px !important;margin-left:-20px !important}
-  .hand .card .rank{font-size:20px !important;left:5px !important;top:4px !important}
-  .hand .card .suit{font-size:19px !important;left:5px !important;top:27px !important}
+  .hand .card{width:54px !important;height:78px !important;margin-left:-26px !important}
+  .hand .card .rank{font-size:18px !important;left:4px !important;top:3px !important}
+  .hand .card .suit{font-size:17px !important;left:4px !important;top:24px !important}
   .hand.discard-mode .card{width:60px !important;height:88px !important;flex:0 0 60px !important}
   .kitty-view .card{width:56px !important;height:78px !important}
   .kitty-view .card .rank{font-size:20px !important;left:5px !important;top:5px !important}
