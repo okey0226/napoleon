@@ -281,10 +281,18 @@ function generateInsights(strategies){
 
 export default {
   async scheduled(event,env,ctx){
+    if(!globalThis.__dbInitialized){
+      try{await env.DB.batch(schema.map(sql=>env.DB.prepare(sql)));globalThis.__dbInitialized=true}
+      catch(e){console.error("DB init failed on cron",e)}
+    }
     ctx.waitUntil(runSelfPlayBatch(env,1000).catch(e=>console.error("scheduled self-play failed",e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e=>console.error("session cleanup failed",e)));
   },
   async fetch(request,env){
+    if(!globalThis.__dbInitialized){
+      try{await env.DB.batch(schema.map(sql=>env.DB.prepare(sql)));globalThis.__dbInitialized=true}
+      catch(e){console.error("DB init failed",e)}
+    }
     const url=new URL(request.url);
     if(request.method==="POST"&&(url.pathname==="/api/account/register"||url.pathname==="/api/account/login")){
       let body;try{body=await request.json()}catch{return response({error:"入力を確認してください"},400)}
