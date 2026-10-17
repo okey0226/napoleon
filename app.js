@@ -1423,37 +1423,51 @@ async function loadStrategyLab(){
 
 function renderStrategyLab({strategies,insights,generations}){
   const wrap=$('strategy-content');
-  if(!strategies.length){
-    wrap.innerHTML='<p class="subcopy">まだ学習データがありません。「自己対戦を実行」ボタンを押してください。</p>';
-    return;
+  
+  let cards = '';
+  if (strategies.length === 0) {
+    cards = '<p class="subcopy" style="padding:10px 0;">まだ学習データがありません。上の「自己対戦を実行」ボタンから学習を開始してください。</p>';
+  } else {
+    cards = strategies.slice(0,5).map((s,i)=>{
+      const rank=i+1;
+      return `<article class="strategy-card rank-${rank}">
+        <div class="strategy-rank">#${rank}</div>
+        <div class="strategy-meta">
+          <span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span>
+          <strong>+${Number(s.avg_rating_delta||0).toFixed(2)} <small>pt/試合</small></strong>
+        </div>
+        <div class="strategy-roles">
+          <span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span>
+          <span>DEP ${(Number(s.deputy_win_rate)*100).toFixed(1)}%</span>
+          <span>ALLI ${(Number(s.alliance_win_rate)*100).toFixed(1)}%</span>
+        </div>
+      </article>`;
+    }).join('');
   }
+
   const paramNames={bidThreshold:'立ち強度',riskTolerance:'リスク許容',leadAggression:'リード積極性',followAggression:'フォロー積極性',trumpBonus:'切り札評価',mightyBonus:'マイティ評価',safeAceWeight:'A温存',roleCardPreservation:'役札温存',deputyFeedBias:'副官の絵札回し'};
-  const cards=strategies.slice(0,5).map((s,i)=>{
-    const rank=i+1;
-    return `<article class="strategy-card rank-${rank}">
-      <div class="strategy-rank">#${rank}</div>
-      <div class="strategy-meta">
-        <span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span>
-        <strong>+${Number(s.avg_rating_delta||0).toFixed(2)} <small>pt/試合</small></strong>
-      </div>
-      <div class="strategy-roles">
-        <span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span>
-        <span>DEP ${(Number(s.deputy_win_rate)*100).toFixed(1)}%</span>
-        <span>ALLI ${(Number(s.alliance_win_rate)*100).toFixed(1)}%</span>
-      </div>
-    </article>`;
-  }).join('');
-  const params=JSON.parse(strategies[0].params||'{}');
-  const paramRows=Object.entries(params).map(([k,v])=>
-    `<div class="param-row"><span>${paramNames[k]||k}</span><b>${Number(v).toFixed(2)}</b></div>`
-  ).join('');
-  const insightCards=insights.map(ins=>`<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join('');
-  const genRows=generations.slice(-10).map(gg=>`
-    <div class="gen-row">
-      <span>Gen ${gg.generation}</span>
-      <b>+${Number(gg.best_delta||0).toFixed(2)}pt</b>
-      <small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small>
-    </div>`).join('');
+  
+  let paramRows = '<p class="subcopy" style="padding:10px 0;">データなし</p>';
+  if (strategies.length > 0) {
+    const params=JSON.parse(strategies[0].params||'{}');
+    paramRows = Object.entries(params).map(([k,v])=>
+      `<div class="param-row"><span>${paramNames[k]||k}</span><b>${Number(v).toFixed(2)}</b></div>`
+    ).join('');
+  }
+
+  const insightCards = insights.length > 0 
+    ? insights.map(ins=>`<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join('')
+    : '<p class="subcopy" style="padding:10px 0;">データなし</p>';
+
+  const genRows = generations.length > 0
+    ? generations.slice(-10).map(gg=>`
+      <div class="gen-row">
+        <span>Gen ${gg.generation}</span>
+        <b>+${Number(gg.best_delta||0).toFixed(2)}pt</b>
+        <small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small>
+      </div>`).join('')
+    : '<p class="subcopy" style="padding:10px 0;">データなし</p>';
+
   wrap.innerHTML=`
     <div class="strategy-actions">
       <button id="run-selfplay" class="primary-button">自己対戦を実行（1000局）</button>
@@ -1465,6 +1479,7 @@ function renderStrategyLab({strategies,insights,generations}){
     <section class="strategy-section"><h2>学習インサイト</h2><div class="insight-list">${insightCards}</div></section>
     <section class="strategy-section"><h2>世代推移</h2><div class="gen-list">${genRows}</div></section>
   `;
+
   $('run-selfplay').onclick=async()=>{
     const btn=$('run-selfplay'),status=$('selfplay-status');
     btn.disabled=true;
