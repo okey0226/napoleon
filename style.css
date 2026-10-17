@@ -101,6 +101,38 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 .history-row{padding:13px 4px;border-bottom:1px solid var(--line);font-size:12px;color:#c4d0c8}
 .history-row:last-child{border-bottom:0}
 
+/* ===== マイページ詳細統計 ===== */
+.section-title{margin:20px 0 10px;font-size:11px;letter-spacing:.18em;color:#e8d7a9;font-weight:700;text-transform:uppercase;padding-left:10px;border-left:3px solid rgba(225,188,112,.55)}
+.performance-section{margin-top:20px}
+.performance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.performance-card{display:grid;gap:5px;padding:14px 16px;border:1px solid rgba(225,188,112,.18);border-radius:11px;background:linear-gradient(115deg,rgba(225,188,112,.06),rgba(5,20,16,.4))}
+.performance-card>span{font-size:10px;color:#a3b1a8;letter-spacing:.06em;font-weight:600}
+.performance-card>strong{font-size:24px;color:#f3d48e;font-variant-numeric:tabular-nums;line-height:1.1;font-weight:800}
+.performance-card>small{font-size:9px;color:#7f958a;font-variant-numeric:tabular-nums}
+.role-skill-section{margin-top:22px}
+.role-skill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.role-skill{display:grid;gap:11px;padding:15px 16px;border:1px solid rgba(226,239,230,.1);border-radius:13px;background:linear-gradient(135deg,rgba(10,28,24,.9),rgba(5,18,14,.85))}
+.role-skill.role-nap{border-color:rgba(225,188,112,.35)}
+.role-skill.role-dep{border-color:rgba(145,188,231,.28)}
+.role-skill.role-all{border-color:rgba(196,144,255,.25)}
+.role-skill-head{display:flex;align-items:center;gap:12px}
+.role-emblem{width:40px;height:40px;display:grid;place-items:center;flex:none;border-radius:11px;border:1px solid rgba(225,188,112,.35);background:rgba(225,188,112,.08);font-size:20px;color:#f3d48e;font-weight:700}
+.role-dep .role-emblem{border-color:rgba(145,188,231,.35);background:rgba(145,188,231,.08);color:#a3d0ee}
+.role-all .role-emblem{border-color:rgba(196,144,255,.35);background:rgba(196,144,255,.08);color:#c9a4ff}
+.role-title{flex:1;min-width:0}
+.role-title .eyebrow{font-size:9px;letter-spacing:.14em}
+.role-score{font-size:26px;font-weight:800;color:#f3d48e;line-height:1.05;font-variant-numeric:tabular-nums}
+.role-dep .role-score{color:#a3d0ee}
+.role-all .role-score{color:#c9a4ff}
+.role-score small{font-size:11px;font-weight:500;color:#8fa69a;margin-left:3px}
+.skill-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+.skill-bar>div{height:100%;border-radius:99px;background:linear-gradient(90deg,#d4a850,#f3d48e);transition:width .45s ease}
+.role-dep .skill-bar>div{background:linear-gradient(90deg,#5c9bcb,#a3d0ee)}
+.role-all .skill-bar>div{background:linear-gradient(90deg,#8a63c4,#c9a4ff)}
+.skill-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
+.skill-rows>div{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed rgba(226,239,230,.08);font-size:11px;color:#a3b1a8}
+.skill-rows>div>b{color:#e8d7a9;font-variant-numeric:tabular-nums;font-weight:700}
+
 /* ===== ゲーム画面（デスクトップ） ===== */
 .game-screen{max-width:1200px;height:calc(100dvh - 70px);min-height:640px;padding:12px 24px 0;display:flex;flex-direction:column}
 .game-head{display:flex;align-items:center;justify-content:space-between;height:42px;flex-shrink:0}
@@ -232,17 +264,51 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
 .dialog-inner p{font-size:13px;line-height:1.7;color:#bdcbc3;white-space:pre-line}
 .dialog-inner button{width:100%;margin-top:16px}
 
+/* ===== AI Strategy Lab ===== */
+.strategy-content{margin-top:24px;display:grid;gap:22px}
+.strategy-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px;border:1px solid rgba(225,188,112,.28);border-radius:12px;background:rgba(14,36,30,.7)}
+.strategy-actions .micro-copy{color:#9bb0a4}
+.strategy-section h2{margin:0 0 10px;font-size:15px;letter-spacing:.06em;color:#e8d7a9}
+.strategy-list{display:grid;gap:8px}
+.strategy-card{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:12px;padding:12px 14px;border:1px solid rgba(226,239,230,.1);border-radius:10px;background:rgba(5,20,16,.4)}
+.strategy-card.rank-1{border-color:rgba(225,188,112,.55);background:linear-gradient(110deg,rgba(225,188,112,.08),rgba(5,20,16,.4))}
+.strategy-rank{font-size:18px;font-weight:900;color:#81978b;text-align:center}
+.strategy-card.rank-1 .strategy-rank{color:#f3d48e;font-size:22px}
+.strategy-meta .eyebrow{font-size:9px;color:#9bb0a4}
+.strategy-meta strong{display:block;color:#a9d2ae;font-size:18px;margin-top:2px;font-variant-numeric:tabular-nums}
+.strategy-meta strong small{font-size:10px;color:#8fa69a;font-weight:400;margin-left:4px}
+.strategy-roles{display:flex;gap:8px;font-size:10px;color:#a8b8ae}
+.strategy-roles span{white-space:nowrap}
+.param-table{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.param-row{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;border:1px solid rgba(226,239,230,.08);border-radius:8px;background:rgba(5,20,16,.32);font-size:11px;color:#c4d0c8}
+.param-row b{color:#f3d48e;font-variant-numeric:tabular-nums}
+.insight-list{display:grid;gap:8px}
+.insight-card{padding:12px 14px;border:1px solid rgba(225,188,112,.2);border-radius:10px;background:rgba(20,42,33,.6)}
+.insight-card h3{margin:0 0 6px;font-size:12px;color:#f3d48e;letter-spacing:.04em}
+.insight-card p{margin:0;font-size:11px;color:#b3c1b9;line-height:1.6}
+.gen-list{display:grid;gap:4px}
+.gen-row{display:grid;grid-template-columns:80px 80px 1fr;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid rgba(226,239,230,.06);font-size:11px;color:#b3c1b9}
+.gen-row b{color:#a9d2ae;font-variant-numeric:tabular-nums}
+.gen-row small{color:#8fa69a;font-size:10px}
+
+/* ===== キャリブレーション表（未使用） ===== */
+.calibration-table{margin:6px 0 4px;padding:6px 8px;border:1px solid rgba(225,188,112,.16);border-radius:7px;background:rgba(0,0,0,.18);text-align:left}
+.calibration-title{color:#9bb0a4;font-size:9px;letter-spacing:.05em;margin-bottom:4px;font-weight:600}
+.calibration-row{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;align-items:end}
+.calibration-row>span{color:#8fa69a;font-size:9px;font-weight:400;text-align:center;line-height:1.1}
+.calibration-row>b{display:block;color:#e8d7a9;font-size:11px;font-weight:700;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums}
+.calibration-row>.peak{color:#f3d48e}
+.calibration-row>b.peak{font-size:13px;color:#f7dc9a;text-shadow:0 0 6px rgba(247,220,154,.4)}
+
 /* ============================================================ */
-/* ============ モバイル：楕円横長 + 場札対称配置 ============= */
+/* ============ モバイル ====================================== */
 /* ============================================================ */
 @media(max-width:760px){
-  /* トップバー */
   .topbar{height:48px;padding-inline:10px}
   .brand{width:30px;height:30px;border-radius:9px;font-size:17px}
   .profile-nav{min-height:32px;padding:5px 9px;font-size:10px}
   #app{min-height:calc(100vh - 48px)}
 
-  /* ホーム */
   .home-screen{padding:14px 12px 18px}
   .home-overview{grid-template-columns:minmax(0,1fr);gap:8px;margin-bottom:10px}
   .home-copy{min-height:130px;padding:18px;border-radius:14px}
@@ -266,24 +332,13 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .mode-card h2{font-size:14px}
   .mode-card p{font-size:11px;line-height:1.4}
   .inline-choice{gap:6px;margin-top:2px;padding-top:9px}
-  .home-bottom{gap:10px;margin-top:10px;padding-top:10px}
+  .home-bottom{gap:10px;margin-top:10px;padding-top:10px;flex-wrap:wrap}
   .narrow-screen{padding:16px 14px}
   .narrow-screen h1{font-size:26px}
 
   /* ===================== ゲーム画面 ===================== */
-  .game-screen{
-    max-width:100vw !important;
-    height:calc(100dvh - 48px) !important;
-    min-height:0 !important;
-    padding:0 !important;
-    margin:0 !important;
-    flex-direction:column !important;
-    overflow:hidden !important;
-    background:#0b2620 !important;
-    position: relative !important;
-  }
+  .game-screen{max-width:100vw !important;height:calc(100dvh - 48px) !important;min-height:0 !important;padding:0 !important;margin:0 !important;flex-direction:column !important;overflow:hidden !important;background:#0b2620 !important;position:relative !important}
 
-  /* --- ヘッダー：1行 --- */
   .game-head{height:30px !important;min-height:30px !important;max-height:30px !important;padding:0 8px !important;margin:0 !important;gap:6px !important;flex-shrink:0 !important;display:flex !important;align-items:center !important;justify-content:space-between !important;background:rgba(7,23,19,.85) !important;border-bottom:1px solid rgba(226,239,230,.1) !important;overflow:hidden !important}
   .game-head .back-button{font-size:11px !important;padding:2px 0 !important;white-space:nowrap !important;color:#d1ddd6 !important}
   .game-meta{display:flex !important;align-items:center !important;gap:6px !important;font-size:10px !important;flex:1 !important;min-width:0 !important;justify-content:center !important;color:#c8d4cd !important}
@@ -292,26 +347,7 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .rating-tag{display:none !important}
   .phase-label{font-size:10px !important;text-align:right !important;white-space:nowrap !important;color:#e1bc70 !important;min-width:0 !important}
 
-  /* --- 契約情報：1行（指名カード拡大） --- */
-  .contract-info{
-    display:flex !important;
-    min-height:28px !important;
-    height:28px !important;
-    max-height:28px !important;
-    font-size:10px !important;
-    padding:0 10px !important;
-    margin:0 !important;
-    gap:8px !important;
-    align-items:center !important;
-    justify-content:center !important;
-    background:rgba(6,25,20,.85) !important;
-    border:0 !important;
-    border-bottom:1px solid rgba(225,188,112,.2) !important;
-    border-radius:0 !important;
-    width:100% !important;
-    flex-shrink:0 !important;
-    overflow:hidden !important
-  }
+  .contract-info{display:flex !important;min-height:28px !important;height:28px !important;max-height:28px !important;font-size:10px !important;padding:0 10px !important;margin:0 !important;gap:8px !important;align-items:center !important;justify-content:center !important;background:rgba(6,25,20,.85) !important;border:0 !important;border-bottom:1px solid rgba(225,188,112,.2) !important;border-radius:0 !important;width:100% !important;flex-shrink:0 !important;overflow:hidden !important}
   .contract-info.hidden{display:none !important}
   .contract-bid{font-size:11px !important;color:#e1bc70 !important}
   .contract-call-label,.contract-pending{font-size:9px !important}
@@ -319,34 +355,11 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .contract-info .contract-card .rank{font-size:11px !important;left:3px !important;top:2px !important}
   .contract-info .contract-card .suit{font-size:11px !important;left:3px !important;top:14px !important}
 
-  /* --- メッセージ：1行 --- */
   .table-message{min-height:20px !important;height:20px !important;max-height:20px !important;font-size:10px !important;padding:0 10px !important;margin:0 !important;width:100% !important;flex-shrink:0 !important;border:0 !important;border-bottom:1px solid rgba(225,188,112,.15) !important;border-radius:0 !important;background:rgba(5,22,18,.85) !important;overflow:hidden !important;white-space:nowrap !important;text-overflow:ellipsis !important;display:flex !important;align-items:center !important;justify-content:center !important}
 
-  /* ============================================= */
-  /* === テーブル領域：楕円を横長に ============= */
-  /* ============================================= */
-  .table-area{
-    flex:1 1 60% !important;
-    min-height:0 !important;
-    position:relative !important;
-    padding:0 !important;
-    margin:0 !important;
-    display:block !important;
-    overflow:hidden !important;
-    background:radial-gradient(ellipse at 50% 50%,#10443a 0%,#0a2a22 70%,#061a15 100%) !important
-  }
-  /* 楕円：横長（左右に広く、上下に狭く） */
-  .table-area:before{
-    content:'' !important;
-    position:absolute !important;
-    inset:22% 3% 22% !important;
-    border:1.5px solid rgba(211,235,215,.2) !important;
-    border-radius:50% !important;
-    background:radial-gradient(ellipse at 50% 50%,rgba(18,96,70,.85) 0%,rgba(11,74,55,.8) 55%,rgba(8,59,47,.7) 100%) !important;
-    box-shadow:inset 0 0 30px rgba(0,0,0,.2) !important
-  }
+  .table-area{flex:1 1 60% !important;min-height:0 !important;position:relative !important;padding:0 !important;margin:0 !important;display:block !important;overflow:hidden !important;background:radial-gradient(ellipse at 50% 50%,#10443a 0%,#0a2a22 70%,#061a15 100%) !important}
+  .table-area:before{content:'' !important;position:absolute !important;inset:22% 3% 22% !important;border:1.5px solid rgba(211,235,215,.2) !important;border-radius:50% !important;background:radial-gradient(ellipse at 50% 50%,rgba(18,96,70,.85) 0%,rgba(11,74,55,.8) 55%,rgba(8,59,47,.7) 100%) !important;box-shadow:inset 0 0 30px rgba(0,0,0,.2) !important}
 
-  /* プレイヤー席 */
   .players-ring{position:absolute !important;inset:0 !important;pointer-events:none !important}
   .player-seat{position:absolute !important;width:76px !important;max-width:76px !important;min-width:0 !important;padding:5px 6px !important;font-size:10px !important;border-radius:9px !important;text-align:center !important;z-index:5 !important;background:rgba(4,18,14,.92) !important;border:1px solid rgba(225,239,229,.18) !important;box-shadow:0 4px 12px rgba(0,0,0,.3) !important}
   .player-seat .seat-name{font-size:10px !important;line-height:1.15 !important;overflow-wrap:anywhere !important;font-weight:800 !important}
@@ -355,53 +368,32 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .seat-role.deputy-status{padding:2px 6px !important;font-size:7.5px !important}
   .lead-badge{font-size:8px !important;margin-top:2px !important}
 
-  /* 席の座標 */
   .player-seat.pos-0{bottom:3% !important;left:50% !important;top:auto !important;right:auto !important;transform:translateX(-50%) !important}
   .player-seat.pos-1{bottom:22% !important;right:1% !important;top:auto !important;left:auto !important;transform:none !important}
   .player-seat.pos-2{top:2% !important;right:1% !important;bottom:auto !important;left:auto !important;transform:none !important}
   .player-seat.pos-3{top:2% !important;left:1% !important;bottom:auto !important;right:auto !important;transform:none !important}
   .player-seat.pos-4{bottom:22% !important;left:1% !important;top:auto !important;right:auto !important;transform:none !important}
 
-  /* 獲得カード */
   .taken-cards{display:flex !important;justify-content:center !important;align-items:center !important;flex-wrap:wrap !important;gap:2px !important;max-width:72px !important;margin:3px auto 0 !important}
   .taken-label{flex-basis:100% !important;font-size:7px !important;line-height:1 !important;color:#c8d4cd !important;font-weight:700 !important}
   .taken-card{padding:2px 4px !important;border-radius:3px !important;background:rgba(225,188,112,.18) !important;color:#f5e6c0 !important;font-size:8px !important;font-weight:700 !important;line-height:1 !important;white-space:nowrap !important}
   .taken-card.red{color:#f5b3a8 !important;background:rgba(198,69,63,.25) !important}
 
-  /* 中央の場札：対称配置 */
   .center-table{position:absolute !important;top:46% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:260px !important;height:260px !important;min-height:0 !important;z-index:1 !important;margin:0 !important;display:flex !important;align-items:center !important;justify-content:center !important}
   .center-caption{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-size:11px !important;color:#b5d8c9 !important;font-weight:600 !important;letter-spacing:.12em !important;z-index:1 !important}
 
-  .trick-cards{
-    position:absolute !important;
-    top:50% !important;
-    left:50% !important;
-    transform:translate(-50%,-50%) !important;
-    width:260px !important;
-    height:260px !important;
-    z-index:3 !important;
-    pointer-events:none !important;
-    display:block !important;
-  }
-  .trick-card{
-    position:absolute !important;
-    transform:translate(-50%,-50%) !important;
-    width:52px !important;
-    height:74px !important;
-    box-shadow:0 3px 8px rgba(0,0,0,.4) !important;
-    margin:0 !important;
-  }
+  .trick-cards{position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;width:260px !important;height:260px !important;z-index:3 !important;pointer-events:none !important;display:block !important}
+  .trick-card{position:absolute !important;transform:translate(-50%,-50%) !important;width:52px !important;height:74px !important;box-shadow:0 3px 8px rgba(0,0,0,.4) !important;margin:0 !important}
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
 
-  /* 各プレイヤーの位置に対応した左右対称の配置 */
-  .trick-card.played-seat-3{left:25% !important;top:22% !important} /* 左上 (COM3) */
-  .trick-card.played-seat-2{left:75% !important;top:22% !important} /* 右上 (COM2) */
-  .trick-card.played-seat-4{left:25% !important;top:55% !important} /* 左下 (COM4) */
-  .trick-card.played-seat-1{left:75% !important;top:55% !important} /* 右下 (COM1) */
-  .trick-card.played-seat-0{left:50% !important;top:88% !important} /* 下 (自分) */
+  /* 下段の場札を外側へ */
+  .trick-card.played-seat-3{left:28% !important;top:22% !important}
+  .trick-card.played-seat-2{left:72% !important;top:22% !important}
+  .trick-card.played-seat-4{left:20% !important;top:55% !important}
+  .trick-card.played-seat-1{left:80% !important;top:55% !important}
+  .trick-card.played-seat-0{left:50% !important;top:88% !important}
 
-  /* オープン表示（かなり大きく） */
   .kitty-view{min-height:84px !important;gap:10px !important;margin-bottom:16px !important;display:flex !important;justify-content:center !important;align-items:center !important}
   .kitty-view .card{width:72px !important;height:100px !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
   .kitty-view .card .rank{font-size:24px !important;left:6px !important;top:6px !important}
@@ -416,159 +408,39 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .bid-history-row small{font-size:7.5px !important}
   .open-label{font-size:9px !important;margin-right:2px !important}
 
-  /* === 競り（オークション）中のレイアウト修正 === */
-  .game-screen.auctioning .table-area{
-    display:flex !important;
-    flex-direction:column !important;
-    align-items:center !important;
-    justify-content:flex-start !important;
-    padding:10px 0 !important;
-    overflow-y:auto !important;
-  }
-  .game-screen.auctioning .center-table{
-    position:relative !important;
-    top:auto !important;left:auto !important;
-    transform:none !important;
-    width:100% !important;
-    height:auto !important;
-    margin:0 !important;
-    display:flex !important;
-    flex-direction:column !important;
-    align-items:center !important;
-  }
+  .game-screen.auctioning .table-area{display:flex !important;flex-direction:column !important;align-items:center !important;justify-content:flex-start !important;padding:10px 0 !important;overflow-y:auto !important}
+  .game-screen.auctioning .center-table{position:relative !important;top:auto !important;left:auto !important;transform:none !important;width:100% !important;height:auto !important;margin:0 !important;display:flex !important;flex-direction:column !important;align-items:center !important}
   .game-screen.auctioning .trick-cards,
-  .game-screen.auctioning .center-caption{
-    display:none !important;
-  }
-  .game-screen.auctioning .kitty-view{
-    position:relative !important;
-    display:flex !important;
-    justify-content:center !important;
-    z-index:5 !important;
-    order: -1 !important; /* パネルより上に表示 */
-  }
-  .game-screen.auctioning .action-panel{
-    position:relative !important;
-    top:auto !important;left:auto !important;bottom:auto !important;
-    transform:none !important;
-    margin:0 auto 20px !important;
-    z-index:10 !important;
-    width:92% !important;
-    max-width:360px !important;
-  }
+  .game-screen.auctioning .center-caption{display:none !important}
+  .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important}
+  .game-screen.auctioning .action-panel{position:relative !important;top:auto !important;left:auto !important;bottom:auto !important;transform:none !important;margin:0 auto 20px !important;z-index:10 !important;width:92% !important;max-width:360px !important}
 
-  /* ============================================= */
-  /* === 手札：上部に寄せて大きく =============== */
-  /* ============================================= */
-  .hand-dock{
-    flex:0 0 auto !important;
-    min-height:100px !important;
-    max-height:130px !important;
-    height:auto !important;
-    padding:12px 0 4px 0 !important;
-    margin:0 !important;
-    flex-shrink:0 !important;
-    display:flex !important;
-    flex-direction:column !important;
-    justify-content:center !important;
-    align-items:center !important;
-    background:linear-gradient(0deg,rgba(3,16,13,.95),rgba(3,16,13,.6)) !important;
-    border-top:1px solid rgba(225,188,112,.35) !important;
-    position:relative !important;
-    z-index: 20 !important;
-  }
-  .hand-label{position:absolute !important;top:2px !important;left:10px !important;font-size:9.5px !important;color:#e8d7a9 !important;font-weight:700 !important;letter-spacing:.06em !important}
-  .hand{height:auto !important;min-height:0 !important;padding:0 6px !important;margin:0 !important;gap:0 !important;display:flex !important;align-items:center !important;justify-content:center !important;overflow-x:auto !important;overflow-y:visible !important;width:100% !important}
-  .hand .card{width:60px !important;height:88px !important;margin-left:-18px !important;flex-shrink:0 !important;transition:transform .12s !important;box-shadow:0 4px 10px rgba(0,0,0,.35) !important}
+  /* 手札：上部に寄せて大きく */
+  .hand-dock{flex:0 0 auto !important;min-height:120px !important;max-height:160px !important;height:auto !important;padding:6px 0 22px 0 !important;margin:0 !important;flex-shrink:0 !important;display:flex !important;flex-direction:column !important;justify-content:center !important;align-items:center !important;background:linear-gradient(0deg,rgba(3,16,13,.95),rgba(3,16,13,.6)) !important;border-top:1px solid rgba(225,188,112,.35) !important;position:relative !important;z-index:20 !important}
+  .hand-label{position:absolute !important;top:2px !important;left:10px !important;font-size:10px !important;color:#e8d7a9 !important;font-weight:700 !important;letter-spacing:.06em !important}
+  .hand{height:auto !important;min-height:0 !important;padding:0 4px !important;margin:0 !important;gap:0 !important;display:flex !important;align-items:center !important;justify-content:center !important;overflow-x:auto !important;overflow-y:visible !important;width:100% !important}
+  .hand .card{width:70px !important;height:102px !important;margin-left:-22px !important;flex-shrink:0 !important;transition:transform .12s !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
   .hand .card:first-child{margin-left:0 !important}
-  .hand .card .rank{font-size:18px !important;left:5px !important;top:4px !important}
-  .hand .card .suit{font-size:17px !important;left:5px !important;top:25px !important}
-  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-12px) !important}
+  .hand .card .rank{font-size:22px !important;left:6px !important;top:5px !important;font-weight:900 !important}
+  .hand .card .suit{font-size:21px !important;left:6px !important;top:31px !important}
+  .hand .card.playable:hover,.hand .card.selected{transform:translateY(-14px) !important}
 
-  /* === 捨て札（ディスカード）時の2行グリッドレイアウト === */
-  .game-screen.discarding .hand-dock{
-    min-height:180px !important;
-    max-height:210px !important;
-    padding:14px 0 4px 0 !important;
-    flex: 0 0 auto !important;
-  }
-  .game-screen.discarding .hand.discard-mode{
-    display:grid !important;
-    grid-template-columns:repeat(6,1fr) !important;
-    grid-auto-rows:min-content !important;
-    gap:6px 4px !important;
-    padding:5px 10px !important;
-    width:100% !important;
-    max-width:100vw !important;
-    box-sizing:border-box !important;
-    overflow-x:hidden !important;
-    overflow-y:auto !important;
-    justify-content:center !important;
-    align-items:center !important;
-  }
-  .game-screen.discarding .hand.discard-mode .card{
-    width:100% !important;
-    height:auto !important;
-    aspect-ratio:5/7 !important;
-    margin:0 !important;
-    flex:none !important;
-  }
-  .game-screen.discarding .hand.discard-mode .card .rank{
-    font-size:14px !important;
-    left:3px !important;
-    top:3px !important;
-  }
-  .game-screen.discarding .hand.discard-mode .card .suit{
-    font-size:13px !important;
-    left:3px !important;
-    top:18px !important;
-  }
-  .game-screen.discarding .hand.discard-mode .card.selected{
-    transform:translateY(-3px) !important;
-    outline:2px solid var(--gold) !important;
-    outline-offset:1px !important;
-  }
-  .game-screen.discarding .table-area{
-    flex:1 1 auto !important;
-    min-height:200px !important;
-  }
+  .game-screen.discarding .hand-dock{min-height:180px !important;max-height:210px !important;padding:14px 0 4px 0 !important;flex:0 0 auto !important}
+  .game-screen.discarding .hand.discard-mode{display:grid !important;grid-template-columns:repeat(6,1fr) !important;grid-auto-rows:min-content !important;gap:6px 4px !important;padding:5px 10px !important;width:100% !important;max-width:100vw !important;box-sizing:border-box !important;overflow-x:hidden !important;overflow-y:auto !important;justify-content:center !important;align-items:center !important}
+  .game-screen.discarding .hand.discard-mode .card{width:100% !important;height:auto !important;aspect-ratio:5/7 !important;margin:0 !important;flex:none !important}
+  .game-screen.discarding .hand.discard-mode .card .rank{font-size:14px !important;left:3px !important;top:3px !important}
+  .game-screen.discarding .hand.discard-mode .card .suit{font-size:13px !important;left:3px !important;top:18px !important}
+  .game-screen.discarding .hand.discard-mode .card.selected{transform:translateY(-3px) !important;outline:2px solid var(--gold) !important;outline-offset:1px !important}
+  .game-screen.discarding .table-area{flex:1 1 auto !important;min-height:200px !important}
 
-  /* ============================================= */
-  /* === アナウンスパネルを手札の直上にコンパクト配置 === */
-  /* ============================================= */
-  .action-panel:not(#auction-panel){
-    position: absolute !important;
-    bottom: 105px !important; /* 手札の高さ(約100px)の上 */
-    top: auto !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    width: 94% !important;
-    max-width: 380px !important;
-    padding: 8px 12px !important;
-    margin: 0 !important;
-    z-index: 40 !important;
-    background: rgba(9,26,22,.98) !important;
-    border: 1px solid rgba(225,188,112,.45) !important;
-    border-radius: 8px !important;
-    box-shadow: 0 4px 15px rgba(0,0,0,.6) !important;
-  }
-
-  /* パネル内のテキストやプレビューを小さくして高さを抑える */
+  .action-panel:not(#auction-panel){position:absolute !important;bottom:105px !important;top:auto !important;left:50% !important;transform:translateX(-50%) !important;width:94% !important;max-width:380px !important;padding:8px 12px !important;margin:0 !important;z-index:40 !important;background:rgba(9,26,22,.98) !important;border:1px solid rgba(225,188,112,.45) !important;border-radius:8px !important;box-shadow:0 4px 15px rgba(0,0,0,.6) !important}
   .play-confirm-preview{margin:2px auto 6px !important;gap:8px !important}
   .play-confirm-preview .card{width:36px !important;height:52px !important}
   .play-confirm-actions{gap:6px !important}
   .play-confirm-actions button{padding:8px 10px !important;font-size:11px !important}
   .panel-title{font-size:11px !important;margin-bottom:4px !important}
 
-  /* 副官指名のUIも下部に固定 */
-  #call-panel{
-    bottom: 105px !important;
-    top: auto !important;
-    position: absolute !important;
-    transform: translateX(-50%) !important;
-    max-height: 60dvh !important;
-    overflow-y: auto !important;
-  }
+  #call-panel{bottom:105px !important;top:auto !important;position:absolute !important;transform:translateX(-50%) !important;max-height:60dvh !important;overflow-y:auto !important}
 
   .result-panel{width:92% !important;max-height:82dvh !important;padding:18px !important;border-radius:14px !important;z-index:50 !important}
   .result-panel h2{font-size:18px !important}
@@ -577,6 +449,20 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .round-score-row strong small{font-size:9px !important}
 
   .toast{font-size:11px !important;padding:9px 13px !important;bottom:16px !important}
+
+  /* Mypage / strategy lab モバイル */
+  .performance-grid{grid-template-columns:1fr}
+  .performance-card{padding:12px 14px}
+  .performance-card>strong{font-size:22px}
+  .role-skill-grid{grid-template-columns:1fr}
+  .role-skill{padding:13px 14px}
+  .role-emblem{width:36px;height:36px;font-size:18px}
+  .role-score{font-size:22px}
+  .skill-rows{grid-template-columns:1fr;gap:4px}
+  .skill-rows>div{padding:4px 0}
+  .strategy-card{grid-template-columns:36px 1fr;gap:8px 10px}
+  .strategy-roles{grid-column:1/-1}
+  .gen-row{grid-template-columns:60px 60px 1fr;font-size:10px}
 }
 
 @media(max-width:390px){
@@ -602,29 +488,11 @@ dialog::backdrop{background:rgba(0,0,0,.67)}
   .trick-card .rank{font-size:14px !important;left:4px !important;top:3px !important}
   .trick-card .suit{font-size:13px !important;left:4px !important;top:18px !important}
 
-  .hand .card{width:54px !important;height:80px !important;margin-left:-16px !important}
-  .hand .card .rank{font-size:16px !important;left:4px !important;top:3px !important}
-  .hand .card .suit{font-size:15px !important;left:4px !important;top:22px !important}
-  .hand.discard-mode .card{width:54px !important;height:80px !important;flex:0 0 54px !important}
+  .hand .card{width:62px !important;height:90px !important;margin-left:-20px !important}
+  .hand .card .rank{font-size:20px !important;left:5px !important;top:4px !important}
+  .hand .card .suit{font-size:19px !important;left:5px !important;top:27px !important}
+  .hand.discard-mode .card{width:60px !important;height:88px !important;flex:0 0 60px !important}
   .kitty-view .card{width:56px !important;height:78px !important}
   .kitty-view .card .rank{font-size:20px !important;left:5px !important;top:5px !important}
   .kitty-view .card .suit{font-size:18px !important;left:5px !important;top:25px !important}
-}
-
-/* ============================================================ */
-/* ============ キャリブレーション表（追加）=================== */
-/* ============================================================ */
-.calibration-table{margin:6px 0 4px;padding:6px 8px;border:1px solid rgba(225,188,112,.16);border-radius:7px;background:rgba(0,0,0,.18);text-align:left}
-.calibration-title{color:#9bb0a4;font-size:9px;letter-spacing:.05em;margin-bottom:4px;font-weight:600}
-.calibration-row{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;align-items:end}
-.calibration-row>span{color:#8fa69a;font-size:9px;font-weight:400;text-align:center;line-height:1.1}
-.calibration-row>b{display:block;color:#e8d7a9;font-size:11px;font-weight:700;text-align:center;line-height:1.1;font-variant-numeric:tabular-nums}
-.calibration-row>.peak{color:#f3d48e}
-.calibration-row>b.peak{font-size:13px;color:#f7dc9a;text-shadow:0 0 6px rgba(247,220,154,.4)}
-@media(max-width:760px){
-  .calibration-table{margin:4px 0 3px;padding:5px 6px}
-  .calibration-title{font-size:8px;margin-bottom:3px}
-  .calibration-row>span{font-size:8px}
-  .calibration-row>b{font-size:9px}
-  .calibration-row>b.peak{font-size:11px}
 }
