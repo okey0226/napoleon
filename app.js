@@ -1,5 +1,5 @@
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
-const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null};let toastTimer;
+const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','profile-screen','game-screen','records-screen'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='home-screen'){loadLeaderboard();loadAccount();startPresence()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence')$('concurrent-count').textContent='同接: '+m.count+'人'}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -38,6 +38,7 @@ function startLocal(){
   g.matchArt=Array(5).fill(0);
   g.bidHistory=[];
   g.lastTrickWinner=null;
+  g.matchStats=Array.from({length:5},()=>({declarerAttempts:0,declarerSuccesses:0,exactAttempts:0,exactSuccesses:0,boldAttempts:0,boldSuccesses:0,soloAttempts:0,soloSuccesses:0,deputyAttempts:0,deputySuccesses:0,artAttempts:0,dramaticPlays:0,allyFeedAttempts:0,allyFeedSuccesses:0,bidTotal:0}));
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[]}));
   screen('game-screen');
   $('game-mode-label').textContent='COM戦';
@@ -807,34 +808,88 @@ function play(i,c){
   },1250)
 }
 
-function finalRatingDeltas(scores,art,ratings){
-  const mean=art.reduce((n,x)=>n+x,0)/5;
+function finalRatingDeltas(scores,art,ratings,matchStats){
+  const meanArt=art.reduce((n,x)=>n+x,0)/5;
   return scores.map((score,seat)=>{
-    let elo=0;
-    for(let other=0;other<scores.length;other++){
-      if(other===seat)continue;
-      const actual=score>scores[other]?1:score===scores[other]?0.5:0,
-        expected=1/(1+10**((ratings[other]-ratings[seat])/400));
-      elo+=actual-expected
+    const stat=matchStats[seat]||{};
+    let delta=0;
+    
+    const declarerAttempts=stat.declarerAttempts||0;
+    const declarerSuccesses=stat.declarerSuccesses||0;
+    const exactSuccesses=stat.exactSuccesses||0;
+    const boldSuccesses=stat.boldSuccesses||0;
+    const soloSuccesses=stat.soloSuccesses||0;
+    const soloAttempts=stat.soloAttempts||0;
+    const bidTotal=stat.bidTotal||0;
+    
+    if(declarerAttempts>0){
+      delta+=declarerAttempts*1.5;
+      delta+=declarerSuccesses*2.0;
+      delta+=exactSuccesses*3.0;
+      delta+=boldSuccesses*5.0;
+      const failures=declarerAttempts-declarerSuccesses;
+      delta-=failures*2.0;
+      const avgBid=bidTotal/declarerAttempts;
+      delta+=Math.max(0,avgBid-13)*0.5;
     }
-    const rank=Math.round(elo*6*10)/10,
-      artDelta=art[seat]-mean,
-      base=rank+artDelta,
-      lastPlacePenalty=scores.filter(otherScore=>otherScore>score).length===4&&base<0?Math.round(-base*.5*10)/10:0;
-    return {elo:rank,art:artDelta,lastPlacePenalty,total:Math.round((base-lastPlacePenalty)*10)/10}
+    
+    const deputyAttempts=stat.deputyAttempts||0;
+    const deputySuccesses=stat.deputySuccesses||0;
+    if(deputyAttempts>0){
+      delta+=deputyAttempts*0.5;
+      delta+=deputySuccesses*1.5;
+    }
+    
+    if(soloAttempts>0){
+      delta+=soloAttempts*2.0;
+      delta+=soloSuccesses*6.0;
+    }
+    
+    const rank=1+scores.filter(s=>s>score).length;
+    if(rank===5)delta-=5.0;
+    else if(rank===4)delta-=1.5;
+    else if(rank===1)delta+=2.0;
+    
+    delta+=(art[seat]-meanArt)*0.5;
+    
+    return {
+      seat,
+      delta:Math.round(delta*10)/10,
+      placement:rank,
+      art:art[seat]-meanArt,
+      breakdown:{declarerAttempts,declarerSuccesses,exactSuccesses,boldSuccesses,soloSuccesses,deputySuccesses,rank},
+    }
   })
 }
 
 function finishGame(){
   g.phase='result';
+  
+  // === 統計更新 ===
+  const c=g.contract;
+  const side=c.solo?[c.nap]:[c.nap,c.deputy];
+  const pts=side.reduce((n,i)=>n+g.points[i],0);
+  const success=pts>=c.num&&(c.num===20||pts<20);
+  const exact=success&&pts===c.num;
+  const bold=c.num>=15;
+  const napStat=g.matchStats[c.nap];
+  napStat.declarerAttempts++;
+  napStat.bidTotal+=c.num;
+  if(success)napStat.declarerSuccesses++;
+  napStat.exactAttempts++;
+  if(exact)napStat.exactSuccesses++;
+  if(bold){napStat.boldAttempts++;if(exact)napStat.boldSuccesses++;}
+  if(c.solo){napStat.soloAttempts++;if(success)napStat.soloSuccesses++;}
+  if(!c.solo&&c.deputy!==c.nap){const depStat=g.matchStats[c.deputy];depStat.deputyAttempts++;if(success)depStat.deputySuccesses++;}
+  
   try{
-    const lastPlacePenalty = g.matchScores.filter(s=>s>g.matchScores[0]).length===4 ? 1 : 0;
+    const lastPlacePenalty=g.matchScores.filter(s=>s>g.matchScores[0]).length===4?1:0;
     fetch('/api/ai/report',{
       method:'POST',
       headers:{'content-type':'application/json'},
       body:JSON.stringify({
-        napoleonWon: (()=>{ const c=g.contract,side=c.solo?[c.nap]:[c.nap,c.deputy],pts=side.reduce((n,i)=>n+g.points[i],0); return pts>=c.num; })(),
-        exactWins: g.roundArt.filter(a=>a>=4).length,
+        napoleonWon:(()=>{const cc=g.contract,side=cc.solo?[cc.nap]:[cc.nap,cc.deputy],pts=side.reduce((n,i)=>n+g.points[i],0);return pts>=cc.num;})(),
+        exactWins:g.roundArt.filter(a=>a>=4).length,
         lastPlacePenalty
       })
     }).then(r=>r.json()).then(d=>{
@@ -842,13 +897,10 @@ function finishGame(){
       if(d.games&&$('ai-level'))$('ai-level').textContent='AI LV '+d.games;
     }).catch(()=>{});
   }catch{}
-  let c=g.contract,
-    finalRule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null,
-    side=c.solo?[c.nap]:Array.from(new Set([c.nap,c.deputy])),
-    pts=side.reduce((n,i)=>n+g.points[i],0),
-    success=pts>=c.num&&(c.num===20||pts<20),
-    unit=Math.max(0,c.num-12)*g.mult*(g.round>=10?2:1),
+  
+  let finalRule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null,
     sign=success?1:-1,
+    unit=Math.max(0,c.num-12)*g.mult*(g.round>=10?2:1),
     scores=Array(5).fill(0);
   scores[c.nap]=sign*unit*(c.solo?4:2);
   if(c.solo){g.players.forEach((_,i)=>{if(i!==c.nap)scores[i]=-sign*unit})}
@@ -871,15 +923,15 @@ function finishGame(){
     role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',
     rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),
     final=g.round>=10&&!replayAllLast,
-    ratings=final?finalRatingDeltas(g.matchScores,g.matchArt,[g.rate,1000,1000,1000,1000]):null;
-  if(final){g.rate+=ratings[0].total;$('rating-label').textContent=g.rate}
+    ratings=final?finalRatingDeltas(g.matchScores,g.matchArt,[g.rate,1000,1000,1000,1000],g.matchStats):null;
+  if(final){g.rate+=ratings[0].delta;$('rating-label').textContent=g.rate}
   phase('結果');
   addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚');
   message(replayAllLast?'プレーオフ':success?'NAP TEAM WINS':'ALLIANCE WINS');
   drawSeats();
   const finalRows=final?g.players.map((_,i)=>{
-    const result=ratings[i];
-    return '<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.total<0?'score-down':'score-up')+'">SIM RATE Δ '+format(result.total)+'<small>ELO '+format(result.elo)+' · ART Δ '+format(result.art)+(result.lastPlacePenalty?' · 5TH PENALTY -'+format(result.lastPlacePenalty):'')+'</small></strong></div>'
+    const result=ratings[i],b=result.breakdown;
+    return '<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">SIM RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · 立ち '+b.declarerSuccesses+'/'+b.declarerAttempts+' · EXACT '+b.exactSuccesses+' · BOLD '+b.boldSuccesses+' · 副官 '+b.deputySuccesses+' · SOLO '+b.soloSuccesses+'</small></strong></div>'
   }).join(''):'',
     r=$('result-panel');
   r.classList.remove('hidden');
@@ -1160,133 +1212,4 @@ function drawOnlineSeats(s){
     const role=p.approved?'承認済み':p.role||'';
     e.classList.toggle('deputy-seat',role==='副官');
     e.innerHTML='<div class="seat-name">'+p.name+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(leadSeat===i?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';
-    addTakenCards(e,p.taken);
-    box.append(e)
-  })
-}
-
-function drawOnlineHand(){
-  const box=$('hand'),scrollLeft=box.scrollLeft,discarding=g.onlineState?.phase==='discard'&&g.mySeat===g.onlineState.active;
-  box.classList.toggle('discard-mode',discarding);
-  $('game-screen').classList.toggle('discarding',discarding);
-  box.replaceChildren();
-  (g.privateHand||[]).forEach(c=>{
-    const e=cardEl(c,'');
-    const legal=(g.onlineLegal||[]).includes(c.id);
-    if(g.onlineState?.phase==='discard'&&g.mySeat===g.onlineState.active){
-      const protectedCall=g.mySeat===g.onlineState.contract?.nap&&g.onlineState.contract?.call?.id===c.id;
-      e.classList.add('playable');
-      e.classList.toggle('protected',protectedCall);
-      e.classList.toggle('selected',g.onlineDiscard?.has(c.id));
-      e.onclick=()=>{
-        if(protectedCall){toast('指名札は捨てられません');return}
-        g.onlineDiscard=g.onlineDiscard||new Set();
-        if(g.onlineDiscard.has(c.id))g.onlineDiscard.delete(c.id);
-        else if(g.onlineDiscard.size<2)g.onlineDiscard.add(c.id);
-        const selected=g.onlineDiscard.has(c.id);
-        e.classList.toggle('selected',selected);
-        e.setAttribute('aria-pressed',String(selected));
-        const count=$('online-discard-count'),confirm=$('online-discard');
-        if(count)count.textContent=g.onlineDiscard.size+' / 2 SELECTED';
-        if(confirm)confirm.disabled=g.onlineDiscard.size!==2
-      }
-    }else if(g.onlineState?.phase==='play'&&g.mySeat===g.onlineState.active&&legal){
-      e.classList.add('playable');
-      e.classList.toggle('selected',g.onlineSelectedCard===c.id);
-      e.onclick=()=>{g.onlineSelectedCard=g.onlineSelectedCard===c.id?null:c.id;drawOnlineHand();drawOnlineControls(g.onlineState)}
-    }
-    box.append(e)
-  });
-  if(discarding)box.scrollLeft=scrollLeft;
-  $('hand-count').textContent=(g.privateHand||[]).length+'枚'
-}
-
-function drawOnlineControls(s){
-  ['auction-panel','call-panel','play-panel'].forEach(id=>$(id).classList.add('hidden'));
-  if(s.phase==='appeal-offer'||s.phase==='appeal-response'){
-    const p=$('auction-panel');p.classList.remove('hidden');
-    if(s.phase==='appeal-offer'){
-      p.innerHTML=g.mySeat===s.active?'<div class="panel-title">オーラス・アピール</div><div class="micro-copy">4位に各J・マイティの所持を尋ねますか？</div><div class="panel-row"><button id="online-appeal" class="small-action">アピールする</button><button id="online-appeal-skip" class="small-action pass">競りへ進む</button></div>':'<div class="panel-title">5位のアピール選択待ち</div>';
-      if(g.mySeat===s.active){$('online-appeal').onclick=()=>sendGame({type:'appeal'});$('online-appeal-skip').onclick=()=>sendGame({type:'skip-appeal'})}
-    }else{
-      p.innerHTML=g.mySeat===s.active?'<div class="panel-title">5位からアピール</div><div class="micro-copy">所持するJ・マイティを申告するか、申告せず立つか選んでください。</div><div class="panel-row"><button id="online-appeal-disclose" class="small-action">札を申告する</button><button id="online-appeal-stand" class="small-action pass">申告せず立つ</button></div>':'<div class="panel-title">4位のアピール回答待ち</div>';
-      if(g.mySeat===s.active){$('online-appeal-disclose').onclick=()=>sendGame({type:'appeal-declare'});$('online-appeal-stand').onclick=()=>sendGame({type:'appeal-stand'})}
-    }
-    return
-  }
-  if(s.phase==='auction'){
-    const p=$('auction-panel');p.classList.remove('hidden');
-    const high=s.auction.high,minBid=s.auction.minBid||13,
-      historyPanel=bidHistoryHTML(s.bidHistory,seat=>s.players[seat]?.name||'COM'),
-      ruleNote=s.round>=10?'<div class="micro-copy">オールラスト · 最低宣言 '+minBid+' · 得点2倍 · 立ち必須</div>':'';
-    if(!s.auction.active.includes(g.mySeat)){p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+(high.num<13?'なし':s.players[high.player].name+' · '+high.num+high.suit)+'</strong></div><div class="micro-copy">承認済み</div>'+ruleNote+historyPanel;return}
-    let suit=g.onlineSuit||'♠',bid=Math.max(minBid,g.onlineBid||13);
-    g.onlineBid=bid;
-    p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+(high.num<13?'なし':s.players[high.player].name+' · '+high.num+high.suit)+'</strong></div>'+ruleNote+'<div class="panel-row">'+['♣','♦','♥','♠','NT'].map(x=>'<button class="suit-choice '+(x===suit?'selected':'')+'" data-osuit="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row"><button class="small-action" id="online-minus">−</button><span class="bid-number">'+bid+'</span><button class="small-action" id="online-plus">＋</button></div><div class="panel-row"><button class="small-action pass" id="online-approve" '+(high.player===g.mySeat&&s.auction.active.length>1||s.round>=10&&high.num<13?'disabled':'')+'>承認</button><button class="small-action" id="online-bid">宣言する</button></div>'+historyPanel;
-    p.querySelectorAll('[data-osuit]').forEach(b=>b.onclick=()=>{g.onlineSuit=b.dataset.osuit;sendGame({type:'auction-activity'});drawOnlineControls(s)});
-    $('online-minus').onclick=()=>{g.onlineBid=Math.max(minBid,bid-1);sendGame({type:'auction-activity'});drawOnlineControls(s)};
-    $('online-plus').onclick=()=>{g.onlineBid=Math.min(20,bid+1);sendGame({type:'auction-activity'});drawOnlineControls(s)};
-    $('online-approve').onclick=()=>{sendGame({type:'auction-activity'});sendGame({type:'approve'})};
-    $('online-bid').onclick=()=>{sendGame({type:'auction-activity'});sendGame({type:'bid',num:bid,suit:suit})};
-    return
-  }
-  if(s.phase==='call'&&s.active===g.mySeat){
-    const p=$('call-panel');p.classList.remove('hidden');
-    let suit=g.onlineSuit||'♠',rank=g.onlineRank||'A';
-    const discarded=(s.kitty||[]).some(c=>c.suit===suit&&c.rank===rank);
-    p.innerHTML='<div class="panel-title">副官に指名するカード</div><div class="call-card-preview"><div id="online-call-preview"></div><div><div class="micro-copy">今回の指名</div><strong>'+suit+rank+'</strong><div class="call-warning">'+(discarded?'捨て札は指名できません':'自分の手札ならひとり立ち')+'</div></div></div><div class="panel-row">'+['♣','♦','♥','♠'].map(x=>'<button class="suit-choice '+(x===suit?'selected ':'')+(x==='♥'||x==='♦'?'red':'')+'" data-csuit="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row call-ranks">'+RANKS.map(x=>'<button class="small-action call-rank-choice '+(x===rank?'selected':'')+'" data-crank="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row"><button id="online-call" class="small-action" '+(discarded?'disabled':'')+'>決定</button></div>';
-    p.querySelector('#online-call-preview').replaceChildren(cardEl({suit,rank},'call-preview-card'));
-    p.querySelectorAll('[data-csuit]').forEach(b=>b.onclick=()=>{g.onlineSuit=b.dataset.csuit;drawOnlineControls(s)});
-    p.querySelectorAll('[data-crank]').forEach(b=>b.onclick=()=>{g.onlineRank=b.dataset.crank;drawOnlineControls(s)});
-    $('online-call').onclick=()=>sendGame({type:'call',suit:suit,rank:rank});
-    return
-  }
-  if(s.phase==='discard'&&s.active===g.mySeat){
-    const p=$('call-panel');p.classList.remove('hidden');
-    p.innerHTML='<div class="panel-title">手札から2枚を選んで捨ててください</div><div class="panel-row"><span class="micro-copy" id="online-discard-count">'+(g.onlineDiscard?.size||0)+' / 2 SELECTED</span><button id="online-discard" class="small-action" '+(g.onlineDiscard?.size===2?'':'disabled')+'>決定</button></div>';
-    $('online-discard').onclick=()=>sendGame({type:'discard',cards:Array.from(g.onlineDiscard||[])});
-    return
-  }
-  if(s.phase==='play'&&s.active===g.mySeat){
-    const p=$('play-panel');p.classList.remove('hidden');
-    const card=(g.privateHand||[]).find(c=>c.id===g.onlineSelectedCard&&(g.onlineLegal||[]).includes(c.id));
-    if(!card){g.onlineSelectedCard=null;p.innerHTML='<div class="panel-title">出すカードを手札から選んでください</div>';return}
-    p.innerHTML='<div class="panel-title">このカードを出しますか？</div><div class="play-confirm-preview"><div id="online-play-card"></div><span class="micro-copy">選択中</span></div><div class="play-confirm-actions"><button id="cancel-online-play" class="small-action">選び直す</button><button id="confirm-online-play" class="primary-button">出す</button></div>';
-    p.querySelector('#online-play-card').replaceChildren(cardEl(card,'play-confirm-card'));
-    p.querySelector('#cancel-online-play').onclick=()=>{g.onlineSelectedCard=null;drawOnlineHand();drawOnlineControls(s)};
-    p.querySelector('#confirm-online-play').onclick=()=>{const id=g.onlineSelectedCard;if(!id||!(g.onlineLegal||[]).includes(id))return;g.onlineSelectedCard=null;p.innerHTML='<div class="panel-title">カードを送信中…</div>';drawOnlineHand();sendGame({type:'play',card:id})};
-    return
-  }
-}
-
-function showOnlineResult(s){
-  const r=$('result-panel'),result=s.result,final=s.phase==='result',
-    format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),
-    scores=result.scoreChanges||[];
-  r.classList.remove('hidden');
-  let content;
-  if(final){
-    const rating=result.ratingChanges?.[g.mySeat],
-      rows=s.players.map((p,i)=>{
-        const change=result.ratingChanges?.[i],
-          roundDelta=Number((result.scoreChanges||[]).find(x=>x.seat===i)?.delta||0),
-          rawArt=Number((result.matchArt||[])[i]||0),
-          delta=change?format(change.delta):'—',
-          elo=change?format(change.placement):'—',
-          artDelta=change?format(change.art):'—';
-        return '<div class="round-score-row"><span>'+p.name+' · ROUND Δ '+format(roundDelta)+' · MATCH '+format((result.matchScores||[])[i]||0)+' / ART '+format(rawArt)+'</span><strong class="'+(change?.delta<0?'score-down':'score-up')+'">'+(s.mode==='ranked'?'RATE Δ ':'')+delta+'<small>ELO '+elo+' · ART Δ '+artDelta+'</small></strong></div>'
-      }).join(''),
-      summary=s.mode==='ranked'&&rating?'<p>NEW RATE '+rating.rating+' · Δ '+format(rating.delta)+'</p>':'<p>MATCH COMPLETE</p>';
-    content='<div class="eyebrow">MATCH COMPLETE</div><h2>RATE BREAKDOWN</h2>'+summary+'<div class="round-score-list">'+rows+'</div><button id="online-home" class="primary-button">BACK TO MENU</button>'
-  }else{
-    const rows=s.players.map((p,i)=>{
-      const score=scores.find(x=>x.seat===i),
-        role=score?.role==='ナポレオン'?'NAP':score?.role==='副官'?'DEPUTY':'ALLY';
-      return '<div class="round-score-row"><span>'+p.name+' · '+role+'</span><strong>ROUND Δ '+format(score?.delta||0)+'<small>TOTAL '+format((result.matchScores||[])[i]||0)+'</small></strong></div>'
-    }).join('');
-    content='<div class="eyebrow">ROUND '+String(result.round).padStart(2,'0')+' · RESULT</div><h2>'+(result.made?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+result.bid+result.suit+' · POINTS '+result.points+(result.solo?' · SOLO':'')+'</p><div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div><button id="next-online-round" class="primary-button">'+(result.allLastReplay?'ALL-LAST AGAIN':'NEXT ROUND')+'</button>'
-  }
-  r.innerHTML=content;
-  if(final)$('online-home').onclick=()=>{closeOnline();screen('home-screen')};
-  else $('next-online-round').onclick=()=>sendGame({type:'next-round'})
-}
+    addTakenCards(e
