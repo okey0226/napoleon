@@ -1,8 +1,5 @@
 import { SUITS, RANKS, SV, defaultStrategy } from './constants.js';
 
-// ==========================================
-// 1. 基本ルールとカードの強さ判定
-// ==========================================
 export function isTrump(contract, c) {
   return contract.suit !== "NT" && c.suit === contract.suit;
 }
@@ -12,7 +9,6 @@ export function cardPower(contract, trickNo, card, trick) {
   const allSame = trick.every(x => x.card.suit === led);
   const mighty = trick.some(x => x.card.id === "♠A");
 
-  // ★修正: 1周目(trickNo === 0)は特殊札（マイティ、正裏J、セイム2）を無効化
   if (trickNo > 0) {
     if (mighty && card.id === "♥Q") return 10000;
     if (card.id === "♠A") return 9000;
@@ -28,14 +24,12 @@ export function cardPower(contract, trickNo, card, trick) {
 }
 
 export function winningEntry(contract, trickNo, trick) {
+  if (!trick || !trick.length) return null;
   return trick.reduce((best, x) => 
     cardPower(contract, trickNo, x.card, trick) > cardPower(contract, trickNo, best.card, trick) ? x : best, trick[0]
   );
 }
 
-// ==========================================
-// 2. 手札評価と競り
-// ==========================================
 function suitValue(hand, suit) {
   const weight = { "10": 1, J: 1.8, Q: 2.6, K: 3.5, A: 4.7 };
   const cards = hand.filter(c => c.suit === suit);
@@ -78,9 +72,6 @@ export function chooseDeputyCall(hand, discard, trump, level, bid) {
   return cands[0];
 }
 
-// ==========================================
-// 3. 通常の打牌（ナポレオン・連合軍共通）
-// ==========================================
 export function chooseCardToPlay(ctx) {
   const {
     hand, legal, trick, trickNo, contract, playedCards, voids,
@@ -90,14 +81,12 @@ export function chooseCardToPlay(ctx) {
   const isNapoleon = seat === contract.nap;
   const low = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
   
-  // --- リード時 ---
   if (!trick.length) {
     if (isNapoleon) {
-      // ナポレオンのリード戦略
       const twos = legal.filter(c => c.rank === '2');
       if (twos.length && trickNo > 0) {
         const playedSuitCount = playedCards.filter(pc => pc.suit === twos[0].suit).length;
-        if (playedSuitCount === 0) return twos[0]; // 局中初めてのスートなら2で確実に取る
+        if (playedSuitCount === 0) return twos[0];
       }
       
       const strongLead = legal.filter(c => c.rank === 'A' || c.id === '♠A' || (c.rank === 'J' && contract.suit !== 'NT' && (c.suit === contract.suit || ((c.suit === '♣' || c.suit === '♠') === (contract.suit === '♣' || contract.suit === '♠')))));
@@ -115,25 +104,17 @@ export function chooseCardToPlay(ctx) {
       
       return low(legal);
     } else {
-      // 連合軍のリード戦略
-      // 切り札の自発リードは原則禁止（どうしても他になければ除く）
       const nonTrumps = legal.filter(c => c.suit !== contract.suit || contract.suit === 'NT');
       const candidates = nonTrumps.length ? nonTrumps : legal;
-      
-      // 2でセイム2を狙う
       const twos = candidates.filter(c => c.rank === '2');
       if (twos.length && trickNo > 0) {
         const playedSuitCount = playedCards.filter(pc => pc.suit === twos[0].suit).length;
         if (playedSuitCount === 0) return twos[0];
       }
-      
-      // 弱点スートのヒラ回し（最も弱いカード）
       return low(candidates);
     }
   }
 
-  // --- フォロー時 ---
-  // ナポレオンの「2」出し（そのスートが局中初めて場に出た時）
   if (isNapoleon && trickNo > 0) {
     const twos = legal.filter(c => c.rank === '2');
     if (twos.length) {
@@ -149,7 +130,6 @@ export function chooseCardToPlay(ctx) {
     }
   }
 
-  // ナポレオン軍が勝っていて、副官でないなら安全札
   if (isMySideNap && isCurrentNapWinning && !(seat === contract.deputy && !contract.solo)) {
     const safe = legal.filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat !== seat);
     return low(safe.length ? safe : legal);
@@ -165,9 +145,6 @@ export function chooseCardToPlay(ctx) {
   return low(legal);
 }
 
-// ==========================================
-// 4. 副官の打牌（専用ロジック）
-// ==========================================
 export function chooseDeputyCard(ctx) {
   const { hand, legal, trick, trickNo, contract, nap, call, isNapLeading, lastSeat, seat, params } = ctx;
   const isFace = c => ["10", "J", "Q", "K", "A"].includes(c.rank);
@@ -177,7 +154,6 @@ export function chooseDeputyCard(ctx) {
   const roleCards = legal.filter(isRole);
   const low = cards => cards.slice().sort((a, b) => cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
 
-  // 副官がリードを握った時
   if (!trick.length) {
     const winningLeads = legal.filter(c => c.rank === 'A' || c.rank === '2' || (contract.suit !== 'NT' && c.suit === contract.suit && c.rank === 'J'));
     if (winningLeads.length) {
@@ -190,15 +166,11 @@ export function chooseDeputyCard(ctx) {
     return low(legal);
   }
 
-  // ナポレオンがリードしてきた場合
   if (isNapLeading) {
-    // ナポレオンが切り札（指定スート）を振ってきた場合
     if (trick[0].card.suit === contract.suit) {
-      // 1〜3番手なら役札を即出しして副官を開示
       if (trick.length <= 3 && roleCards.length) {
         return roleCards.sort((a, b) => cardPower(contract, trickNo, b, [...trick, {seat, card: b}]) - cardPower(contract, trickNo, a, [...trick, {seat, card: a}]))[0];
       }
-      // 大トリ（5番手）なら安全札で勝てるなら勝つ（ディレイ）
       if (lastSeat) {
         const winningCards = legal.filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat === seat);
         const safeWinning = winningCards.filter(c => !isRole(c));
@@ -206,9 +178,8 @@ export function chooseDeputyCard(ctx) {
         if (winningCards.length) return winningCards.sort((a, b) => cardPower(contract, trickNo, b, [...trick, {seat, card: b}]) - cardPower(contract, trickNo, a, [...trick, {seat, card: a}]))[0];
       }
     } else {
-      // 切り札以外が回ってきた場合、ナポレオンが勝っているなら役札温存
       const current = winningEntry(contract, trickNo, trick);
-      if (current.seat === nap) {
+      if (current && current.seat === nap) {
         const nonRole = legal.filter(c => !isRole(c));
         if (nonRole.length && Math.random() < params.roleCardPreservation) {
           return low(nonRole);
@@ -223,7 +194,6 @@ export function chooseDeputyCard(ctx) {
     }
   }
 
-  // それ以外は通常のフォロー
   const pointInTrick = trick.some(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank));
   const winningCards = legal.filter(c => winningEntry(contract, trickNo, [...trick, { seat, card: c }]).seat === seat);
   
