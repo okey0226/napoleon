@@ -34,14 +34,12 @@ function botSuitValue(hand,suit){const weight={"10":1,J:1.8,Q:2.6,K:3.5,A:4.7},c
 function strongestBotSuit(hand,suits=SUITS){return suits.slice().sort((a,b)=>botSuitValue(hand,b)-botSuitValue(hand,a)||SV[b]-SV[a])[0]}
 function chooseBotCall(hand,discard,trump,level,bid){const options=shuffledDeck().filter(c=>!hand.some(x=>x.id===c.id)&&!discard.some(x=>x.id===c.id));if(level===1)return options[0];const score=c=>RANKS.indexOf(c.rank)*4+(c.suit===trump?2:0)-hand.filter(x=>x.suit===c.suit).length*(level===3?1:.65),soloPower=hand.reduce((n,c)=>n+(c.rank==="A"?2:c.rank==="K"?1.2:c.rank==="Q"?.7:0)+((trump!=="NT"&&c.suit===trump)?0.5:0),0);if(level===3&&bid>=17&&soloPower>=8)return hand.slice().sort((a,b)=>score(b)-score(a))[0];return options.sort((a,b)=>score(b)-score(a)||SV[b.suit]-SV[a.suit])[0]}
 async function getProfile(env,conn){if(!conn.userId)return {rating:1000,games:0,username:conn.username||"ゲスト",playerId:conn.username||"ゲスト"};const p=await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(conn.userId).first();return p?{rating:p.rating,games:p.games,username:p.username,playerId:p.player_id,userId:conn.userId}:{rating:1000,games:null,username:conn.username||"player",playerId:conn.username||"player",userId:conn.userId||null}}
-function beginMatch(kind,roomCode,group,room){const id=Math.random().toString(36).slice(2,12).toUpperCase(),seats=group.map(x=>({connId:x.id,originalConnId:x.id,player:x.player,bot:false,hand:[],points:0,taken:[],roundTaken:[],roundPoints:0}));while(seats.length<5)seats.push({connId:null,player:{username:"COM "+(seats.length+1),playerId:"COM",rating:1000,games:0},bot:true,hand:[],points:0,taken:[],roundTaken:[],roundPoints:0});const m={id,kind,code:roomCode,seats:seats.slice(0,5),created:Date.now(),botLevel:3,matchScores:Array(5).fill(0),matchArt:Array(5).fill(0),matchContracts:[],bidHistory:[],playoff:false,appeal:null,appealInfo:'',matchStats:Array.from({length:5},()=>({exactWins:0,boldExactWins:0,soloWins:0,dramaticPlays:0,declarerAttempts:0,declarerSuccesses:0,deputyAttempts:0,deputySuccesses:0,exactAttempts:0,exactSuccesses:0,soloAttempts:0,soloSuccesses:0,artAttempts:0,allyFeedAttempts:0,allyFeedSuccesses:0,boldAttempts:0,boldSuccesses:0,bidTotal:0,ntBids:0,colorBids:0})),roundArt:Array(5).fill(0),roundDrama:Array(5).fill(0),roundFeed:Array(5).fill(0),phase:"prep",round:1,mult:1,redraws:0,kitty:[],trick:[],trickNo:0,active:-1,auction:null,contract:null,deadline:Date.now()+7000,lastBot:0,notice:"配札しました。競り開始まで7秒です。"};matches.set(id,m);m.seats.forEach(x=>{if(x.connId)connMatch.set(x.connId,id)});const players=m.seats.map((x,seat)=>({seat,id:x.player.playerId,username:x.player.username,rating:x.player.rating,bot:x.bot}));group.forEach((x,seat)=>sendSafe(x.conn,{type:"matched",matchId:id,mode:kind,code:roomCode||null,players,seat,botCount:5-group.length}));deal(m);publish(m,room)}
-function deal(m){m.lastTrickWinner=null;const d=shuffledDeck();m.seats.forEach(p=>{p.hand=d.splice(0,10);p.points=0;p.taken=[];p.roundTaken=[];p.roundPoints=0;sortHand(p.hand)});m.kitty=d.splice(0,2);m.trick=[];m.trickNo=0;m.earlyFinish=false;m.roundArt=Array(5).fill(0);m.roundDrama=Array(5).fill(0);m.roundFeed=Array(5).fill(0);m.result=null;m.contract=null;m.auction=null;m.active=-1;m.phase="prep";m.deadline=Date.now()+7000;m.notice="競り開始まで7秒です。";const green=m.seats.findIndex(p=>!p.hand.some(c=>["10","J","Q","K","A"].includes(c.rank)));if(green>=0&&m.redraws<5){m.redraws++;m.mult=m.mult>=4?2:m.mult+1;m.phase="redeal";m.notice=m.seats[green].player.username+"の手札に10・J・Q・K・Aがありません。倍率"+m.mult+"倍で配り直します。";m.deadline=Date.now()+1800}}
+function beginMatch(kind,roomCode,group,room){const id=Math.random().toString(36).slice(2,12).toUpperCase(),seats=group.map(x=>({connId:x.id,originalConnId:x.id,player:x.player,bot:false,hand:[],points:0,taken:[],roundTaken:[],roundPoints:0}));while(seats.length<5)seats.push({connId:null,player:{username:"COM "+(seats.length+1),playerId:"COM",rating:1000,games:0},bot:true,hand:[],points:0,taken:[],roundTaken:[],roundPoints:0});const m={id,kind,code:roomCode,seats:seats.slice(0,5),created:Date.now(),botLevel:3,matchScores:Array(5).fill(0),matchArt:Array(5).fill(0),matchContracts:[],bidHistory:[],playoff:false,appeal:null,appealInfo:'',matchStats:Array.from({length:5},()=>({exactWins:0,boldExactWins:0,soloWins:0,dramaticPlays:0,declarerAttempts:0,declarerSuccesses:0,deputyAttempts:0,deputySuccesses:0,exactAttempts:0,exactSuccesses:0,soloAttempts:0,soloSuccesses:0,artAttempts:0,allyFeedAttempts:0,allyFeedSuccesses:0,boldAttempts:0,boldSuccesses:0,bidTotal:0,ntBids:0,colorBids:0})),roundArt:Array(5).fill(0),roundDrama:Array(5).fill(0),roundFeed:Array(5).fill(0),phase:"prep",round:1,mult:1,redraws:0,kitty:[],trick:[],trickNo:0,active:-1,auction:null,contract:null,deadline:Date.now()+7000,lastBot:0,notice:"配札しました。競り開始まで7秒です。",playedCards:[],voids:[{},{},{},{},{}]};matches.set(id,m);m.seats.forEach(x=>{if(x.connId)connMatch.set(x.connId,id)});const players=m.seats.map((x,seat)=>({seat,id:x.player.playerId,username:x.player.username,rating:x.player.rating,bot:x.bot}));group.forEach((x,seat)=>sendSafe(x.conn,{type:"matched",matchId:id,mode:kind,code:roomCode||null,players,seat,botCount:5-group.length}));deal(m);publish(m,room)}
+function deal(m){m.lastTrickWinner=null;const d=shuffledDeck();m.seats.forEach(p=>{p.hand=d.splice(0,10);p.points=0;p.taken=[];p.roundTaken=[];p.roundPoints=0;sortHand(p.hand)});m.kitty=d.splice(0,2);m.trick=[];m.trickNo=0;m.earlyFinish=false;m.roundArt=Array(5).fill(0);m.roundDrama=Array(5).fill(0);m.roundFeed=Array(5).fill(0);m.result=null;m.contract=null;m.auction=null;m.active=-1;m.phase="prep";m.deadline=Date.now()+7000;m.playedCards=[];m.voids=[{},{},{},{},{}];m.notice="競り開始まで7秒です。";const green=m.seats.findIndex(p=>!p.hand.some(c=>["10","J","Q","K","A"].includes(c.rank)));if(green>=0&&m.redraws<5){m.redraws++;m.mult=m.mult>=4?2:m.mult+1;m.phase="redeal";m.notice=m.seats[green].player.username+"の手札に10・J・Q・K・Aがありません。倍率"+m.mult+"倍で配り直します。";m.deadline=Date.now()+1800}}
 function finalAuctionRule(scores,mult=1){const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>a.score-b.score||a.seat-b.seat),cutoff=ranked[1]?.score??0,gap=Math.max(0,(ranked[1]?.score??0)-(ranked[0]?.score??0)),rawMin=13+Math.floor(gap/(6*Math.max(1,mult)));return {eligible:ranked.filter(x=>x.score<=cutoff).map(x=>x.seat),bottomSeat:ranked[0]?.seat,fourthSeat:ranked[1]?.seat,thirdSeat:ranked[2]?.seat,thirdScore:ranked[2]?.score,minBid:Math.min(20,rawMin),canOvertake:rawMin<=20}}
 
-// ★SOLO最低立ち
 function soloMinimumBid(gap, mult){return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult)))}
 
-// ★チーム構成に基づく最低立ち数（4ケース + SOLO判定）
 function computeTeamMinBid(scores, mult, napSeat, deputySeat){
   const ranked=scores.map((s,i)=>({s,i})).sort((a,b)=>a.s-b.s||a.i-b.i);
   const S5=ranked[0].s, S4=ranked[1].s, S3=ranked[2].s;
@@ -68,7 +66,6 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat){
   return null;
 }
 
-// ★SOLO強制が必要かどうか
 function isSoloForcedInMatch(m){
   if(m.round<10 || !m.contract) return false;
   const ranked=m.matchScores.map((s,i)=>({s,i})).sort((a,b)=>a.s-b.s||a.i-b.i);
@@ -77,6 +74,31 @@ function isSoloForcedInMatch(m){
   const fourthSeat=ranked[1].i;
   const r=computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat);
   return r?.soloRequired === true;
+}
+
+// ★追加：Aがセイム2・切り札被せで取られ得るか判定（worker版）
+function isSafeToCashAceInMatch(m, suit, seat){
+  if(!m.contract) return false;
+  if(suit==='♠') return true;
+  if(m.trickNo>0){
+    const twoPlayed=m.playedCards.some(c=>c.id===suit+'2');
+    if(!twoPlayed){
+      const anyVoid=[0,1,2,3,4].some(s=>s!==seat&&m.voids[s]&&m.voids[s][suit]);
+      if(!anyVoid) return false;
+    }
+  }
+  if(m.contract.suit!=='NT'&&m.contract.suit!==suit){
+    for(let s=0;s<5;s++){
+      if(s===seat) continue;
+      if(m.contract.revealedCall){
+        if(s===m.contract.nap||(!m.contract.solo&&s===m.contract.deputy)) continue;
+      }else{
+        if(s===m.contract.nap) continue;
+      }
+      if(m.voids[s]&&m.voids[s][suit]) return false;
+    }
+  }
+  return true;
 }
 
 function publicState(m){return {matchId:m.id,mode:m.kind,code:m.code,botLevel:m.botLevel,phase:m.phase,round:m.round,mult:m.mult,matchScores:m.matchScores,bidHistory:m.bidHistory||[],playoff:!!m.playoff,appeal:m.appeal,appealInfo:m.appealInfo||'',lastTrickWinner:m.lastTrickWinner??null,finalRoundRule:m.round>=10?finalAuctionRule(m.matchScores,m.mult):null,notice:m.notice,active:m.active,players:m.seats.map((p,seat)=>({seat,name:p.bot?p.player.username:(p.player.playerId||p.player.username),username:p.player.username,rating:p.player.rating,bot:p.bot,handCount:p.hand.length,points:p.points,taken:p.taken,active:m.active,approved:m.phase==="auction"&&m.auction&&Array.isArray(m.auction.active)&&!m.auction.active.includes(seat),role:m.contract?(m.contract.nap===seat?(m.contract.revealedCall&&m.contract.solo?"ナポレオン（ひとり立ち）":"ナポレオン"):!m.contract.revealedCall?"":m.contract.deputy===seat?"副官":"連合軍"):""})),kitty:m.phase==="auction"?m.kitty:[],auction:m.auction?{high:m.auction.high,active:m.auction.active,minBid:m.auction.minBid||13,requiredBidSeat:m.auction.requiredBidSeat??null}:null,contract:m.contract?{nap:m.contract.nap,num:m.contract.num,suit:m.contract.suit,deputy:m.contract.revealedCall?m.contract.deputy:-1,solo:m.contract.revealedCall?m.contract.solo:null,revealedCall:!!m.contract.revealedCall,call:m.contract.call}:null,trick:m.trick.map(x=>({seat:x.seat,card:x.card})),trickNo:m.trickNo,deadline:m.deadline,result:m.result||null}}
@@ -94,7 +116,6 @@ function auctionDone(m,seat,room){if(seat<0||m.auction.high.num<13){if(m.round>=
 function startPlay(m,room){const c=m.contract;if(c.solo)c.deputy=c.nap;else{for(let i=0;i<5;i++){const found=m.seats[i].hand.some(x=>x.id===c.call.id);if(found){c.deputy=i;break}}if(c.deputy<0)c.deputy=c.nap;}m.phase="play";m.trick=[];m.trickNo=0;m.active=c.nap;m.deadline=Date.now()+30000;m.notice="カードを出してください。マストフォローです。";publish(m,room);if(m.seats[m.active].bot)botAction(m,room)}
 function beginDiscard(m,seat,room){m.seats[seat].hand.push(...m.kitty);m.kitty=[];sortHand(m.seats[seat].hand);m.phase="discard";m.active=seat;m.deadline=Date.now()+30000;m.notice="オープンの2枚を手札に入れ、2枚を捨ててください。";publish(m,room);if(m.seats[seat].bot)botAction(m,room)}
 
-// ★SOLO強制対応のcallCard
 function callCard(m,seat,suit,rank,room){
   if(m.phase!=="call"||m.active!==seat||!SUITS.includes(suit)||!RANKS.includes(rank))return;
   const card={suit,rank,id:suit+rank};
@@ -122,7 +143,6 @@ function power(m,entry,trick){const c=entry.card,led=trick[0].card.suit,first=m.
 function bestEntry(m,trick){return trick.reduce((best,x)=>power(m,x,trick)>power(m,best,trick)?x:best,trick[0])}
 function winner(m){return bestEntry(m,m.trick)}
 
-// ★キャリブレーション式レート計算
 function matchRatingChanges(scores,art,ratings,matchStats,contracts){
   const meanArt=art.reduce((n,x)=>n+x,0)/5;
   const cs=contracts||[];
@@ -205,12 +225,7 @@ async function finish(m,room,env){
 
   for(let i=0;i<5;i++){m.matchScores[i]+=scores[i];m.matchArt[i]+=art[i]}
 
-  // ★契約スナップショット
-  m.matchContracts.push({
-    round:m.round, nap, deputy:m.contract.deputy, num:m.contract.num, suit:m.contract.suit, solo:!!m.contract.solo,
-    points, napWin:made, revealTrickNo:m.contract.revealTrickNo??null,
-    takenPoints:m.seats.map(s=>s.roundPoints||0)
-  });
+  m.matchContracts.push({round:m.round,nap,deputy:m.contract.deputy,num:m.contract.num,suit:m.contract.suit,solo:!!m.contract.solo,points,napWin:made,revealTrickNo:m.contract.revealTrickNo??null,takenPoints:m.seats.map(s=>s.roundPoints||0)});
 
   const replayAllLast=!!(finalRule&&scores[finalRule.bottomSeat]>0&&m.matchScores[finalRule.bottomSeat]===m.matchScores[finalRule.fourthSeat]);
   const lastRound=m.round>=10&&!replayAllLast;
@@ -275,7 +290,6 @@ async function finish(m,room,env){
 
 function artfulCard(m,entry,trick){const c=entry.card,led=trick[0].card.suit,black=s=>s==="♣"||s==="♠";return m.trickNo>0&&(c.id==="♠A"||c.id==="♥Q"&&trick.some(x=>x.card.id==="♠A")||c.rank==="J"&&m.contract.suit!=="NT"&&(c.suit===m.contract.suit||c.suit!==m.contract.suit&&black(c.suit)===black(m.contract.suit))||c.rank==="2"&&c.suit===led&&trick.every(x=>x.card.suit===led))}
 
-// ★reveal時の立ち変更通知（computeTeamMinBid対応）
 function playCard(m,seat,id,room,env){
   if(m.phase!=="play"||m.active!==seat)return;
   const legal=legalCards(m,seat),card=legal.find(x=>x.id===id);
@@ -284,6 +298,15 @@ function playCard(m,seat,id,room,env){
   const previous=m.trick.length?winner(m):null,hand=m.seats[seat].hand,teamOf=i=>i===m.contract.nap||!m.contract.solo&&i===m.contract.deputy?"nap":"alliance",feedOpportunity=!!(previous&&previous.seat!==seat&&m.contract.revealedCall&&teamOf(previous.seat)===teamOf(seat)&&legal.some(x=>["10","J","Q","K","A"].includes(x.rank))),feedCard=feedOpportunity&&["10","J","Q","K","A"].includes(card.rank);
   hand.splice(hand.findIndex(x=>x.id===id),1);
   m.trick.push({seat,card,feedOpportunity,feedCard});
+  // ★カードカウンティング
+  m.playedCards.push({suit:card.suit,rank:card.rank,id:card.id});
+  if(m.trick.length>1){
+    const ledSuit=m.trick[0].card.suit;
+    if(card.suit!==ledSuit){
+      if(!m.voids[seat])m.voids[seat]={};
+      m.voids[seat][ledSuit]=true;
+    }
+  }
   const reveal=m.contract.call?.id===card.id&&!m.contract.revealedCall;
   let raisedNotice="";
   if(reveal){
@@ -348,6 +371,17 @@ function chooseBotDeputyPlay(m,i,legal){
  const calledLead=m.trick[0].seat===nap&&(led===call?.suit||trumpSuit!=="NT"&&led===trumpSuit);
  if(calledLead){
   if(lastSeat){const delayed=safeTeamWins.filter(card=>!isRole(card));if(delayed.length){const points=delayed.filter(isFace);return (points.length?points:delayed).sort((a,b)=>RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))[0]}}
+  // ★修正①：ナポレオン側が既に安全に勝っている場合は役札を温存
+  const current=winner(m);
+  if(sideOf(current.seat)===ownSide){
+    const nonRole=legal.filter(c=>!isRole(c));
+    if(nonRole.length){
+      const candidate=low(nonRole);
+      if(!enemyCanOvertake(candidate)){
+        return candidate;
+      }
+    }
+  }
   if(trumpSuit==="NT"&&call?.rank==="A"&&call.id!=="♠A"&&led===call.suit&&m.trickNo>0){const allFollowed=m.trick.every(entry=>entry.card.suit===led),alreadyWonByTwo=m.trick.some(entry=>entry.card.suit===led&&entry.card.rank==="2")&&sideOf(winner(m).seat)!==ownSide,enemyTwoAfter=Array.from({length:4-m.trick.length},(_,index)=>(i+index+1)%5).some(seat=>sideOf(seat)!==ownSide&&m.seats[seat].hand.some(card=>card.suit===led&&card.rank==="2"));if(alreadyWonByTwo||allFollowed&&enemyTwoAfter){const shelter=legal.filter(card=>card.id!==call.id);if(shelter.length)return low(shelter)}}
   if(trumpSuit==="NT"&&call?.rank==="2"){const called=legal.find(card=>card.id===call.id);if(called)return called}
   const called=legal.find(card=>card.id===call?.id);if(called)return called;
@@ -357,7 +391,6 @@ function chooseBotDeputyPlay(m,i,legal){
  return low(legal)
 }
 
-// ★SOLO強制対応のbotAction
 function botAction(m,room){
   if(!m||m.phase==="result")return;
   m.botLevel=3;
@@ -384,7 +417,17 @@ function botAction(m,room){
     if(!c&&level>=2&&napSide&&m.contract.num<20&&napPoints>=m.contract.num&&alliancePoints===0){if(!m.trick.length)c=low(legal);else{const safe=legal.filter(x=>bestEntry(m,m.trick.concat([{seat:i,card:x}])).seat!==i);c=low(safe.length?safe:legal)}}
     if(!c&&isDeputy)c=chooseBotDeputyPlay(m,i,legal);
     if(!c&&level===1)c=legal[Math.floor(Math.random()*legal.length)];
-    else if(!c&&!m.trick.length){const leadValue=card=>RANKS.indexOf(card.rank)+(card.suit===m.contract.suit?3:0)+(card.rank==="A"?3:card.rank==="K"?1:0)+p.hand.filter(x=>x.suit===card.suit).length*.25;c=legal.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0]}
+    // ★修正②：リード選択で危険なAを温存
+    else if(!c&&!m.trick.length){
+      const leadValue=card=>RANKS.indexOf(card.rank)+(card.suit===m.contract.suit?3:0)+(card.rank==="A"?3:card.rank==="K"?1:0)+p.hand.filter(x=>x.suit===card.suit).length*.25;
+      const safeH=legal.filter(card=>{
+        if(card.rank!=="A")return true;
+        if(card.id==="♠A")return true;
+        return isSafeToCashAceInMatch(m,card.suit,i);
+      });
+      const candidates=safeH.length?safeH:legal;
+      c=candidates.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];
+    }
     else if(!c){const winning=legal.filter(card=>bestEntry(m,m.trick.concat([{seat:i,card}])).seat===i),current=bestEntry(m,m.trick).seat,points=m.trick.filter(x=>["10","J","Q","K","A"].includes(x.card.rank)).length,team=seat=>seat===m.contract.nap?"nap":m.contract.revealedCall?seat===m.contract.deputy?"nap":"alliance":m.seats[seat].hand.some(card=>card.id===m.contract.call.id)?"nap":"alliance",teammate=team(i)===team(current);if(teammate){const safe=legal.filter(card=>bestEntry(m,m.trick.concat([{seat:i,card}])).seat!==i);c=low(safe.length?safe:legal)}else if(winning.length&&(points>0||m.trick.length===4))c=low(winning);else c=low(legal)}
     playCard(m,i,c.id,room,null)
   }
