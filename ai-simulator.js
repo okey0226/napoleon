@@ -1,33 +1,48 @@
-import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, handStrength } from './ai-tactics.js';
+import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
 
-// ========================================
-// 新レート式: スイートスポット + highBidBoost + solo倍率
-// ========================================
-function computeRoundRating(strength, num, won, solo) {
-  const p = estimatedWinRate(strength, num);
-  const diff = Math.max(0, num - 12);
-  const highBoost = 1 + 0.5 * Math.max(0, num - 17);
-  const multiplier = solo ? 1.5 : 1.0;
-  if (won) {
-    const base = (1 - p) * diff * 8;
-    const bonus = sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost;
-    return (base + bonus) * multiplier;
-  } else {
-    return (-p * diff * 8) * multiplier;
-  }
+function computeBidStrength(hand, suit, params) {
+  if (suit === 'NT') return ntHandStrength(hand, params);
+  return colorStrength(hand, suit, params);
 }
 
-function simRound(hands, round, matchScores, params) {
+function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo) {
+  const p = estimatedWinRate(strengthAtBid, num);
+  const diff = Math.max(0, num - 12);
+  const highBoost = 1 + 0.5 * Math.max(0, num - 17);
+  const soloMult = solo ? 1.5 : 1.0;
+  const maxHonest = findMaxHonestBid(strengthAtBid);
+  const bluffGap = Math.max(0, num - maxHonest);
+  const isHonest = bluffGap === 0;
+
+  let napDelta;
+  if (won) {
+    napDelta = ((1 - p) * diff * 8 + sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost) * soloMult;
+    if (pointsOverBid > 0) napDelta -= pointsOverBid * 0.3;
+    if (isHonest) napDelta += params.cooperationBonus * 1.5;
+  } else {
+    napDelta = -p * diff * 8 * soloMult;
+    if (!isHonest) napDelta -= bluffGap * params.bluffLossMultiplier * 2;
+  }
+
+  let deputyDelta = 0;
+  if (!solo) {
+    deputyDelta = ((won ? 1 : 0) - p) * diff * 3.2;
+    if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
+  }
+
+  return { napDelta, deputyDelta, p, diff };
+}
+
+function simRound(hands, round, matchScores, params, bidHistory) {
   const d = shuffledDeck();
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
 
-  // 競り: shouldBid は {num, suit, solo} を返す
   let high = { num: 12, suit: '', player: -1, solo: false };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
-      const bid = shouldBid(hands[s], high, 13, params[s]);
+      const bid = shouldBid(hands[s], high, 13, params[s], bidHistory, s);
       if (bid && bid.num > high.num) high = { ...bid, player: s };
     }
   }
@@ -36,10 +51,13 @@ function simRound(hands, round, matchScores, params) {
   }
 
   const nap = high.player, trump = high.suit, num = high.num;
-  const strengthAtBid = handStrength(hands[nap]);
-  const isSoloRequested = high.solo === true;
+  const isSoloBid = high.solo === true;
+  const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap]);
 
-  const contractBase = { nap, suit: trump, solo: isSoloRequested, deputy: -1 };
+  bidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
+  if (bidHistory.length > 50) bidHistory.shift();
+
+  const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false };
   hands[nap].push(...kitty); sortHand(hands[nap]);
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
@@ -47,18 +65,16 @@ function simRound(hands, round, matchScores, params) {
 
   let deputy = -1;
   let call;
-  if (isSoloRequested) {
-    // 意図的solo: 自分の弱い札を指名札に（副官なし）
+  if (isSoloBid) {
     call = chooseSoloCall(hands[nap]);
     deputy = nap;
     contractBase.deputy = nap;
   } else {
-    call = chooseDeputyCall(hands[nap], discard, trump, 3, num);
+    call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap]);
     for (let i = 0; i < 5; i++) {
       if (i !== nap && hands[i].some(c => c.id === call.id)) { deputy = i; break; }
     }
     if (deputy < 0) {
-      // 指名札が誰にもない → 強制一人立ち
       contractBase.solo = true;
       deputy = nap;
       call = chooseSoloCall(hands[nap]);
@@ -69,7 +85,7 @@ function simRound(hands, round, matchScores, params) {
   const roundPts = [0, 0, 0, 0, 0];
   roundPts[nap] += kittyPts;
   const played = [], voids = [{}, {}, {}, {}, {}];
-  let revealed = contractBase.solo, active = nap, trickNo = 0;
+  let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -105,8 +121,8 @@ function simRound(hands, round, matchScores, params) {
         if (!voids[seat]) voids[seat] = {};
         voids[seat][trick[0].card.suit] = true;
       }
-      played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat: seat });
-      if (!revealed && chosen.id === call.id) revealed = true;
+      played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat });
+      if (!revealed && chosen.id === call.id) { revealed = true; revealTrickNo = trickNo; }
       trick.push({ seat, card: chosen });
       hands[seat] = hand.filter(c => c.id !== chosen.id);
     }
@@ -136,11 +152,10 @@ function simRound(hands, round, matchScores, params) {
   for (let i = 0; i < 5; i++) matchScores[i] += sc[i];
 
   return {
-    nap, deputy, num,
-    solo: contractBase.solo,
+    nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
-    strengthAtBid,
-    roundRatingBase: computeRoundRating(strengthAtBid, num, made, contractBase.solo)
+    strengthAtBid, revealTrickNo,
+    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap], Math.max(0, napPts - num), revealTrickNo)
   };
 }
 
@@ -159,7 +174,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   const pool = [...baseline.slice(0, 3), ...challengers.slice(0, 5)];
 
   const stats = pool.map(() => ({
-    n: 0, totalRating: 0, wins: 0,
+    n: 0, totalRating: 0,
     napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0,
     bidSum: 0, bidN: 0, soloBidN: 0
   }));
@@ -174,34 +189,42 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
     const hands = [[], [], [], [], []];
     const matchScores = [0, 0, 0, 0, 0];
+    const bidHistory = [];
     const contracts = [];
-    for (let r = 1; r <= 10; r++) contracts.push(simRound(hands, r, matchScores, seatParams));
+    for (let r = 1; r <= 10; r++) contracts.push(simRound(hands, r, matchScores, seatParams, bidHistory));
 
-    const max = Math.max(...matchScores);
-    for (let s = 0; s < 5; s++) {
-      const st = stats[seatIdx[s]];
+    const sorted = [...matchScores].sort((a, b) => b - a);
+    const placement = [0, 0, 0, 0, 0];
+    for (let s = 0; s < 5; s++) placement[s] = 1 + sorted.filter(x => x > matchScores[s]).length;
+
+    for (let seat = 0; seat < 5; seat++) {
+      const st = stats[seatIdx[seat]];
       st.n++;
-
       let matchRating = 0;
+
       for (const c of contracts) {
-        if (c.nap === s) {
+        if (c.nap === seat) {
           st.napN++; st.bidSum += c.num; st.bidN++;
           if (c.made) st.napW++;
           if (c.solo) st.soloBidN++;
-          matchRating += c.roundRatingBase;
-        } else if (!c.solo && c.deputy === s) {
+          matchRating += c.rating.napDelta;
+        } else if (!c.solo && c.deputy === seat) {
           st.depN++;
           if (c.made) st.depW++;
-          matchRating += c.made ? 1.5 : -1.5;
+          matchRating += c.rating.deputyDelta;
         } else {
           st.alN++;
           if (!c.made) st.alW++;
-          matchRating += c.made ? -0.5 : 0.5;
+          const pts = c.takenPoints[seat] || 0;
+          matchRating += (pts - 4.4) * 0.4 + (c.made ? -0.5 : 0.5);
         }
       }
-      st.totalRating += matchRating;
 
-      if (matchScores[s] === max) st.wins++;
+      if (placement[seat] === 1) matchRating += 0.5;
+      else if (placement[seat] === 5) matchRating -= 0.5;
+      matchRating -= 0.05 * contracts.length;
+
+      st.totalRating += matchRating;
     }
   }
 
@@ -214,7 +237,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     const napRate = st.napN ? st.napW / st.napN : 0;
     const depRate = st.depN ? st.depW / st.depN : 0;
     const alRate = st.alN ? st.alW / st.alN : 0;
-    const overall = st.wins / st.n;
+    const overall = napRate;
     const avgBid = st.bidN ? st.bidSum / st.bidN : 0;
     statements.push(
       env.DB.prepare(
@@ -249,7 +272,27 @@ export function generateInsights(strategies) {
   const names = {
     bidThreshold: '立ち強度', riskTolerance: 'リスク許容', leadAggression: 'リード積極性',
     followAggression: 'フォロー積極性', trumpBonus: '切り札評価', mightyBonus: 'マイティ評価',
-    safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し'
+    safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し',
+    opponentInferenceWeight: '相手推論', suitConflictWeight: 'スート衝突回避',
+    mightyShadowWeight: 'マイティ影', weakOpponentBoost: '弱相手ブースト',
+    bluffLossMultiplier: 'ブラフ罰', bluffWinReduction: 'ブラフ勝報酬削減',
+    cooperationBonus: '協力ボーナス', participationReward: '参加報酬',
+    ntPreference: 'NT選好', ntSuitLengthBonus: 'NT長さ', ntAceWeight: 'NT A評価',
+    ntMightyBonus: 'NTマイティ', highBidNtThreshold: 'NT移行閾値',
+    aceWeakSuitBonus: '弱点A', aceShortBonus: '短A', aceLongPenalty: '長Aペナ',
+    sameTwoAceCounter: 'セイム2 A対策', sameTwoShortBonus: 'セイム2短', sameTwoLongPenalty: 'セイム2長ペナ',
+    sameTwoHighBidBonus: 'セイム2高bid',
+    trumpExhaustionThreshold: 'トランプ枯渇閾値', baitModeWindow: '釣り窓',
+    baitMinTrumps: '釣り最小トランプ', strongTrumpLeadAggression: '押し切り',
+    aceCashUrgency: 'A早期', pointCardSafetyThreshold: 'ポイント安全',
+    tenHoldThreshold: '10温存', nonTrumpAceWaiting: 'A待ち',
+    faceCardOnNapWin: 'NAP勝ち絵札', preserveNextStronger: '次強温存',
+    deputyRevealUrgency: '判明緊急', deputyCoverWeight: '弱点カバー', sameTwoDeputyBonus: 'セイム2副官',
+    allyFaceCardBonus: '連合絵札', napWeaknessLeadWeight: 'NAP弱点リード',
+    trumpAvoidWeight: 'トランプ回避', sameColorSuitAvoid: '裏J回避',
+    spadeLeadPriority: 'スペード優先', nonDeclaredSuitWeight: '非宣言スート',
+    queenHoardWeight: 'Q温存', sameTwoHoardWeight: '2温存',
+    allyYieldBonus: '味方譲り', pointThresholdAwareness: '4.4点意識'
   };
   const deltas = Object.entries(PARAM_BOUNDS)
     .map(([k, [lo, hi]]) => {
