@@ -52,7 +52,8 @@ function simRound(hands, round, matchScores, params) {
         isCurrentNapWinning,
         isRevealed: revealed,
         isNapLeading: trick.length > 0 && trick[0].seat === nap,
-        lastSeat: trick.length === 4
+        lastSeat: trick.length === 4,
+        call: call // ▼ 追加: 副官の指名札情報を渡す
       };
 
       let chosen;
@@ -63,7 +64,6 @@ function simRound(hands, round, matchScores, params) {
         if (!voids[seat]) voids[seat] = {};
         voids[seat][trick[0].card.suit] = true;
       }
-      // ★修正: seat を記録
       played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat: seat });
       if (!revealed && chosen.id === call.id) revealed = true;
       trick.push({ seat, card: chosen });
@@ -163,6 +163,8 @@ export function generateInsights(strategies) {
   const deltas = Object.entries(PARAM_BOUNDS).map(([k, [lo, hi]]) => { const cur = top[k] ?? base[k]; return { key: k, name: names[k] || k, delta: (cur - base[k]) / (hi - lo), cur, baseVal: base[k] }; }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   const insights = deltas.slice(0, 3).map(d => ({ title: `${d.name}（${d.delta > 0 ? '増加' : '減少'}）`, detail: `初期値 ${d.baseVal.toFixed(2)} → ${d.cur.toFixed(2)}。改善に寄与した主要パラメータ。` }));
   insights.push({ title: '役割別勝率（最上位戦略）', detail: `ナポレオン時 ${(Number(strategies[0].nap_win_rate || 0) * 100).toFixed(1)}% / 副官時 ${(Number(strategies[0].deputy_win_rate || 0) * 100).toFixed(1)}% / 連合軍時 ${(Number(strategies[0].alliance_win_rate || 0) * 100).toFixed(1)}%` });
-  insights.push({ title: '平均レート上昇', detail: `1局あたり +${Number(strategies[0].avg_rating_delta || 0).toFixed(2)} pt（${strategies[0].matches}試合の平均）。` });
+  
+  const delta = Number(strategies[0].avg_rating_delta || 0);
+  insights.push({ title: '平均レート上昇', detail: `1局あたり ${delta > 0 ? '+' : ''}${delta.toFixed(2)} pt（${strategies[0].matches}試合の平均）。` });
   return insights;
 }
