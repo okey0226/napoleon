@@ -8,7 +8,8 @@ export function isTrump(contract, c) {
 }
 
 export function cardPower(contract, trickNo, card, trick) {
-  const led = trick[0].card.suit;
+  // ▼ 修正: trickが空の場合は、そのカード自身のスートをリードスートとする
+  const led = trick.length > 0 ? trick[0].card.suit : card.suit;
   const allSame = trick.every(x => x.card.suit === led);
   const mighty = trick.some(x => x.card.id === "♠A");
 
@@ -333,7 +334,8 @@ export function chooseCardToPlay(ctx) {
 // 5. 副官の打牌
 // ==========================================
 export function chooseDeputyCard(ctx) {
-  const { hand, legal, trick, trickNo, contract, nap, call, isNapLeading, lastSeat, seat, params } = ctx;
+  // ▼ 修正: nap を削除し、contract から取得する
+  const { hand, legal, trick, trickNo, contract, call, isNapLeading, lastSeat, seat, params } = ctx;
   const isFace = c => ["10", "J", "Q", "K", "A"].includes(c.rank);
   const isSameColor = (a, b) => ["♣", "♠"].includes(a) === ["♣", "♠"].includes(b);
   const isRole = c => c.id === call?.id || c.id === "♠A" || (contract.suit !== "NT" && c.rank === "J" && (c.suit === contract.suit || isSameColor(c.suit, contract.suit)));
@@ -356,7 +358,7 @@ export function chooseDeputyCard(ctx) {
 
   if (isNapLeading) {
     const current = winningEntry(contract, trickNo, trick);
-    const isAllyWinning = current && (current.seat === nap || current.seat === seat);
+    const isAllyWinning = current && (current.seat === contract.nap || current.seat === seat);
     
     if (isAllyWinning) {
       const nonRole = legal.filter(c => !isRole(c));
