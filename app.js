@@ -1430,11 +1430,12 @@ function renderStrategyLab({strategies,insights,generations}){
   } else {
     cards = strategies.slice(0,5).map((s,i)=>{
       const rank=i+1;
+      const delta = Number(s.avg_rating_delta||0);
       return `<article class="strategy-card rank-${rank}">
         <div class="strategy-rank">#${rank}</div>
         <div class="strategy-meta">
           <span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span>
-          <strong>+${Number(s.avg_rating_delta||0).toFixed(2)} <small>pt/試合</small></strong>
+          <strong>${delta > 0 ? '+' : ''}${delta.toFixed(2)} <small>pt/試合</small></strong>
         </div>
         <div class="strategy-roles">
           <span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span>
@@ -1460,12 +1461,15 @@ function renderStrategyLab({strategies,insights,generations}){
     : '<p class="subcopy" style="padding:10px 0;">データなし</p>';
 
   const genRows = generations.length > 0
-    ? generations.slice(-10).map(gg=>`
+    ? generations.slice(-10).map(gg=>{
+      const delta = Number(gg.best_delta||0);
+      return `
       <div class="gen-row">
         <span>Gen ${gg.generation}</span>
-        <b>+${Number(gg.best_delta||0).toFixed(2)}pt</b>
+        <b>${delta > 0 ? '+' : ''}${delta.toFixed(2)}pt</b>
         <small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small>
-      </div>`).join('')
+      </div>`;
+    }).join('')
     : '<p class="subcopy" style="padding:10px 0;">データなし</p>';
 
   wrap.innerHTML=`
