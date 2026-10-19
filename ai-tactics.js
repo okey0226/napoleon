@@ -19,7 +19,6 @@ export function cardPower(contract, trickNo, card, trick) {
     if (card.id === "♠A") return 9000;
     if (contract.suit !== "NT" && card.rank === "J" && card.suit === contract.suit) return 8000;
     if (contract.suit !== "NT" && card.rank === "J" && card.suit !== contract.suit && isSameColorSuit(card.suit, contract.suit)) return 7000;
-    // セイム2は trickNo > 0 (2周目以降) でのみ発動
     if (allSame && card.suit === led && card.rank === "2") return 6000;
   }
 
@@ -84,27 +83,39 @@ export function soloAdjustedStrength(hand, trump) {
 }
 
 // ==========================================
-// 3. 立ち判断
+// 3. 立ち判断（便乗ロジック）
 // ==========================================
 function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
   if (!Array.isArray(currentBids)) return base;
   const oppBids = currentBids.filter(b => b && b.seat !== mySeat && Number.isFinite(b.num));
+  
   for (const bid of oppBids) {
-    if (bid.suit === mySuit) adj -= params.suitConflictWeight * Math.max(0, bid.num - 13) * 0.15;
-    if ((bid.suit === 'NT' || bid.suit === '♠') && bid.num >= 16) {
-      if (type === 'nt') adj -= params.mightyShadowWeight * 0.8;
-      if (mySuit === '♠') adj -= params.suitConflictWeight * 0.5;
+    // 自分のスートと同じスートで高く立たれている場合は衝突リスク
+    if (bid.suit === mySuit && bid.num >= 15) {
+      adj -= params.suitConflictWeight * Math.max(0, bid.num - 14) * 0.2;
     }
-    if (type === 'color' && bid.suit !== 'NT' && mySuit !== 'NT' && isSameColorSuit(bid.suit, mySuit) && bid.num >= 15) {
-      adj -= params.suitConflictWeight * 0.3;
+    
+    // 相手が高く立っている（16以上）＝相手はマイティや高札を持っていて、他の敵を抑えてくれる
+    if (bid.num >= 16) {
+      adj += params.weakOpponentBoost * 0.8;
+      // 相手が別スートで強いなら、自分のAは通る可能性が高い（便乗）
+      if (bid.suit !== mySuit && bid.suit !== 'NT') {
+        adj += params.opponentInferenceWeight * 0.5;
+      }
+    } 
+    else if (bid.num >= 14) {
+      adj += params.weakOpponentBoost * 0.3;
+    }
+    // 相手がパス（13未満）＝相手は弱い
+    else if (bid.num < 13) {
+      // 自分の相対的強度は上がるが、相手も弱いので過信は禁物
+      adj += params.weakOpponentBoost * 0.1;
     }
   }
-  const maxOppBid = oppBids.length ? Math.max(...oppBids.map(b => b.num)) : 0;
-  if (maxOppBid < 13) adj += params.weakOpponentBoost * 0.5;
-  else if (maxOppBid <= 14) adj += params.weakOpponentBoost * 0.2;
+  
   if (!Number.isFinite(adj)) adj = 0;
-  return base + adj * params.opponentInferenceWeight;
+  return base + adj * (1 + params.opponentInferenceWeight);
 }
 
 function computeBidEV(p, num, strength, params) {
@@ -117,6 +128,7 @@ function computeBidEV(p, num, strength, params) {
   const lossBase = -p * diff * 8;
   const sweetBonus = bluffGap === 0 ? sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost : 0;
   const coopBonus = bluffGap === 0 ? params.cooperationBonus * 1.5 : 0;
+  // ブラフ罰を weak化 (bluffLossMultiplier のデフォルトは 0.6、HONEST_THRESHOLD は 0.35)
   const bluffPenalty = bluffGap > 0 ? -bluffGap * params.bluffLossMultiplier * 2 : 0;
   const ev = p * (winBase + sweetBonus + coopBonus) + (1 - p) * (lossBase + bluffPenalty);
   return Number.isFinite(ev) ? ev : 0;
@@ -181,7 +193,7 @@ export function chooseDiscard(hand, trump) {
 }
 
 // ==========================================
-// 5. 副官指名
+// 5. 副官指名（裏J釣り用の指名も考慮）
 // ==========================================
 export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
   const p = params || {
@@ -190,13 +202,25 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
   };
   const used = new Set([...(hand || []), ...(discard || [])].map(c => c.id));
 
-  if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
-
+  // 戦略1: 裏J（同色J）を持っていない場合、裏Jを指名して釣り＆狩りの準備をする
+  // 切札Jを持っていない場合は切札Jを最優先。
+  // ※ NAPが裏Jを持っている場合、あえて裏Jを指名しない（自分で釣って狩るため）
   if (trump !== 'NT') {
-    if (!used.has(trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
     const sc = sameColorSuitOf(trump);
-    if (sc && !used.has(sc + 'J')) return { suit: sc, rank: 'J', id: sc + 'J' };
+    const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
+    const hasTrumpJ = hand.some(c => c.suit === trump && c.rank === 'J');
+    
+    // 自分が裏Jを持っていない、かつ相手が持っていそうなら裏Jを指名
+    if (sc && !hasBackJ && !used.has(sc + 'J')) {
+      return { suit: sc, rank: 'J', id: sc + 'J' };
+    }
+    // 切札Jを持っていないなら切札Jを指名
+    if (!hasTrumpJ && !used.has(trump + 'J')) {
+      return { suit: trump, rank: 'J', id: trump + 'J' };
+    }
   }
+
+  if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
 
   let bestCard = null;
   let bestScore = -Infinity;
@@ -309,11 +333,30 @@ function iHoldStrongestTrump(hand, playedCards, trumpSuit) {
 }
 
 // ==========================================
-// 7. ナポレオン打牌
+// 7. ナポレオン打牌（裏J釣りロジック追加）
 // ==========================================
 function chooseNapoleonLead(ctx) {
-  const { hand, legal, contract, trickNo, playedCards, voids, seat, params } = ctx;
+  const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call } = ctx;
   if (!legal || !legal.length) return null;
+
+  // 裏J釣りロジック: 序盤で自分の手札に裏Jがある、または呼んだカードが裏Jの場合
+  if (contract.suit !== 'NT' && trickNo <= (params.baitBackJWindow || 3)) {
+    const sc = sameColorSuitOf(contract.suit);
+    const iHaveBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
+    const calledBackJ = call?.suit === sc && call?.rank === 'J';
+    const enemyTrumpJExists = !playedCards.some(c => isTrumpJ(c, contract)) && !hand.some(c => isTrumpJ(c, contract));
+    
+    // 釣り条件: 自分か副官が裏Jを持っており、敵の切札Jがまだ出ていない
+    if ((iHaveBackJ || calledBackJ) && enemyTrumpJExists) {
+      if (Math.random() < (params.baitBackJChance || 0.6)) {
+        // 低いトランプ（2〜5）をリードして敵の切札Jを誘う
+        const lowTrumps = legal.filter(c => isTrump(contract, c) && RANKS.indexOf(c.rank) <= 3);
+        if (lowTrumps.length) {
+          return lowTrumps.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+        }
+      }
+    }
+  }
 
   // 1. 切札J / 同色J
   const tj = legal.find(c => isTrumpJ(c, contract));
@@ -334,7 +377,6 @@ function chooseNapoleonLead(ctx) {
     }
 
     if (!strongest && trickNo <= params.baitModeWindow && myTr.length >= params.baitMinTrumps) {
-      // 釣り: 1周目に2を切らないように除外
       const baitCandidates = myTr.filter(c => trickNo > 0 || c.rank !== '2');
       if (baitCandidates.length) {
         return baitCandidates.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
@@ -419,7 +461,7 @@ function chooseNapoleonFollow(ctx) {
 }
 
 // ==========================================
-// 8. 副官打牌
+// 8. 副官打牌（絵札付けを常時実行）
 // ==========================================
 export function chooseDeputyCard(ctx) {
   const { hand, legal, trick, trickNo, contract, call, seat, params, playedCards } = ctx;
@@ -437,7 +479,6 @@ export function chooseDeputyCard(ctx) {
       const trumps = legal.filter(c => isTrump(contract, c));
       if (trumps.length) return low(trumps);
     }
-    // 1周目のリードでは2を避ける
     const candidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
     return low(candidates.length ? candidates : legal);
   }
@@ -447,6 +488,7 @@ export function chooseDeputyCard(ctx) {
   const current = winningEntry(contract, trickNo, trick);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
 
+  // NAP勝ち確定時は次に強いカード以外の絵札を必ず付ける
   if (napCard && isAbsoluteWinner(napCard, contract, trick, playedCards)) {
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
@@ -456,6 +498,7 @@ export function chooseDeputyCard(ctx) {
         !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
       );
       if (safeFace.length) {
+        // 確率判定を削除し、常時最高の絵札を出す
         return safeFace.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
     }
@@ -471,7 +514,8 @@ export function chooseDeputyCard(ctx) {
 
   if (call?.suit && call.suit !== contract.suit && ledSuit === call.suit) {
     const myAce = legal.find(c => c.suit === call.suit && c.rank === 'A');
-    if (myAce && winningCards.includes(myAce) && Math.random() < p.deputyCoverWeight) {
+    // 確率判定を削除し、条件を満たせば常時実行
+    if (myAce && winningCards.includes(myAce)) {
       return myAce;
     }
   }
@@ -480,7 +524,7 @@ export function chooseDeputyCard(ctx) {
 }
 
 // ==========================================
-// 9. 連合軍打牌
+// 9. 連合軍打牌（味方勝ち時の絵札付けを常時実行）
 // ==========================================
 function estimateNapWeakSuit(playedCards, contract) {
   const napDiscards = (playedCards || []).filter(c => c.seat === contract.nap);
@@ -533,7 +577,7 @@ function chooseAllianceLead(ctx) {
   }
 
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
-  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
 function chooseAllianceFollow(ctx) {
@@ -554,13 +598,14 @@ function chooseAllianceFollow(ctx) {
 
   if (!currentIsEnemy && current.seat !== seat) {
     const followCards = legal.filter(c => c.suit === ledSuit);
-    if (followCards.length > 0 && Math.random() < (p.allyFaceCardBonus || 0.8)) {
+    if (followCards.length > 0) {
       const nextStronger = nextStrongerRank(current.card.rank);
       const safeFace = followCards.filter(c =>
         isFace(c) && c.rank !== nextStronger && c.id !== '♠A' &&
         !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
       );
       if (safeFace.length) {
+        // 確率判定を削除し、条件を満たせば常時最高の絵札を出す
         return safeFace.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
     }
