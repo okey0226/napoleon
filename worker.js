@@ -1,3 +1,275 @@
+// worker.js
+import { SUITS, RANKS, SV, FACE, POINT, winningEntry, cardPower, isTrump, isSameColorSuit, sameColorSuitOf } from './rules.js';
+import { shuffledDeck, sortHand } from './deck.js';
+import { sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './bid-eval.js';
+import { defaultStrategy } from './strategy.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, strongestSuit, chooseSoloCall, handStrength } from './ai-tactics.js';
+import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
+
+export const schema = [
+  "CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, player_id TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta INTEGER NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS player_stats (user_id TEXT PRIMARY KEY, exact_wins INTEGER NOT NULL DEFAULT 0, bold_exact_wins INTEGER NOT NULL DEFAULT 0, solo_wins INTEGER NOT NULL DEFAULT 0, dramatic_plays INTEGER NOT NULL DEFAULT 0)",
+  "CREATE INDEX IF NOT EXISTS match_history_user ON match_history(user_id, id DESC)",
+  "CREATE INDEX IF NOT EXISTS players_rating ON players(rating DESC)",
+  "CREATE TABLE IF NOT EXISTS player_performance (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, declarer_successes INTEGER NOT NULL DEFAULT 0, deputy_attempts INTEGER NOT NULL DEFAULT 0, deputy_successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_precision (user_id TEXT PRIMARY KEY, exact_attempts INTEGER NOT NULL DEFAULT 0, exact_successes INTEGER NOT NULL DEFAULT 0, solo_attempts INTEGER NOT NULL DEFAULT 0, solo_successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_art_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, plays INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_ally_feed (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS ai_weights (id INTEGER PRIMARY KEY DEFAULT 1, weights TEXT NOT NULL, games INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS ai_strategy_log (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, params TEXT NOT NULL, nap_win_rate REAL NOT NULL DEFAULT 0, deputy_win_rate REAL NOT NULL DEFAULT 0, alliance_win_rate REAL NOT NULL DEFAULT 0, overall_win_rate REAL NOT NULL DEFAULT 0, avg_rating_delta REAL NOT NULL DEFAULT 0, matches INTEGER NOT NULL DEFAULT 0, avg_bid REAL NOT NULL DEFAULT 0, parent_id INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS ai_strategy_gen ON ai_strategy_log(generation DESC, avg_rating_delta DESC)",
+  "CREATE INDEX IF NOT EXISTS ai_strategy_rate ON ai_strategy_log(avg_rating_delta DESC)",
+  "CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)"
+];
+
+const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
+
+let __cachedBotStrategy = null;
+let __cachedBotStrategyTime = 0;
+async function loadBotStrategy(env) {
+  if (__cachedBotStrategy && Date.now() - __cachedBotStrategyTime < 60000) return __cachedBotStrategy;
+  try {
+    const w = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
+    if (w?.weights) {
+      __cachedBotStrategy = { ...defaultStrategy(), ...JSON.parse(w.weights) };
+      __cachedBotStrategyTime = Date.now();
+      return __cachedBotStrategy;
+    }
+  } catch (e) { console.warn("bot strategy load failed", e); }
+  return defaultStrategy();
+}
+
+function sendSafe(conn, message) { if (!conn) return false; try { conn.send(message); return true; } catch (error) { console.warn("room send failed", conn.id, error); try { conn.close(4004, "Send failed"); } catch { } return false; } }
+const hex = b => Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, "0")).join("");
+const unhex = s => new Uint8Array((s.match(/.{2}/g) || []).map(x => parseInt(x, 16)));
+async function hashPassword(password, salt) { const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]); return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, key, 256)); }
+const response = (data, status = 200) => Response.json(data, { status });
+const identity = req => ({ id: req.headers.get("x-websim-user-id"), username: req.headers.get("x-websim-username") || "player", anonymous: req.headers.get("x-websim-user-is-anonymous") === "true" });
+const validId = s => typeof s === "string" && /^[a-zA-Z0-9_-]{3,20}$/.test(s);
+const signed = req => { const u = identity(req); return u.id && !u.anonymous ? u : null; };
+function metricRank(db, table, successColumn, attemptColumn, successes, attempts) { if (!attempts) return Promise.resolve(null); return db.prepare("SELECT COUNT(*) AS ahead FROM " + table + " WHERE " + attemptColumn + ">0 AND " + successColumn + "*1.0/" + attemptColumn + ">?").bind(successes / attempts).first().then(row => row.ahead + 1); }
+
+async function forceInitDB(env) {
+  for (const sql of schema) {
+    try { await env.DB.prepare(sql).run(); } catch (e) { console.error("SQL error:", e.message); }
+  }
+}
+
+export default {
+  async scheduled(event, env, ctx) {
+    if (!globalThis.__dbInitialized) {
+      try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); }
+    }
+    ctx.waitUntil(runSelfPlayBatch(env, 1000).catch(e => console.error("scheduled self-play failed", e)));
+    ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
+  },
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/api/setup-db") {
+      try { 
+        await forceInitDB(env); 
+        if (url.searchParams.get("reset") === "ai") {
+          await env.DB.batch([
+            env.DB.prepare("DELETE FROM ai_strategy_log"),
+            env.DB.prepare("DELETE FROM ai_weights")
+          ]);
+          __cachedBotStrategy = null;
+          __cachedBotStrategyTime = 0;
+          return response({ ok: true, message: "AI learning data reset successfully" });
+        }
+        return response({ ok: true, message: "Database initialized successfully" }); 
+      } catch (e) { 
+        console.error("setup-db error:", e.message, e.stack);
+        return response({ error: e.message, stack: e.stack }, { status: 500 }); 
+      }
+    }
+    if (!globalThis.__dbInitialized) {
+      try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed", e); }
+    }
+
+    try {
+      if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
+        let body; try { body = await request.json(); } catch { return response({ error: "入力を確認してください" }, 400); }
+        const id = String(body.id || "").trim(), pass = String(body.password || "");
+        if (!validId(id)) return response({ error: "IDは英数字・_・-の3〜20文字です" }, 400);
+        if (pass.length < 8 || pass.length > 128) return response({ error: "パスワードは8〜128文字です" }, 400);
+        const isRegister = url.pathname.endsWith("register");
+        let userId = null;
+        if (isRegister) {
+          userId = crypto.randomUUID();
+          const salt = crypto.getRandomValues(new Uint8Array(16)), digest = await hashPassword(pass, salt);
+          try { await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash) VALUES(?,?,?,?,?)").bind(userId, id, id, hex(salt), digest).run(); } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
+        } else {
+          const p = await env.DB.prepare("SELECT user_id,salt,password_hash FROM players WHERE player_id=?").bind(id).first();
+          if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
+          userId = p.user_id;
+        }
+        await env.DB.batch([
+          env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_performance(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_precision(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_art_rate(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_ally_feed(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId)
+        ]);
+        const token = hex(crypto.getRandomValues(new Uint8Array(32)));
+        const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
+        await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
+        const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        return response({ ...player, sessionToken: token });
+      }
+      if (request.method === "GET" && url.pathname === "/api/account/me") {
+        const token = request.headers.get("x-session-token");
+        let userId = null;
+        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        if (!userId) { const who = signed(request); if (who) userId = who.id; }
+        if (!userId) return response({ error: "認証情報が必要です" }, 401);
+        const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
+        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
+          env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_precision WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,plays FROM player_art_rate WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,successes FROM player_ally_feed WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,successes FROM player_bold_bid_rate WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT result,delta,rating_after,created_at FROM match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all(),
+          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first()
+        ]);
+        const matchStats = matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0 };
+        const performance = performanceRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 };
+        const precision = precisionRow || { exact_attempts: 0, exact_successes: 0, solo_attempts: 0, solo_successes: 0 };
+        const artRate = artRateRow || { attempts: 0, plays: 0 };
+        const allyFeed = allyFeedRow || { attempts: 0, successes: 0 };
+        const boldBid = boldBidRow || { attempts: 0, successes: 0 };
+        const [ratingRank, performanceRankValues] = await Promise.all([
+          env.DB.prepare("SELECT COUNT(*) AS ahead FROM players WHERE rating>?").bind(p.rating).first(),
+          Promise.all([
+            metricRank(env.DB, "player_performance", "declarer_successes", "declarer_attempts", performance.declarer_successes, performance.declarer_attempts),
+            metricRank(env.DB, "player_performance", "deputy_successes", "deputy_attempts", performance.deputy_successes, performance.deputy_attempts),
+            metricRank(env.DB, "player_precision", "exact_successes", "exact_attempts", precision.exact_successes, precision.exact_attempts),
+            metricRank(env.DB, "player_precision", "solo_successes", "solo_attempts", precision.solo_successes, precision.solo_attempts),
+            metricRank(env.DB, "player_art_rate", "plays", "attempts", artRate.plays, artRate.attempts),
+            metricRank(env.DB, "player_ally_feed", "successes", "attempts", allyFeed.successes, allyFeed.attempts),
+            metricRank(env.DB, "player_bold_bid_rate", "successes", "attempts", boldBid.successes, boldBid.attempts)
+          ])
+        ]);
+        const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
+        return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
+      }
+      if (request.method === "GET" && url.pathname === "/api/rating/top") { const { results } = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players ORDER BY rating DESC,games DESC LIMIT 50").all(); return response(results); }
+      if (request.method === "GET" && url.pathname === "/api/ai/weights") { try { const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first(); return response(w || { weights: '{}', games: 0 }); } catch (e) { return response({ weights: '{}', games: 0 }); } }
+      if (request.method === "POST" && url.pathname === "/api/ai/report") {
+        let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
+        try {
+          const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first();
+          const weights = JSON.parse(w?.weights || '{}'); const lr = 0.005;
+          if (body.napoleonWon) { weights.bidThreshold = Math.max(2.0, (weights.bidThreshold || 4.0) - lr); weights.leadAggression = Math.min(1.0, (weights.leadAggression || 0.6) + lr); weights.followAggression = Math.min(1.0, (weights.followAggression || 0.4) + lr * 0.5); }
+          else { weights.bidThreshold = Math.min(6.0, (weights.bidThreshold || 4.0) + lr); weights.leadAggression = Math.max(0.2, (weights.leadAggression || 0.6) - lr); weights.followAggression = Math.max(0.1, (weights.followAggression || 0.4) - lr * 0.5); }
+          if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance || 0.5) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus || 0.6) + lr * 0.2); }
+          if (body.lastPlacePenalty > 0) { weights.riskTolerance = Math.max(0.1, (weights.riskTolerance || 0.5) - lr * 0.3); }
+          await env.DB.prepare("UPDATE ai_weights SET weights=?,games=games+1,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(JSON.stringify(weights)).run();
+          __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
+          return response({ ok: true, weights, games: (w?.games || 0) + 1 });
+        } catch (e) { return response({ error: "save failed" }, 500); }
+      }
+      if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); __cachedBotStrategy = null; __cachedBotStrategyTime = 0; return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: JSON.parse(row.params), avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
+      return new Response("Not found", { status: 404 });
+    } catch (err) {
+      return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 });
+    }
+  }
+};
+
+function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
+async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
+
+async function beginMatch(kind, roomCode, group, room, env) {
+  const id = Math.random().toString(36).slice(2, 12).toUpperCase();
+  const seats = group.map(x => ({ connId: x.id, originalConnId: x.id, player: x.player, bot: false, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0 }));
+  while (seats.length < 5) seats.push({ connId: null, player: { username: "COM " + (seats.length + 1), playerId: "COM", rating: 1000, games: 0 }, bot: true, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0 });
+  const m = { id, kind, code: roomCode, seats: seats.slice(0, 5), created: Date.now(), botLevel: 3, matchScores: Array(5).fill(0), matchArt: Array(5).fill(0), matchContracts: [], bidHistory: [], playoff: false, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })), roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0), phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], kittyAlliancePoints: 0, trick: [], trickNo: 0, active: -1, auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, notice: "配札しました。競り開始まで7秒です。", playedCards: [], voids: [{}, {}, {}, {}, {}] };
+  matches.set(id, m);
+  m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
+  if (env?.DB) loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {});
+  const players = m.seats.map((x, seat) => ({ seat, id: x.player.playerId, username: x.player.username, rating: x.player.rating, bot: x.bot }));
+  group.forEach((x, seat) => sendSafe(x.conn, { type: "matched", matchId: id, mode: kind, code: roomCode || null, players, seat, botCount: 5 - group.length }));
+  deal(m);
+  publish(m, room);
+}
+
+function deal(m) {
+  m.lastTrickWinner = null;
+  const d = shuffledDeck();
+  m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
+  m.kitty = d.splice(0, 2);
+  m.kittyAlliancePoints = 0;
+  m.trick = []; m.trickNo = 0; m.earlyFinish = false;
+  m.roundArt = Array(5).fill(0); m.roundDrama = Array(5).fill(0); m.roundFeed = Array(5).fill(0);
+  m.result = null; m.contract = null; m.auction = null; m.active = -1; m.phase = "prep"; m.deadline = Date.now() + 7000;
+  m.playedCards = []; m.voids = [{}, {}, {}, {}, {}];
+  m.notice = "競り開始まで7秒です。";
+  const green = m.seats.findIndex(p => !p.hand.some(c => FACE.includes(c.rank)));
+  if (green >= 0 && m.redraws < 5) {
+    m.redraws++; m.mult = m.mult >= 4 ? 2 : m.mult + 1;
+    m.phase = "redeal";
+    m.notice = m.seats[green].player.username + "の手札に10・J・Q・K・Aがありません。倍率" + m.mult + "倍で配り直します。";
+    m.deadline = Date.now() + 1800;
+  }
+}
+
+function finalAuctionRule(scores, mult = 1) { const ranked = scores.map((score, seat) => ({ score, seat })).sort((a, b) => a.score - b.score || a.seat - b.seat), cutoff = ranked[1]?.score ?? 0, gap = Math.max(0, (ranked[1]?.score ?? 0) - (ranked[0]?.score ?? 0)), rawMin = 13 + Math.floor(gap / (6 * Math.max(1, mult))); return { eligible: ranked.filter(x => x.score <= cutoff).map(x => x.seat), bottomSeat: ranked[0]?.seat, fourthSeat: ranked[1]?.seat, thirdSeat: ranked[2]?.seat, thirdScore: ranked[2]?.score, minBid: Math.min(20, rawMin), canOvertake: rawMin <= 20 }; }
+function soloMinimumBid(gap, mult) { return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult))); }
+function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
+  const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i);
+  const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s;
+  const bottomSeat = ranked[0].i, fourthSeat = ranked[1].i;
+  const m = Math.max(1, mult);
+  const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom);
+  if (napSeat === bottomSeat && deputySeat === fourthSeat) { const a = 13 + f(S4 - S5, 2 * m), b = 13 + f(S3 - S4, 4 * m), raw = Math.max(a, b); const broken = b > 20, soloBid = soloMinimumBid(S4 - S5, m); return { minBid: broken ? Math.min(20, soloBid) : Math.min(20, raw), rawMin: broken ? soloBid : raw, canOvertake: (broken ? soloBid : raw) <= 20, incentiveBroken: broken, soloRequired: broken, soloMinBid: Math.min(20, soloBid), soloRawMin: soloBid, soloPossible: soloBid <= 20, case: 'A', details: { S3, S4, S5, needNapOverDeputy: a, needDeputyOverThird: b, soloNeed: soloBid } }; }
+  if (napSeat === fourthSeat && deputySeat === bottomSeat) { const a = 13 + f(S3 - S4, 6 * m), b = 13 + f(S3 - S5, 4 * m), c = 13 + f(S4 - S5, 2 * m), raw = Math.max(a, b, c); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: a > 20 || b > 20, soloRequired: false, case: 'B', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c } }; }
+  if (napSeat === bottomSeat && deputySeat !== fourthSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } }; }
+  if (napSeat === fourthSeat && deputySeat !== bottomSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'D', details: { S3, S4, S5, needNapLoss: raw } }; }
+  return null;
+}
+function isSoloForcedInMatch(m) { if (m.round < 10 || !m.contract) return false; const ranked = m.matchScores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const bottomSeat = ranked[0].i; if (m.contract.nap !== bottomSeat) return false; const fourthSeat = ranked[1].i; const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat); return r?.soloRequired === true; }
+function isSafeToCashAceInMatch(m, suit, seat) { if (!m.contract) return false; if (suit === '♠') return true; if (m.trickNo > 0) { const twoPlayed = m.playedCards.some(c => c.id === suit + '2'); if (!twoPlayed) { const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]); if (!anyVoid) return false; } } if (m.contract.suit !== 'NT' && m.contract.suit !== suit) { for (let s = 0; s < 5; s++) { if (s === seat) continue; if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; } else { if (s === m.contract.nap) continue; } if (m.voids[s] && m.voids[s][suit]) return false; } } return true; }
+function publicState(m) { return { matchId: m.id, mode: m.kind, code: m.code, botLevel: m.botLevel, phase: m.phase, round: m.round, mult: m.mult, matchScores: m.matchScores, bidHistory: m.bidHistory || [], playoff: !!m.playoff, appeal: m.appeal, appealInfo: m.appealInfo || '', lastTrickWinner: m.lastTrickWinner ?? null, finalRoundRule: m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null, notice: m.notice, active: m.active, players: m.seats.map((p, seat) => ({ seat, name: p.bot ? p.player.username : (p.player.playerId || p.player.username), username: p.player.username, rating: p.player.rating, bot: p.bot, handCount: p.hand.length, points: p.points, taken: p.taken, active: m.active, approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.active) && !m.auction.active.includes(seat), role: m.contract ? (m.contract.nap === seat ? (m.contract.revealedCall && m.contract.solo ? "ナポレオン（ひとり立ち）" : "ナポレオン") : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : "" })), kitty: m.phase === "auction" ? m.kitty : [], kittyAlliancePoints: m.kittyAlliancePoints || 0, auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null } : null, contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : null, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null, trick: m.trick.map(x => ({ seat: x.seat, card: x.card })), trickNo: m.trickNo, deadline: m.deadline, result: m.result || null }; }
+function legalCards(m, seat) { const h = m.seats[seat].hand; if (!m.trick.length) return h; const led = m.trick[0].card.suit, follow = h.filter(c => c.suit === led); return follow.length ? follow : h; }
+function publish(m, room) { const pub = publicState(m); for (let seat = 0; seat < m.seats.length; seat++) { const p = m.seats[seat]; if (!p.connId) continue; const c = conns.get(p.connId); if (!c) continue; const view = m.phase === "call" && seat === m.active ? { ...pub, kitty: m.kitty } : pub; try { sendSafe(c, { type: "game-state", state: view, you: seat }); sendSafe(c, { type: "private-hand", hand: p.hand, legal: m.phase === "play" && m.active === seat ? legalCards(m, seat).map(x => x.id) : [] }); } catch (error) { console.warn("match publish failed", m.id, c.id, error); } } }
+function tell(m, room, text) { m.notice = text; publish(m, room); }
+function validBid(m, n, s) { const h = m.auction.high; return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit])); }
+function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat)) return; if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) { if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.round >= 10 && m.auction.high.num < 13) { const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0]; if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.auction.high.player === seat) { if (m.auction.active.length === 1) auctionDone(m, seat, room); else if (forced && !m.auction.autoApprove[seat]) { m.auction.autoApprove[seat] = true; m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。"; publish(m, room); } return; } m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.active = m.auction.active.filter(x => x !== seat); m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。"; if (!m.auction.active.length) { auctionDone(m, -1, room); return; } if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) { const last = m.auction.active[0]; if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; } m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。"; } m.auction.active.forEach(i => { if (m.seats[i].bot) { m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1); m.auction.botAt[i] = Date.now() + 500 + Math.random() * 1300; } }); publish(m, room); }
+function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s, solo }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 400 + Math.random() * 1600; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + (solo ? "（ひとり立ち）" : "") + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
+function appealDetails(hand) { const targets = [['♣J', '♣J'], ['♦J', '♦J'], ['♥J', '♥J'], ['♠J', '♠J'], ['マイティ（♠A）', '♠A']]; return targets.map(([label, id]) => label + '：' + (hand.some(card => card.id === id) ? 'あり' : 'なし')).join(' · '); }
+function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
+function answerAppealOffer(m, seat, appeal, room) { if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return; if (!appeal) { m.appealInfo = '5位はアピールせず競りへ'; enterAuctionAfterAppeal(m, room); return; } m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000; m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room); if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room); }
+function answerAppealResponse(m, seat, choice, room) { if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return; if (choice === 'declare') { const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'の申告：' + appealDetails(m.seats[seat].hand); enterAuctionAfterAppeal(m, room); return; } const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'は申告せず立つことを選択。'; enterAuctionAfterAppeal(m, room, seat); }
+function auctionDone(m, seat, room) {
+  if (seat < 0 || m.auction.high.num < 13) {
+    if (m.round >= 10) {
+      seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat;
+      m.auction.high = { num: m.auction.minBid || 13, suit: strongestSuit(m.seats[seat].hand), player: seat, solo: false };
+      m.notice = "オールラストは立ち必須。最下位が最低枚数で立ちます。";
+    } else {
+      m.notice = "宣言なし。配り直します。";
+      m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return;
+    }
+  }
+  const strengthAtBid = handStrength(m.seats[seat].hand);
+  const isSoloBid = m.auction.high.solo === true;
+  m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid };
+  beginDiscard(m, seat, room);
+}
+function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
+function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。得点札は連合軍に加算されます。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 function callCard(m, seat, suit, rank, room) {
   if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return;
   const card = { suit, rank, id: suit + rank };
