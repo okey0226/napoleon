@@ -91,15 +91,11 @@ function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, t
   const oppBids = currentBids.filter(b => b && b.seat !== mySeat && Number.isFinite(b.num));
   
   for (const bid of oppBids) {
-    // 自分のスートと同じスートで高く立たれている場合は衝突リスク
     if (bid.suit === mySuit && bid.num >= 15) {
       adj -= params.suitConflictWeight * Math.max(0, bid.num - 14) * 0.2;
     }
-    
-    // 相手が高く立っている（16以上）＝相手はマイティや高札を持っていて、他の敵を抑えてくれる
     if (bid.num >= 16) {
       adj += params.weakOpponentBoost * 0.8;
-      // 相手が別スートで強いなら、自分のAは通る可能性が高い（便乗）
       if (bid.suit !== mySuit && bid.suit !== 'NT') {
         adj += params.opponentInferenceWeight * 0.5;
       }
@@ -107,9 +103,7 @@ function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, t
     else if (bid.num >= 14) {
       adj += params.weakOpponentBoost * 0.3;
     }
-    // 相手がパス（13未満）＝相手は弱い
     else if (bid.num < 13) {
-      // 自分の相対的強度は上がるが、相手も弱いので過信は禁物
       adj += params.weakOpponentBoost * 0.1;
     }
   }
@@ -128,7 +122,6 @@ function computeBidEV(p, num, strength, params) {
   const lossBase = -p * diff * 8;
   const sweetBonus = bluffGap === 0 ? sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost : 0;
   const coopBonus = bluffGap === 0 ? params.cooperationBonus * 1.5 : 0;
-  // ブラフ罰を weak化 (bluffLossMultiplier のデフォルトは 0.6、HONEST_THRESHOLD は 0.35)
   const bluffPenalty = bluffGap > 0 ? -bluffGap * params.bluffLossMultiplier * 2 : 0;
   const ev = p * (winBase + sweetBonus + coopBonus) + (1 - p) * (lossBase + bluffPenalty);
   return Number.isFinite(ev) ? ev : 0;
@@ -193,7 +186,7 @@ export function chooseDiscard(hand, trump) {
 }
 
 // ==========================================
-// 5. 副官指名（裏J釣り用の指名も考慮）
+// 5. 副官指名（強化版）
 // ==========================================
 export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
   const p = params || {
@@ -202,26 +195,24 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
   };
   const used = new Set([...(hand || []), ...(discard || [])].map(c => c.id));
 
-  // 戦略1: 裏J（同色J）を持っていない場合、裏Jを指名して釣り＆狩りの準備をする
-  // 切札Jを持っていない場合は切札Jを最優先。
-  // ※ NAPが裏Jを持っている場合、あえて裏Jを指名しない（自分で釣って狩るため）
+  // 優先1: ♠A（未所持なら確実に味方化）
+  if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
+
+  // 優先2: 裏J釣り / 切札J
   if (trump !== 'NT') {
     const sc = sameColorSuitOf(trump);
     const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
     const hasTrumpJ = hand.some(c => c.suit === trump && c.rank === 'J');
     
-    // 自分が裏Jを持っていない、かつ相手が持っていそうなら裏Jを指名
     if (sc && !hasBackJ && !used.has(sc + 'J')) {
       return { suit: sc, rank: 'J', id: sc + 'J' };
     }
-    // 切札Jを持っていないなら切札Jを指名
     if (!hasTrumpJ && !used.has(trump + 'J')) {
       return { suit: trump, rank: 'J', id: trump + 'J' };
     }
   }
 
-  if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
-
+  // 優先3: A vs 2 スコアリング
   let bestCard = null;
   let bestScore = -Infinity;
 
@@ -235,7 +226,7 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
     const isLong = len >= 4;
 
     if (!hasA && !used.has(suit + 'A')) {
-      let score = 0;
+      let score = 0.5; // 基本値
       if (len >= 1 && len <= 3) score += p.aceWeakSuitBonus;
       if (isShort) score += p.aceShortBonus;
       if (isLong) score -= p.aceLongPenalty;
@@ -333,23 +324,21 @@ function iHoldStrongestTrump(hand, playedCards, trumpSuit) {
 }
 
 // ==========================================
-// 7. ナポレオン打牌（裏J釣りロジック追加）
+// 7. ナポレオン打牌
 // ==========================================
 function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call } = ctx;
   if (!legal || !legal.length) return null;
 
-  // 裏J釣りロジック: 序盤で自分の手札に裏Jがある、または呼んだカードが裏Jの場合
+  // 裏J釣りロジック
   if (contract.suit !== 'NT' && trickNo <= (params.baitBackJWindow || 3)) {
     const sc = sameColorSuitOf(contract.suit);
     const iHaveBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
     const calledBackJ = call?.suit === sc && call?.rank === 'J';
     const enemyTrumpJExists = !playedCards.some(c => isTrumpJ(c, contract)) && !hand.some(c => isTrumpJ(c, contract));
     
-    // 釣り条件: 自分か副官が裏Jを持っており、敵の切札Jがまだ出ていない
     if ((iHaveBackJ || calledBackJ) && enemyTrumpJExists) {
       if (Math.random() < (params.baitBackJChance || 0.6)) {
-        // 低いトランプ（2〜5）をリードして敵の切札Jを誘う
         const lowTrumps = legal.filter(c => isTrump(contract, c) && RANKS.indexOf(c.rank) <= 3);
         if (lowTrumps.length) {
           return lowTrumps.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
@@ -498,7 +487,6 @@ export function chooseDeputyCard(ctx) {
         !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
       );
       if (safeFace.length) {
-        // 確率判定を削除し、常時最高の絵札を出す
         return safeFace.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
     }
@@ -514,7 +502,6 @@ export function chooseDeputyCard(ctx) {
 
   if (call?.suit && call.suit !== contract.suit && ledSuit === call.suit) {
     const myAce = legal.find(c => c.suit === call.suit && c.rank === 'A');
-    // 確率判定を削除し、条件を満たせば常時実行
     if (myAce && winningCards.includes(myAce)) {
       return myAce;
     }
@@ -605,7 +592,6 @@ function chooseAllianceFollow(ctx) {
         !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
       );
       if (safeFace.length) {
-        // 確率判定を削除し、条件を満たせば常時最高の絵札を出す
         return safeFace.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
     }
