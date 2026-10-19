@@ -24,7 +24,6 @@ export const schema = [
 
 const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
 
-// ▼ 新規: bot戦略のキャッシュ（60秒TTL）
 let __cachedBotStrategy = null;
 let __cachedBotStrategyTime = 0;
 async function loadBotStrategy(env) {
@@ -67,7 +66,20 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/api/setup-db") {
-      try { await forceInitDB(env); return response({ ok: true, message: "Database initialized successfully" }); } catch (e) { return response({ error: e.message }, { status: 500 }); }
+      try { 
+        await forceInitDB(env); 
+        // ▼ 新規: reset=ai パラメータで学習データを初期化
+        if (url.searchParams.get("reset") === "ai") {
+          await env.DB.batch([
+            env.DB.prepare("DELETE FROM ai_strategy_log").run(),
+            env.DB.prepare("DELETE FROM ai_weights").run()
+          ]);
+          __cachedBotStrategy = null;
+          __cachedBotStrategyTime = 0;
+          return response({ ok: true, message: "AI learning data reset successfully" });
+        }
+        return response({ ok: true, message: "Database initialized successfully" }); 
+      } catch (e) { return response({ error: e.message }, { status: 500 }); }
     }
     if (!globalThis.__dbInitialized) {
       try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed", e); }
@@ -153,10 +165,12 @@ export default {
         if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance || 0.5) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus || 0.6) + lr * 0.2); }
         if (body.lastPlacePenalty > 0) { weights.riskTolerance = Math.max(0.1, (weights.riskTolerance || 0.5) - lr * 0.3); }
         await env.DB.prepare("UPDATE ai_weights SET weights=?,games=games+1,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(JSON.stringify(weights)).run();
+        __cachedBotStrategy = null;
+        __cachedBotStrategyTime = 0;
         return response({ ok: true, weights, games: (w?.games || 0) + 1 });
       } catch (e) { return response({ error: "save failed" }, 500); }
     }
-    if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
+    if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); __cachedBotStrategy = null; __cachedBotStrategyTime = 0; return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
     if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
     if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
     if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
@@ -175,7 +189,6 @@ async function beginMatch(kind, roomCode, group, room, env) {
   const m = { id, kind, code: roomCode, seats: seats.slice(0, 5), created: Date.now(), botLevel: 3, matchScores: Array(5).fill(0), matchArt: Array(5).fill(0), matchContracts: [], bidHistory: [], playoff: false, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })), roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0), phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], trick: [], trickNo: 0, active: -1, auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, notice: "配札しました。競り開始まで7秒です。", playedCards: [], voids: [{}, {}, {}, {}, {}] };
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
-  // 学習済み戦略をロード
   if (env?.DB) {
     loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {});
   }
@@ -222,7 +235,7 @@ function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.ki
 function callCard(m, seat, suit, rank, room) { if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; const card = { suit, rank, id: suit + rank }; if (m.kitty.some(x => x.id === card.id)) return; const isOwn = m.seats[seat].hand.some(c => c.id === card.id); const forceSolo = isSoloForcedInMatch(m); if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false; m.contract.ready = m.seats.map(p => p.bot); m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = []; m.notice = suit + rank + "が指名されました" + (m.contract.solo ? "（ひとり立ち）" : "") + "。全員の確認後に開始します。"; publish(m, room); }
 function discardCards(m, seat, ids, room) { if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return; const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return; const removed = h.filter(c => ids.includes(c.id)); m.seats[seat].hand = h.filter(c => !ids.includes(c.id)); const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)); m.seats[m.contract.nap].points += kittyPoints.length; m.seats[m.contract.nap].taken.push(...kittyPoints); m.kitty = removed; sortHand(m.seats[seat].hand); m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000; m.notice = "捨て札を決めました。副官に指名するカードを選んでください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
-// ▼ 修正: ブラフペナルティ + 協力ボーナスを追加
+// ▼ matchRatingChanges を ai-simulator.js と完全一致
 function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
   const meanArt = art.reduce((n, x) => n + x, 0) / 5;
   const cs = contracts || [];
@@ -230,12 +243,12 @@ function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
     let delta = 0;
     const rounds = [];
     for (const c of cs) {
-      const strength = c.strengthAtBid ?? 8;
-      const p = estimatedWinRate(strength, c.num);
+      const safeStrength = Number.isFinite(c.strengthAtBid) ? c.strengthAtBid : 8;
+      const p = estimatedWinRate(safeStrength, c.num);
       const diff = Math.max(0, c.num - 12);
       const highBoost = 1 + 0.5 * Math.max(0, c.num - 17);
       const soloMult = c.solo ? 1.5 : 1.0;
-      const maxHonest = findMaxHonestBid(strength);
+      const maxHonest = findMaxHonestBid(safeStrength);
       const bluffGap = Math.max(0, c.num - maxHonest);
       const isHonest = bluffGap === 0;
       const actual = c.napWin ? 1 : 0;
@@ -261,7 +274,7 @@ function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
         roundDelta = (pts - 4.4) * 0.4;
         roundDelta += c.napWin ? -0.5 : +0.5;
       }
-      delta += roundDelta;
+      delta += Number.isFinite(roundDelta) ? roundDelta : 0;
       rounds.push({ bid: c.num, role, delta: Math.round(roundDelta * 100) / 100 });
     }
     delta += (art[seat] - meanArt) * 0.3;
@@ -390,8 +403,9 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version;
   const h = m.seats[seat].hand;
   const params = m.botStrategy || defaultStrategy();
-  // ▼ 修正: bidHistory と mySeat を渡す
-  const bid = shouldBid(h, a.high, a.minBid || 13, params, m.bidHistory || [], seat);
+  // ▼ 修正: 今局の立ちのみをフィルタリングして渡す
+  const currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
+  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat);
   if (bid && validBid(m, bid.num, bid.suit)) {
     a.botBids[seat]++;
     doBid(m, seat, bid.num, bid.suit, room, bid.solo === true);
@@ -446,6 +460,10 @@ function botAction(m, room) {
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
     else c = chooseCardToPlay(ctx);
+    // ▼ フォールバック
+    if (!c || !legal.some(x => x.id === c.id)) {
+      c = legal[Math.floor(Math.random() * legal.length)];
+    }
     playCard(m, i, c.id, room, null);
   }
 }
