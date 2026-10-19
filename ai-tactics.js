@@ -14,11 +14,14 @@ export function cardPower(contract, trickNo, card, trick) {
   const allSame = trick.every(x => x.card.suit === led);
   const mighty = trick.some(x => x.card.id === "♠A");
 
+  // ▼ マイティ・正J・裏Jは1トリック目から有効
+  if (mighty && card.id === "♥Q") return 10000;
+  if (card.id === "♠A") return 9000;
+  if (contract.suit !== "NT" && card.rank === "J" && card.suit === contract.suit) return 8000;
+  if (contract.suit !== "NT" && card.rank === "J" && card.suit !== contract.suit && isSameColorSuit(card.suit, contract.suit)) return 7000;
+
+  // ▼ セイム2のみ2トリック目から有効
   if (trickNo > 0) {
-    if (mighty && card.id === "♥Q") return 10000;
-    if (card.id === "♠A") return 9000;
-    if (contract.suit !== "NT" && card.rank === "J" && card.suit === contract.suit) return 8000;
-    if (contract.suit !== "NT" && card.rank === "J" && card.suit !== contract.suit && isSameColorSuit(card.suit, contract.suit)) return 7000;
     if (allSame && card.suit === led && card.rank === "2") return 6000;
   }
 
