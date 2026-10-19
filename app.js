@@ -23,6 +23,7 @@ function downloadLog(){try{const payload=buildLogPayload();const json=JSON.strin
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards}}
 
+// ▼ 修正: appeal-offer / appeal-response を追加
 function phase(t){const roundTag=g.playoff?'プレーオフ · ':g.round===9?'ラス前 · ':g.round>=10?'オールラスト · ':'';$('phase-label').textContent=roundTag+t;$('game-screen').classList.toggle('auctioning',g.phase==='auction');renderContractInfo()}
 function name(i){return i===0?'あなた':g.players[i]?.name||'COM '+i}
 function color(s){return s==='♥'||s==='♦'?'red':''}
@@ -52,7 +53,7 @@ function chooseBotCall(hand, discard, trump, level, bid) {
     const sc = sameColorSuitOf(trump);
     const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
     const hasTrumpJ = hand.some(c => c.suit === trump && c.rank === 'J');
-    
+
     if (!hasTrumpJ && !used.has(trump + 'J')) {
       return { suit: trump, rank: 'J', id: trump + 'J' };
     }
@@ -166,7 +167,8 @@ function greenRedraw(n){addGameLog(n+'の手札条件により配り直し');g.g
 
 function finalAuctionRule(scores,mult=1){const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>a.score-b.score||a.seat-b.seat),cutoff=ranked[1]?.score??0,gap=Math.max(0,(ranked[1]?.score??0)-(ranked[0]?.score??0)),rawMin=13+Math.floor(gap/(6*Math.max(1,mult)));return{eligible:ranked.filter(x=>x.score<=cutoff).map(x=>x.seat),bottomSeat:ranked[0]?.seat,fourthSeat:ranked[1]?.seat,thirdSeat:ranked[2]?.seat,thirdScore:ranked[2]?.score,minBid:Math.min(20,rawMin),canOvertake:rawMin<=20}}
 
-function announceRound(round,rule){
+// ▼ 修正: 未使用の rule 引数を削除
+function announceRound(round){
   if(g.announcedRound===round||round<9)return;
   g.announcedRound=round;
   if(round===9){dialog('ラス前','第9局です。次はいよいよオールラストです。');return}
@@ -188,7 +190,7 @@ function announceRound(round,rule){
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
-function prepAuction(){g.phase='prep';announceRound(g.round,finalAuctionRule(g.matchScores,g.mult));phase('競り準備');let n=7;message('競り開始まで '+n+' 秒');const tick=()=>{n--;if(n<=0){auctionStart();return}message('競り開始まで '+n+' 秒');later(tick,1000)};later(tick,1000)}
+function prepAuction(){g.phase='prep';announceRound(g.round);phase('競り準備');let n=7;message('競り開始まで '+n+' 秒');const tick=()=>{n--;if(n<=0){auctionStart();return}message('競り開始まで '+n+' 秒');later(tick,1000)};later(tick,1000)}
 
 function scheduleHumanAuctionTimeout(){const auction=g.auction;clearTimeout(auction.humanTimeout);auction.humanTimeout=setTimeout(()=>{if(g.phase==='auction'&&g.auction===auction)humanApprove(true)},30000)}
 function auctionActivity(){if(g.phase!=='auction'||!g.auction)return;g.auction.autoApprove[0]=false;scheduleHumanAuctionTimeout()}
@@ -471,16 +473,14 @@ function playStart(){
 function legal(i){let h=g.players[i].hand;if(!g.trick.length)return h;let suit=g.trick[0].card.suit,follow=h.filter(c=>c.suit===suit);return follow.length?follow:h}
 function trump(c){return g.contract.suit!=='NT'&&c.suit===g.contract.suit}
 
-// ▼ 修正: マイティ・正J・裏Jは1トリック目から有効、セイム2のみ2トリック目から有効
+// ▼ マイティ・正J・裏Jは1トリック目から有効、セイム2のみ2トリック目から有効
 function cardPower(entry,trick,trickNo=0){
   let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');
-  // マイティ・正J・裏Jは1トリック目から有効
   if(mighty&&c.id==='♥Q')return 10000;
   if(c.id==='♠A')return 9000;
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
   let black=s=>s==='♣'||s==='♠';
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
-  // セイム2のみ2トリック目から有効
   if(trickNo>0){
     if(allSame&&c.suit===led&&c.rank==='2')return 6000;
   }
@@ -519,7 +519,7 @@ function chooseLocalBotCard(i){
     const candidates=safeH.length?safeH:h;
     const legalCandidates = g.trickNo === 0 ? candidates.filter(c => c.rank !== '2') : candidates;
     const finalCands = legalCandidates.length ? legalCandidates : candidates;
-    
+
     const strongLead=finalCands.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
     if(strongLead.length&&Math.random()<g.aiWeights.leadAggression){const c=strongLead.sort((a,b)=>leadValue(b)-leadValue(a))[0];return{card:c,reason:'lead-strong',detail:{leadAggression:g.aiWeights.leadAggression,strongCount:strongLead.length,strongCards:strongLead.map(x=>x.id)}}}
     const nonAce=finalCands.filter(c=>c.rank!=='A');
@@ -541,7 +541,7 @@ function chooseLocalBotCard(i){
   return{card:c,reason:'default-low',detail:{points,trickLength:g.trick.length}}
 }
 
-// ▼ 修正: 高カード温存ロジック
+// ▼ 高カード温存ロジック
 function chooseLocalDeputyCard(i,h){
   const contract=g.contract,nap=contract.nap,call=contract.call,trumpSuit=contract.suit,ownSide='nap',led=g.trick[0]?.card.suit,lastSeat=g.trick.length===4;
   const sideOf=seat=>seat===nap||(!contract.solo&&(contract.revealedCall?seat===contract.deputy:g.players[seat].hand.some(c=>c.id===call?.id)))?'nap':'alliance';
@@ -555,14 +555,12 @@ function chooseLocalDeputyCard(i,h){
 
   if(!g.trick.length){
     const napHand=g.players[nap].hand,napHasTrump=trumpSuit!=='NT'&&napHand.some(card=>card.suit===trumpSuit),napAces=SUITS.filter(suit=>napHand.some(card=>card.suit===suit&&card.rank==='A'));
-    
-    // NAPがそのスートで勝てそうか判定
+
     const napCanWinSuit = (suit) => {
       const napHasVoid = g.voids[nap]?.[suit];
       return (napHasVoid && napHasTrump) || napAces.includes(suit);
     };
 
-    // 自分が持っているAを温存するか、確実に勝ちに行くか
     const secureAces = h.filter(c => c.rank === 'A' && !isRole(c));
     if (secureAces.length) {
       const ace = secureAces[0];
@@ -849,7 +847,20 @@ async function online(mode,roomCode,bots,botLevel=3){
     $('rating-caption').textContent='RATE';
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
-    g.room.ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='lobby'){message(m.text)}if(m.type==='matched'){g.online=m;g.mySeat=m.seat;g.players=m.players.map(p=>({name:p.id,hand:[]}));g.active=-1;drawSeats();phase('対戦開始');message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''))}if(m.type==='game-state'){g.onlineState=m.state;g.mySeat=m.you;g.active=m.state.active;g.phase=m.state.phase;g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));renderOnline()}if(m.type==='private-hand'){g.privateHand=m.hand;g.onlineLegal=m.legal;drawOnlineHand();if(g.onlineState)drawOnlineControls(g.onlineState)}if(m.type==='rating-updated'){g.lastRating=m;g.account=Object.assign({},g.account,{rating:m.rating});$('rating-label').textContent=m.rating;toast('RATE Δ '+m.delta);if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState)}if(m.type==='room-error')toast(m.message)};
+    g.room.ws.onmessage=e=>{
+      let m;try{m=JSON.parse(e.data)}catch{return}
+      if(m.type==='lobby'){
+        message(m.text);
+        // ▼ 修正: queue-status を更新
+        const qs=$('queue-status');
+        if(qs)qs.textContent=m.text;
+      }
+      if(m.type==='matched'){g.online=m;g.mySeat=m.seat;g.players=m.players.map(p=>({name:p.id,hand:[]}));g.active=-1;drawSeats();phase('対戦開始');message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''))}
+      if(m.type==='game-state'){g.onlineState=m.state;g.mySeat=m.you;g.active=m.state.active;g.phase=m.state.phase;g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));renderOnline()}
+      if(m.type==='private-hand'){g.privateHand=m.hand;g.onlineLegal=m.legal;drawOnlineHand();if(g.onlineState)drawOnlineControls(g.onlineState)}
+      if(m.type==='rating-updated'){g.lastRating=m;g.account=Object.assign({},g.account,{rating:m.rating});$('rating-label').textContent=m.rating;toast('RATE Δ '+m.delta);if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState)}
+      if(m.type==='room-error')toast(m.message)
+    };
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
   }catch(e){toast('対戦に接続できませんでした');screen('home-screen')}
 }
@@ -885,9 +896,10 @@ function renderOnline(){
   g.players=s.players.map(p=>({name:p.name,bot:p.bot,hand:Array(p.handCount).fill(null),taken:p.taken||[]}));
   g.active=s.players.findIndex(p=>p.active===s.active);
   g.contract=s.contract?{nap:s.contract.nap,deputy:s.contract.deputy,num:s.contract.num,suit:s.contract.suit,solo:s.contract.solo,call:s.contract.call,revealedCall:s.contract.revealedCall}:null;
-  phase(({prep:'競り準備',auction:'競り',call:'指名札選び','call-reveal':'指名カード確認',discard:'浮き札の交換',play:'カードプレイ',result:'結果','round-result':'局結果',redeal:'配り直し','trick-end':'勝負の結果'})[s.phase]||'対戦中');
+  // ▼ 修正: appeal系ラベルを追加
+  phase(({prep:'競り準備',auction:'競り','appeal-offer':'アピール','appeal-response':'アピール回答',call:'指名札選び','call-reveal':'指名カード確認',discard:'浮き札の交換',play:'カードプレイ',result:'結果','round-result':'局結果',redeal:'配り直し','trick-end':'勝負の結果'})[s.phase]||'対戦中');
   $('round-label').textContent=s.round||1;
-  if(s.phase==='prep')announceRound(g.round,s.finalRoundRule);
+  if(s.phase==='prep')announceRound(g.round);
   $('game-mode-label').textContent=s.mode==='ranked'?'RANKED'+(s.players.some(p=>p.bot)?' · COM '+s.players.filter(p=>p.bot).length:''):'FRIEND MATCH'+(s.players.some(p=>p.bot)?' · COM '+s.players.filter(p=>p.bot).length:'');
   $('rating-label').textContent=g.account?.rating??'—';
   message(s.notice||'');
