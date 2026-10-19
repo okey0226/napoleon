@@ -33,6 +33,79 @@ function showOpenKitty(){const label=document.createElement('span');label.classN
 function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r,id:s+r})));for(let i=d.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
+function sameColorSuitOf(trump) {
+  if (trump === 'NT') return null;
+  const black = ['♣', '♠'];
+  return SUITS.find(s => s !== trump && black.includes(s) === black.includes(trump));
+}
+
+// ▼ 修正: カード指名の強化（ai-tactics.js のロジックを反映）
+function chooseBotCall(hand, discard, trump, level, bid) {
+  const used = new Set([...hand, ...discard].map(c => c.id));
+  const p = g.aiWeights;
+
+  // 優先1: ♠A（未所持なら確実に味方化）
+  if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
+
+  // 優先2: 裏J釣り（自分が裏Jを持っていない場合、裏Jを指名して釣り＆狩りの準備）
+  if (trump !== 'NT') {
+    const sc = sameColorSuitOf(trump);
+    const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
+    const hasTrumpJ = hand.some(c => c.suit === trump && c.rank === 'J');
+    
+    if (sc && !hasBackJ && !used.has(sc + 'J')) {
+      return { suit: sc, rank: 'J', id: sc + 'J' };
+    }
+    // 切札Jを持っていないなら切札Jを指名
+    if (!hasTrumpJ && !used.has(trump + 'J')) {
+      return { suit: trump, rank: 'J', id: trump + 'J' };
+    }
+  }
+
+  // 優先3: A vs 2 スコアリング
+  let bestCard = null;
+  let bestScore = -Infinity;
+
+  for (const suit of SUITS) {
+    if (trump !== 'NT' && suit === trump) continue;
+    const cards = hand.filter(c => c.suit === suit);
+    const hasA = cards.some(c => c.rank === 'A');
+    const has2 = cards.some(c => c.rank === '2');
+    const len = cards.length;
+    const isShort = len <= 2;
+    const isLong = len >= 4;
+
+    // 弱点スートのA
+    if (!hasA && !used.has(suit + 'A')) {
+      let score = 0.5; // 基本値
+      if (len >= 1 && len <= 3) score += (p.aceWeakSuitBonus ?? 0.3);
+      if (isShort) score += (p.aceShortBonus ?? 0.15);
+      if (isLong) score -= (p.aceLongPenalty ?? 0.15);
+      if (trump === 'NT') score += 0.3;
+      if (score > bestScore) { bestScore = score; bestCard = { suit, rank: 'A', id: suit + 'A' }; }
+    }
+
+    // セイム2の2
+    if (!has2 && !hasA && !used.has(suit + '2')) {
+      let score = (p.sameTwoAceCounter ?? 0.3);
+      if (isShort) score += (p.sameTwoShortBonus ?? 0.4);
+      if (isLong) score -= (p.sameTwoLongPenalty ?? 0.25);
+      if (bid >= 16) score += (p.sameTwoHighBidBonus ?? 0.2);
+      if (trump === 'NT') score -= 0.1;
+      if (score > bestScore) { bestScore = score; bestCard = { suit, rank: '2', id: suit + '2' }; }
+    }
+  }
+
+  if (bestCard) return bestCard;
+
+  // フォールバック
+  const cands = [];
+  for (const s of SUITS) for (const r of RANKS) {
+    if (!used.has(s + r) && (trump === 'NT' || s !== trump)) cands.push({ suit: s, rank: r, id: s + r });
+  }
+  return cands[0] || { suit: '♠', rank: 'A', id: '♠A' };
+}
+
 function soloMinimumBid(gap,mult){return 13+Math.floor(Math.max(0,gap)/(10*Math.max(1,mult)))}
 
 function computeTeamMinBid(scores,mult,napSeat,deputySeat){
@@ -205,7 +278,6 @@ function humanBid(){
 
 function botSuitValue(hand,suit){const weight={10:1,J:1.8,Q:2.6,K:3.5,A:4.7},cards=hand.filter(c=>c.suit===suit);return cards.reduce((n,c)=>n+(weight[c.rank]||0),0)+Math.max(0,cards.length-3)*.75}
 function strongestBotSuit(hand,suits=SUITS){return suits.slice().sort((a,b)=>botSuitValue(hand,b)-botSuitValue(hand,a)||SV[b]-SV[a])[0]}
-function chooseBotCall(hand,discard,trump,level,bid){const options=deck().filter(c=>!hand.some(x=>x.id===c.id)&&!discard.some(x=>x.id===c.id));if(level===1)return options[0];const score=c=>RANKS.indexOf(c.rank)*4+(c.suit===trump?2:0)-hand.filter(x=>x.suit===c.suit).length*(level===3?1:.65),soloPower=hand.reduce((n,c)=>n+(c.rank==='A'?2:c.rank==='K'?1.2:c.rank==='Q'?.7:0)+((trump!=='NT'&&c.suit===trump)?0.5:0),0);if(level===3&&bid>=17&&soloPower>=8)return hand.slice().sort((a,b)=>score(b)-score(a))[0];return options.sort((a,b)=>score(b)-score(a)||SV[b.suit]-SV[a.suit])[0]}
 
 function comBid(i,version){
   if(g.phase!=='auction'||version!==g.auction.version||!g.auction.active.includes(i)||g.auction.botSeen[i]>=version||g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==i)return;
@@ -400,7 +472,6 @@ function playStart(){
 function legal(i){let h=g.players[i].hand;if(!g.trick.length)return h;let suit=g.trick[0].card.suit,follow=h.filter(c=>c.suit===suit);return follow.length?follow:h}
 function trump(c){return g.contract.suit!=='NT'&&c.suit===g.contract.suit}
 
-// ▼ 修正: trickNoを受け取るように変更
 function cardPower(entry,trick,trickNo=0){
   let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');
   if(trickNo>0){
@@ -415,6 +486,7 @@ function cardPower(entry,trick,trickNo=0){
   if(c.suit===led)return 3000+RANKS.indexOf(c.rank);
   return 1000+RANKS.indexOf(c.rank);
 }
+
 function winning(trick=g.trick){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo)>cardPower(best,trick,g.trickNo)?e:best,trick[0])}
 
 // ==========================================
@@ -443,7 +515,6 @@ function chooseLocalBotCard(i){
     const leadValue=c=>cardValue(c)+(c.rank==='A'?3:c.rank==='K'?1:0)+g.players[i].hand.filter(x=>x.suit===c.suit).length*.25;
     const safeH=h.filter(c=>{if(c.rank!=='A')return true;if(c.id==='♠A')return true;return isSafeToCashAce(c.suit,i)});
     const candidates=safeH.length?safeH:h;
-    // ▼ 修正: 1周目のリードでは2を除外
     const legalCandidates = g.trickNo === 0 ? candidates.filter(c => c.rank !== '2') : candidates;
     const finalCands = legalCandidates.length ? legalCandidates : candidates;
     
@@ -477,7 +548,6 @@ function chooseLocalDeputyCard(i,h){
   const isFace=card=>POINT.includes(card.rank),sameColor=(a,b)=>['♣','♠'].includes(a)===['♣','♠'].includes(b);
   const isRole=card=>card.id===call?.id||card.id==='♠A'||trumpSuit!=='NT'&&card.rank==='J'&&(card.suit===trumpSuit||sameColor(card.suit,trumpSuit));
   const winnerWith=card=>winning(g.trick.concat([{player:i,card}]));
-  // ▼ 修正: low関数が定義されていなかったので追加
   const low=cards=>cards.slice().sort((a,b)=>cardValue(a)-cardValue(b))[0];
   const teamWinningCards=h.filter(card=>sideOf(winnerWith(card).player)===ownSide);
   const canEnemyOvertake=card=>{const trial=g.trick.concat([{player:i,card}]),current=winning(trial),remaining=4-g.trick.length;for(let step=1;step<=remaining;step++){const seat=(i+step)%5;if(sideOf(seat)===ownSide)continue;const hand=g.players[seat].hand,follow=hand.filter(x=>x.suit===led),options=follow.length?follow:hand;for(const response of options)if(sideOf(winning(trial.concat([{player:seat,card:response}])).player)!==ownSide)return true}return sideOf(current.player)!==ownSide};
@@ -494,7 +564,8 @@ function chooseLocalDeputyCard(i,h){
     const sharedSuit=SUITS.filter(suit=>h.some(card=>card.suit===suit)&&napHand.some(card=>card.suit===suit)).sort((a,b)=>napHand.filter(card=>card.suit===b).length-napHand.filter(card=>card.suit===a).length)[0];
     if(sharedSuit){const c=low(h.filter(card=>card.suit===sharedSuit));return{card:c,reason:'dep-lead-shared-suit',detail:{sharedSuit}}}
     const leadValue=card=>cardValue(card)+(card.rank==='A'?3:card.rank==='K'?1:0)+g.players[i].hand.filter(x=>x.suit===card.suit).length*.25;
-    const c=h.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];
+    const finalCandidates = g.trickNo === 0 ? h.filter(c => c.rank !== '2') : h;
+    const c=finalCandidates.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];
     return{card:c,reason:'dep-lead-fallback',detail:{}}
   }
 
