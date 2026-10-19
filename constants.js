@@ -1,6 +1,8 @@
 export const SUITS = ["♣", "♦", "♥", "♠"];
 export const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 export const SV = { "♣": 1, "♦": 2, "♥": 3, "♠": 4, NT: 5 };
+export const FACE = ['10', 'J', 'Q', 'K', 'A'];
+export const POINT = ['10', 'J', 'Q', 'K', 'A'];
 
 export const CALIBRATION = {
   13: 0.62, 14: 0.55, 15: 0.45, 16: 0.35,
@@ -15,14 +17,12 @@ export const SWEET_SPOT_WIDTH = 0.40;
 export const SWEET_SPOT_BONUS = 2.5;
 
 // ========================================
-// ブラフ判定（▼ 修正: 0.45 → 0.35 に緩和）
-// p >= 0.35 の立ちは「honest」とみなし、罰しない
-// これにより「スイートスポット圏内(p=0.55)」は絶対に罰されない
+// ブラフ判定（p >= 0.35 の立ちは「honest」とみなし、罰しない）
 // ========================================
 export const HONEST_THRESHOLD = 0.35;
 
 // ========================================
-// 立ち強度テーブル（▼ 修正: 全体的に引き上げ）
+// 立ち強度テーブル
 // ========================================
 export const BID_STRENGTH_TABLE = {
   13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
@@ -35,7 +35,6 @@ export const STRENGTH_TO_WINRATE = 0.06;
 // パラメータ境界
 // ========================================
 export const PARAM_BOUNDS = {
-  // --- 基礎 ---
   bidThreshold: [2.0, 6.0],
   riskTolerance: [0.1, 1.0],
   leadAggression: [0.2, 1.0],
@@ -45,23 +44,17 @@ export const PARAM_BOUNDS = {
   safeAceWeight: [0.0, 1.0],
   roleCardPreservation: [0.0, 1.0],
   deputyFeedBias: [0.0, 1.0],
-
-  // --- 競り: 相手推理（便乗）・ブラフ ---
   opponentInferenceWeight: [0.0, 1.5],
   suitConflictWeight: [0.2, 1.0],
   mightyShadowWeight: [0.0, 1.0],
   weakOpponentBoost: [0.0, 1.0],
   bluffLossMultiplier: [0.3, 1.5],
   cooperationBonus: [0.0, 1.0],
-
-  // --- 競り: NT vs 色立ち ---
   ntPreference: [0.5, 1.5],
   ntSuitLengthBonus: [0.5, 3.0],
   ntAceWeight: [1.0, 3.0],
   ntMightyBonus: [2.0, 5.0],
   highBidNtThreshold: [14, 18],
-
-  // --- 指名: A vs 2 判断 ---
   aceWeakSuitBonus: [0.0, 0.5],
   aceShortBonus: [0.0, 0.3],
   aceLongPenalty: [0.0, 0.3],
@@ -69,8 +62,6 @@ export const PARAM_BOUNDS = {
   sameTwoShortBonus: [0.2, 0.6],
   sameTwoLongPenalty: [0.0, 0.5],
   sameTwoHighBidBonus: [0.0, 0.4],
-
-  // --- ナポレオン打牌 ---
   trumpExhaustionThreshold: [2, 6],
   baitModeWindow: [1, 4],
   baitMinTrumps: [3, 6],
@@ -81,15 +72,11 @@ export const PARAM_BOUNDS = {
   nonTrumpAceWaiting: [0.0, 1.0],
   baitBackJWindow: [1, 4],
   baitBackJChance: [0.0, 1.0],
-
-  // --- 副官打牌 ---
   faceCardOnNapWin: [0.0, 1.0],
   preserveNextStronger: [0.5, 1.0],
   deputyRevealUrgency: [0.0, 1.0],
   deputyCoverWeight: [0.0, 1.0],
   sameTwoDeputyBonus: [0.0, 1.0],
-
-  // --- 連合軍打牌 ---
   allyFaceCardBonus: [0.0, 1.0],
   napWeaknessLeadWeight: [0.0, 1.5],
   trumpAvoidWeight: [0.5, 1.0],
@@ -106,63 +93,25 @@ export const PARAM_BOUNDS = {
 // ========================================
 export function defaultStrategy() {
   return {
-    bidThreshold: 4.0,
-    riskTolerance: 0.5,
-    leadAggression: 0.6,
-    followAggression: 0.4,
-    trumpBonus: 0.6,
-    mightyBonus: 2.0,
-    safeAceWeight: 0.7,
-    roleCardPreservation: 0.6,
+    bidThreshold: 4.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
+    trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
     deputyFeedBias: 0.5,
-
-    opponentInferenceWeight: 0.4,
-    suitConflictWeight: 0.6,
-    mightyShadowWeight: 0.3,
-    weakOpponentBoost: 0.3,
-    bluffLossMultiplier: 0.6,
-    cooperationBonus: 0.5,
-
-    ntPreference: 1.0,
-    ntSuitLengthBonus: 1.5,
-    ntAceWeight: 2.0,
-    ntMightyBonus: 3.5,
-    highBidNtThreshold: 16,
-
-    aceWeakSuitBonus: 0.3,
-    aceShortBonus: 0.15,
-    aceLongPenalty: 0.15,
-    sameTwoAceCounter: 0.3,
-    sameTwoShortBonus: 0.4,
-    sameTwoLongPenalty: 0.25,
+    opponentInferenceWeight: 0.4, suitConflictWeight: 0.6, mightyShadowWeight: 0.3,
+    weakOpponentBoost: 0.3, bluffLossMultiplier: 0.6, cooperationBonus: 0.5,
+    ntPreference: 1.0, ntSuitLengthBonus: 1.5, ntAceWeight: 2.0,
+    ntMightyBonus: 3.5, highBidNtThreshold: 16,
+    aceWeakSuitBonus: 0.3, aceShortBonus: 0.15, aceLongPenalty: 0.15,
+    sameTwoAceCounter: 0.3, sameTwoShortBonus: 0.4, sameTwoLongPenalty: 0.25,
     sameTwoHighBidBonus: 0.2,
-
-    trumpExhaustionThreshold: 3,
-    baitModeWindow: 2,
-    baitMinTrumps: 4,
-    strongTrumpLeadAggression: 0.7,
-    aceCashUrgency: 1.0,
-    pointCardSafetyThreshold: 0.5,
-    tenHoldThreshold: 0.6,
-    nonTrumpAceWaiting: 0.5,
-    baitBackJWindow: 3,
-    baitBackJChance: 0.6,
-
-    faceCardOnNapWin: 0.9,
-    preserveNextStronger: 0.9,
-    deputyRevealUrgency: 0.5,
-    deputyCoverWeight: 0.5,
-    sameTwoDeputyBonus: 0.5,
-
-    allyFaceCardBonus: 0.9,
-    napWeaknessLeadWeight: 0.8,
-    trumpAvoidWeight: 0.9,
-    sameColorSuitAvoid: 0.8,
-    spadeLeadPriority: 0.7,
-    nonDeclaredSuitWeight: 0.6,
-    queenHoardWeight: 0.6,
-    sameTwoHoardWeight: 0.5,
-    allyYieldBonus: 0.5
+    trumpExhaustionThreshold: 3, baitModeWindow: 2, baitMinTrumps: 4,
+    strongTrumpLeadAggression: 0.7, aceCashUrgency: 1.0, pointCardSafetyThreshold: 0.5,
+    tenHoldThreshold: 0.6, nonTrumpAceWaiting: 0.5,
+    baitBackJWindow: 3, baitBackJChance: 0.6,
+    faceCardOnNapWin: 0.9, preserveNextStronger: 0.9, deputyRevealUrgency: 0.5,
+    deputyCoverWeight: 0.5, sameTwoDeputyBonus: 0.5,
+    allyFaceCardBonus: 0.9, napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9,
+    sameColorSuitAvoid: 0.8, spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6,
+    queenHoardWeight: 0.6, sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5
   };
 }
 
@@ -225,9 +174,7 @@ export function computeBluffGap(strength, num) {
   return Math.max(0, num - maxHonest);
 }
 
-export function strengthBucket(strength) {
-  return Math.round(strength * 2);
-}
+export function strengthBucket(strength) { return Math.round(strength * 2); }
 
 // ========================================
 // カラー系ヘルパー
