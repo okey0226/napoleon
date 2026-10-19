@@ -68,114 +68,122 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/setup-db") {
       try { 
         await forceInitDB(env); 
-        // ▼ 新規: reset=ai パラメータで学習データを初期化
         if (url.searchParams.get("reset") === "ai") {
+          // ▼ 修正: .run() を削除 (batchにはprepareの結果をそのまま渡す)
           await env.DB.batch([
-            env.DB.prepare("DELETE FROM ai_strategy_log").run(),
-            env.DB.prepare("DELETE FROM ai_weights").run()
+            env.DB.prepare("DELETE FROM ai_strategy_log"),
+            env.DB.prepare("DELETE FROM ai_weights")
           ]);
           __cachedBotStrategy = null;
           __cachedBotStrategyTime = 0;
           return response({ ok: true, message: "AI learning data reset successfully" });
         }
         return response({ ok: true, message: "Database initialized successfully" }); 
-      } catch (e) { return response({ error: e.message }, { status: 500 }); }
+      } catch (e) { 
+        // ▼ 修正: エラー詳細を画面に表示
+        console.error("setup-db error:", e.message, e.stack);
+        return response({ error: e.message, stack: e.stack }, { status: 500 }); 
+      }
     }
     if (!globalThis.__dbInitialized) {
       try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed", e); }
     }
 
-    if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
-      let body; try { body = await request.json(); } catch { return response({ error: "入力を確認してください" }, 400); }
-      const id = String(body.id || "").trim(), pass = String(body.password || "");
-      if (!validId(id)) return response({ error: "IDは英数字・_・-の3〜20文字です" }, 400);
-      if (pass.length < 8 || pass.length > 128) return response({ error: "パスワードは8〜128文字です" }, 400);
-      const isRegister = url.pathname.endsWith("register");
-      let userId = null;
-      if (isRegister) {
-        userId = crypto.randomUUID();
-        const salt = crypto.getRandomValues(new Uint8Array(16)), digest = await hashPassword(pass, salt);
-        try { await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash) VALUES(?,?,?,?,?)").bind(userId, id, id, hex(salt), digest).run(); } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
-      } else {
-        const p = await env.DB.prepare("SELECT user_id,salt,password_hash FROM players WHERE player_id=?").bind(id).first();
-        if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
-        userId = p.user_id;
+    try {
+      if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
+        let body; try { body = await request.json(); } catch { return response({ error: "入力を確認してください" }, 400); }
+        const id = String(body.id || "").trim(), pass = String(body.password || "");
+        if (!validId(id)) return response({ error: "IDは英数字・_・-の3〜20文字です" }, 400);
+        if (pass.length < 8 || pass.length > 128) return response({ error: "パスワードは8〜128文字です" }, 400);
+        const isRegister = url.pathname.endsWith("register");
+        let userId = null;
+        if (isRegister) {
+          userId = crypto.randomUUID();
+          const salt = crypto.getRandomValues(new Uint8Array(16)), digest = await hashPassword(pass, salt);
+          try { await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash) VALUES(?,?,?,?,?)").bind(userId, id, id, hex(salt), digest).run(); } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
+        } else {
+          const p = await env.DB.prepare("SELECT user_id,salt,password_hash FROM players WHERE player_id=?").bind(id).first();
+          if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
+          userId = p.user_id;
+        }
+        await env.DB.batch([
+          env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_performance(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_precision(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_art_rate(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_ally_feed(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId)
+        ]);
+        const token = hex(crypto.getRandomValues(new Uint8Array(32)));
+        const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
+        await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
+        const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        return response({ ...player, sessionToken: token });
       }
-      await env.DB.batch([
-        env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(userId),
-        env.DB.prepare("INSERT OR IGNORE INTO player_performance(user_id) VALUES(?)").bind(userId),
-        env.DB.prepare("INSERT OR IGNORE INTO player_precision(user_id) VALUES(?)").bind(userId),
-        env.DB.prepare("INSERT OR IGNORE INTO player_art_rate(user_id) VALUES(?)").bind(userId),
-        env.DB.prepare("INSERT OR IGNORE INTO player_ally_feed(user_id) VALUES(?)").bind(userId),
-        env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId)
-      ]);
-      const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-      const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
-      await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
-      const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
-      return response({ ...player, sessionToken: token });
+      if (request.method === "GET" && url.pathname === "/api/account/me") {
+        const token = request.headers.get("x-session-token");
+        let userId = null;
+        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        if (!userId) { const who = signed(request); if (who) userId = who.id; }
+        if (!userId) return response({ error: "認証情報が必要です" }, 401);
+        const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
+        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
+          env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_precision WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,plays FROM player_art_rate WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,successes FROM player_ally_feed WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT attempts,successes FROM player_bold_bid_rate WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT result,delta,rating_after,created_at FROM match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all(),
+          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first()
+        ]);
+        const matchStats = matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0 };
+        const performance = performanceRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 };
+        const precision = precisionRow || { exact_attempts: 0, exact_successes: 0, solo_attempts: 0, solo_successes: 0 };
+        const artRate = artRateRow || { attempts: 0, plays: 0 };
+        const allyFeed = allyFeedRow || { attempts: 0, successes: 0 };
+        const boldBid = boldBidRow || { attempts: 0, successes: 0 };
+        const [ratingRank, performanceRankValues] = await Promise.all([
+          env.DB.prepare("SELECT COUNT(*) AS ahead FROM players WHERE rating>?").bind(p.rating).first(),
+          Promise.all([
+            metricRank(env.DB, "player_performance", "declarer_successes", "declarer_attempts", performance.declarer_successes, performance.declarer_attempts),
+            metricRank(env.DB, "player_performance", "deputy_successes", "deputy_attempts", performance.deputy_successes, performance.deputy_attempts),
+            metricRank(env.DB, "player_precision", "exact_successes", "exact_attempts", precision.exact_successes, precision.exact_attempts),
+            metricRank(env.DB, "player_precision", "solo_successes", "solo_attempts", precision.solo_successes, precision.solo_attempts),
+            metricRank(env.DB, "player_art_rate", "plays", "attempts", artRate.plays, artRate.attempts),
+            metricRank(env.DB, "player_ally_feed", "successes", "attempts", allyFeed.successes, allyFeed.attempts),
+            metricRank(env.DB, "player_bold_bid_rate", "successes", "attempts", boldBid.successes, boldBid.attempts)
+          ])
+        ]);
+        const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
+        return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
+      }
+      if (request.method === "GET" && url.pathname === "/api/rating/top") { const { results } = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players ORDER BY rating DESC,games DESC LIMIT 50").all(); return response(results); }
+      if (request.method === "GET" && url.pathname === "/api/ai/weights") { try { const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first(); return response(w || { weights: '{}', games: 0 }); } catch (e) { return response({ weights: '{}', games: 0 }); } }
+      if (request.method === "POST" && url.pathname === "/api/ai/report") {
+        let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
+        try {
+          const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first();
+          const weights = JSON.parse(w?.weights || '{}'); const lr = 0.005;
+          if (body.napoleonWon) { weights.bidThreshold = Math.max(2.0, (weights.bidThreshold || 4.0) - lr); weights.leadAggression = Math.min(1.0, (weights.leadAggression || 0.6) + lr); weights.followAggression = Math.min(1.0, (weights.followAggression || 0.4) + lr * 0.5); }
+          else { weights.bidThreshold = Math.min(6.0, (weights.bidThreshold || 4.0) + lr); weights.leadAggression = Math.max(0.2, (weights.leadAggression || 0.6) - lr); weights.followAggression = Math.max(0.1, (weights.followAggression || 0.4) - lr * 0.5); }
+          if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance || 0.5) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus || 0.6) + lr * 0.2); }
+          if (body.lastPlacePenalty > 0) { weights.riskTolerance = Math.max(0.1, (weights.riskTolerance || 0.5) - lr * 0.3); }
+          await env.DB.prepare("UPDATE ai_weights SET weights=?,games=games+1,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(JSON.stringify(weights)).run();
+          __cachedBotStrategy = null;
+          __cachedBotStrategyTime = 0;
+          return response({ ok: true, weights, games: (w?.games || 0) + 1 });
+        } catch (e) { return response({ error: "save failed" }, 500); }
+      }
+      if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); __cachedBotStrategy = null; __cachedBotStrategyTime = 0; return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: JSON.parse(row.params), avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
+      return new Response("Not found", { status: 404 });
+    } catch (err) {
+      return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 });
     }
-    if (request.method === "GET" && url.pathname === "/api/account/me") {
-      const token = request.headers.get("x-session-token");
-      let userId = null;
-      if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
-      if (!userId) { const who = signed(request); if (who) userId = who.id; }
-      if (!userId) return response({ error: "認証情報が必要です" }, 401);
-      const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
-      if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
-      const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
-        env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
-        env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_precision WHERE user_id=?").bind(userId).first(),
-        env.DB.prepare("SELECT attempts,plays FROM player_art_rate WHERE user_id=?").bind(userId).first(),
-        env.DB.prepare("SELECT attempts,successes FROM player_ally_feed WHERE user_id=?").bind(userId).first(),
-        env.DB.prepare("SELECT attempts,successes FROM player_bold_bid_rate WHERE user_id=?").bind(userId).first(),
-        env.DB.prepare("SELECT result,delta,rating_after,created_at FROM match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all(),
-        env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first()
-      ]);
-      const matchStats = matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0 };
-      const performance = performanceRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 };
-      const precision = precisionRow || { exact_attempts: 0, exact_successes: 0, solo_attempts: 0, solo_successes: 0 };
-      const artRate = artRateRow || { attempts: 0, plays: 0 };
-      const allyFeed = allyFeedRow || { attempts: 0, successes: 0 };
-      const boldBid = boldBidRow || { attempts: 0, successes: 0 };
-      const [ratingRank, performanceRankValues] = await Promise.all([
-        env.DB.prepare("SELECT COUNT(*) AS ahead FROM players WHERE rating>?").bind(p.rating).first(),
-        Promise.all([
-          metricRank(env.DB, "player_performance", "declarer_successes", "declarer_attempts", performance.declarer_successes, performance.declarer_attempts),
-          metricRank(env.DB, "player_performance", "deputy_successes", "deputy_attempts", performance.deputy_successes, performance.deputy_attempts),
-          metricRank(env.DB, "player_precision", "exact_successes", "exact_attempts", precision.exact_successes, precision.exact_attempts),
-          metricRank(env.DB, "player_precision", "solo_successes", "solo_attempts", precision.solo_successes, precision.solo_attempts),
-          metricRank(env.DB, "player_art_rate", "plays", "attempts", artRate.plays, artRate.attempts),
-          metricRank(env.DB, "player_ally_feed", "successes", "attempts", allyFeed.successes, allyFeed.attempts),
-          metricRank(env.DB, "player_bold_bid_rate", "successes", "attempts", boldBid.successes, boldBid.attempts)
-        ])
-      ]);
-      const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
-      return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
-    }
-    if (request.method === "GET" && url.pathname === "/api/rating/top") { const { results } = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players ORDER BY rating DESC,games DESC LIMIT 50").all(); return response(results); }
-    if (request.method === "GET" && url.pathname === "/api/ai/weights") { try { const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first(); return response(w || { weights: '{}', games: 0 }); } catch (e) { return response({ weights: '{}', games: 0 }); } }
-    if (request.method === "POST" && url.pathname === "/api/ai/report") {
-      let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
-      try {
-        const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first();
-        const weights = JSON.parse(w?.weights || '{}'); const lr = 0.005;
-        if (body.napoleonWon) { weights.bidThreshold = Math.max(2.0, (weights.bidThreshold || 4.0) - lr); weights.leadAggression = Math.min(1.0, (weights.leadAggression || 0.6) + lr); weights.followAggression = Math.min(1.0, (weights.followAggression || 0.4) + lr * 0.5); }
-        else { weights.bidThreshold = Math.min(6.0, (weights.bidThreshold || 4.0) + lr); weights.leadAggression = Math.max(0.2, (weights.leadAggression || 0.6) - lr); weights.followAggression = Math.max(0.1, (weights.followAggression || 0.4) - lr * 0.5); }
-        if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance || 0.5) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus || 0.6) + lr * 0.2); }
-        if (body.lastPlacePenalty > 0) { weights.riskTolerance = Math.max(0.1, (weights.riskTolerance || 0.5) - lr * 0.3); }
-        await env.DB.prepare("UPDATE ai_weights SET weights=?,games=games+1,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(JSON.stringify(weights)).run();
-        __cachedBotStrategy = null;
-        __cachedBotStrategyTime = 0;
-        return response({ ok: true, weights, games: (w?.games || 0) + 1 });
-      } catch (e) { return response({ error: "save failed" }, 500); }
-    }
-    if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); __cachedBotStrategy = null; __cachedBotStrategyTime = 0; return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
-    if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
-    if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
-    if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
-    if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: JSON.parse(row.params), avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
-    return new Response("Not found", { status: 404 });
   }
 };
 
@@ -235,7 +243,6 @@ function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.ki
 function callCard(m, seat, suit, rank, room) { if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; const card = { suit, rank, id: suit + rank }; if (m.kitty.some(x => x.id === card.id)) return; const isOwn = m.seats[seat].hand.some(c => c.id === card.id); const forceSolo = isSoloForcedInMatch(m); if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false; m.contract.ready = m.seats.map(p => p.bot); m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = []; m.notice = suit + rank + "が指名されました" + (m.contract.solo ? "（ひとり立ち）" : "") + "。全員の確認後に開始します。"; publish(m, room); }
 function discardCards(m, seat, ids, room) { if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return; const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return; const removed = h.filter(c => ids.includes(c.id)); m.seats[seat].hand = h.filter(c => !ids.includes(c.id)); const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)); m.seats[m.contract.nap].points += kittyPoints.length; m.seats[m.contract.nap].taken.push(...kittyPoints); m.kitty = removed; sortHand(m.seats[seat].hand); m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000; m.notice = "捨て札を決めました。副官に指名するカードを選んでください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
-// ▼ matchRatingChanges を ai-simulator.js と完全一致
 function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
   const meanArt = art.reduce((n, x) => n + x, 0) / 5;
   const cs = contracts || [];
@@ -403,7 +410,6 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version;
   const h = m.seats[seat].hand;
   const params = m.botStrategy || defaultStrategy();
-  // ▼ 修正: 今局の立ちのみをフィルタリングして渡す
   const currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
   const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat);
   if (bid && validBid(m, bid.num, bid.suit)) {
@@ -460,7 +466,6 @@ function botAction(m, room) {
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
     else c = chooseCardToPlay(ctx);
-    // ▼ フォールバック
     if (!c || !legal.some(x => x.id === c.id)) {
       c = legal[Math.floor(Math.random() * legal.length)];
     }
