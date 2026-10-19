@@ -1,48 +1,61 @@
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
 function computeBidStrength(hand, suit, params) {
   if (suit === 'NT') return ntHandStrength(hand, params);
   return colorStrength(hand, suit, params);
 }
 
+// ▼ matchRatingChanges と完全一致させる
 function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo) {
-  const p = estimatedWinRate(strengthAtBid, num);
+  const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
+  const p = estimatedWinRate(safeStrength, num);
   const diff = Math.max(0, num - 12);
   const highBoost = 1 + 0.5 * Math.max(0, num - 17);
   const soloMult = solo ? 1.5 : 1.0;
-  const maxHonest = findMaxHonestBid(strengthAtBid);
+  const maxHonest = findMaxHonestBid(safeStrength);
   const bluffGap = Math.max(0, num - maxHonest);
   const isHonest = bluffGap === 0;
+  const coopBonus = params?.cooperationBonus ?? 0.5;
+  const bluffPenalty = params?.bluffLossMultiplier ?? 1.0;
 
-  let napDelta;
+  let napDelta = 0;
+  let deputyDelta = 0;
+
   if (won) {
     napDelta = ((1 - p) * diff * 8 + sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost) * soloMult;
     if (pointsOverBid > 0) napDelta -= pointsOverBid * 0.3;
-    if (isHonest) napDelta += params.cooperationBonus * 1.5;
+    if (isHonest) napDelta += coopBonus * 1.5;
   } else {
     napDelta = -p * diff * 8 * soloMult;
-    if (!isHonest) napDelta -= bluffGap * params.bluffLossMultiplier * 2;
+    if (!isHonest) napDelta -= bluffGap * bluffPenalty * 2;
   }
 
-  let deputyDelta = 0;
   if (!solo) {
     deputyDelta = ((won ? 1 : 0) - p) * diff * 3.2;
     if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
   }
 
-  return { napDelta, deputyDelta, p, diff };
+  return {
+    napDelta: Number.isFinite(napDelta) ? napDelta : 0,
+    deputyDelta: Number.isFinite(deputyDelta) ? deputyDelta : 0,
+    p,
+    diff
+  };
 }
 
-function simRound(hands, round, matchScores, params, bidHistory) {
+function simRound(hands, round, matchScores, params, matchBidHistory) {
   const d = shuffledDeck();
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
 
+  // 今局の競り履歴のみを抽出
+  const currentBids = matchBidHistory.filter(b => b.round === round);
+
   let high = { num: 12, suit: '', player: -1, solo: false };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
-      const bid = shouldBid(hands[s], high, 13, params[s], bidHistory, s);
+      const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s);
       if (bid && bid.num > high.num) high = { ...bid, player: s };
     }
   }
@@ -52,10 +65,11 @@ function simRound(hands, round, matchScores, params, bidHistory) {
 
   const nap = high.player, trump = high.suit, num = high.num;
   const isSoloBid = high.solo === true;
-  const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap]);
+  const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
 
-  bidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
-  if (bidHistory.length > 50) bidHistory.shift();
+  // 履歴に追加
+  matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
+  if (matchBidHistory.length > 50) matchBidHistory.shift();
 
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false };
   hands[nap].push(...kitty); sortHand(hands[nap]);
@@ -70,7 +84,7 @@ function simRound(hands, round, matchScores, params, bidHistory) {
     deputy = nap;
     contractBase.deputy = nap;
   } else {
-    call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap]);
+    call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap] || defaultStrategy());
     for (let i = 0; i < 5; i++) {
       if (i !== nap && hands[i].some(c => c.id === call.id)) { deputy = i; break; }
     }
@@ -104,7 +118,7 @@ function simRound(hands, round, matchScores, params, bidHistory) {
 
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase,
-        playedCards: played, voids, seat, deputy, params: params[seat],
+        playedCards: played, voids, seat, deputy, params: params[seat] || defaultStrategy(),
         isMySideNap: seat === nap || (revealed && seat === deputy),
         isCurrentNapWinning,
         isRevealed: revealed,
@@ -116,6 +130,11 @@ function simRound(hands, round, matchScores, params, bidHistory) {
       let chosen;
       if (!contractBase.solo && revealed && seat === deputy) chosen = chooseDeputyCard(ctx);
       else chosen = chooseCardToPlay(ctx);
+      
+      // フォールバック（選ばれたカードが不正な場合）
+      if (!chosen || !legal.some(c => c.id === chosen.id)) {
+        chosen = legal[Math.floor(Math.random() * legal.length)];
+      }
 
       if (trick.length && chosen.suit !== trick[0].card.suit) {
         if (!voids[seat]) voids[seat] = {};
@@ -155,7 +174,7 @@ function simRound(hands, round, matchScores, params, bidHistory) {
     nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo,
-    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap], Math.max(0, napPts - num), revealTrickNo)
+    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo)
   };
 }
 
@@ -163,10 +182,10 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   let existing = [];
   try {
     const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC LIMIT 5").all();
-    existing = results;
+    existing = results || [];
   } catch { }
 
-  const baseline = existing.length ? existing.map(r => JSON.parse(r.params)) : [defaultStrategy()];
+  const baseline = existing.length ? existing.map(r => JSON.parse(r.params || '{}')) : [defaultStrategy()];
   const generation = existing.length ? Math.max(...existing.map(r => r.generation || 0)) + 1 : 1;
 
   const challengers = baseline.map(b => mutateStrategy(b, 0.2));
@@ -189,9 +208,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
     const hands = [[], [], [], [], []];
     const matchScores = [0, 0, 0, 0, 0];
-    const bidHistory = [];
+    const matchBidHistory = []; // マッチ全体の履歴（simRound内でフィルタリングされる）
     const contracts = [];
-    for (let r = 1; r <= 10; r++) contracts.push(simRound(hands, r, matchScores, seatParams, bidHistory));
+    for (let r = 1; r <= 10; r++) contracts.push(simRound(hands, r, matchScores, seatParams, matchBidHistory));
 
     const sorted = [...matchScores].sort((a, b) => b - a);
     const placement = [0, 0, 0, 0, 0];
@@ -207,11 +226,11 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
           st.napN++; st.bidSum += c.num; st.bidN++;
           if (c.made) st.napW++;
           if (c.solo) st.soloBidN++;
-          matchRating += c.rating.napDelta;
+          matchRating += c.rating.napDelta || 0;
         } else if (!c.solo && c.deputy === seat) {
           st.depN++;
           if (c.made) st.depW++;
-          matchRating += c.rating.deputyDelta;
+          matchRating += c.rating.deputyDelta || 0;
         } else {
           st.alN++;
           if (!c.made) st.alW++;
@@ -224,7 +243,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       else if (placement[seat] === 5) matchRating -= 0.5;
       matchRating -= 0.05 * contracts.length;
 
-      st.totalRating += matchRating;
+      st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
   }
 
@@ -233,12 +252,15 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   for (let i = 0; i < pool.length; i++) {
     const st = stats[i];
     if (!st.n) continue;
-    const avgRating = st.totalRating / st.n;
-    const napRate = st.napN ? st.napW / st.napN : 0;
-    const depRate = st.depN ? st.depW / st.depN : 0;
-    const alRate = st.alN ? st.alW / st.alN : 0;
+    
+    // NaN ガード
+    const avgRating = Number.isFinite(st.totalRating / st.n) ? st.totalRating / st.n : 0;
+    const napRate = Number.isFinite(st.napN ? st.napW / st.napN : 0) ? (st.napN ? st.napW / st.napN : 0) : 0;
+    const depRate = Number.isFinite(st.depN ? st.depW / st.depN : 0) ? (st.depN ? st.depW / st.depN : 0) : 0;
+    const alRate = Number.isFinite(st.alN ? st.alW / st.alN : 0) ? (st.alN ? st.alW / st.alN : 0) : 0;
     const overall = napRate;
-    const avgBid = st.bidN ? st.bidSum / st.bidN : 0;
+    const avgBid = Number.isFinite(st.bidN ? st.bidSum / st.bidN : 0) ? (st.bidN ? st.bidSum / st.bidN : 0) : 0;
+
     statements.push(
       env.DB.prepare(
         "INSERT INTO ai_strategy_log(generation,params,nap_win_rate,deputy_win_rate,alliance_win_rate,overall_win_rate,avg_rating_delta,matches,avg_bid,parent_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
@@ -266,7 +288,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 }
 
 export function generateInsights(strategies) {
-  if (!strategies.length) return [];
+  if (!strategies || !strategies.length) return [];
   const base = defaultStrategy();
   const top = { ...base, ...JSON.parse(strategies[0].params || '{}') };
   const names = {
