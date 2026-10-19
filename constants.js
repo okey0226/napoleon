@@ -22,18 +22,17 @@ export const SWEET_SPOT_BONUS = 2.5;
 export const HONEST_THRESHOLD = 0.35;
 
 // ========================================
-// 立ち強度テーブル
+// 立ち強度テーブル（▼ 修正: 全体的に引き上げ）
 // ========================================
 export const BID_STRENGTH_TABLE = {
-  13: 4.0, 14: 5.0, 15: 6.5, 16: 8.0,
-  17: 9.5, 18: 11.0, 19: 12.5, 20: 14.0
+  13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
+  17: 12.0, 18: 14.0, 19: 16.0, 20: 18.0
 };
 
 export const STRENGTH_TO_WINRATE = 0.06;
 
 // ========================================
 // パラメータ境界
-// （不要パラメータを削除: bluffWinReduction, participationReward, pointThresholdAwareness）
 // ========================================
 export const PARAM_BOUNDS = {
   // --- 基礎 ---
@@ -48,11 +47,11 @@ export const PARAM_BOUNDS = {
   deputyFeedBias: [0.0, 1.0],
 
   // --- 競り: 相手推理（便乗）・ブラフ ---
-  opponentInferenceWeight: [0.0, 1.5],  // 便乗ボーナスの強さ
-  suitConflictWeight: [0.2, 1.0],       // 同スート衝突ペナルティ
+  opponentInferenceWeight: [0.0, 1.5],
+  suitConflictWeight: [0.2, 1.0],
   mightyShadowWeight: [0.0, 1.0],
   weakOpponentBoost: [0.0, 1.0],
-  bluffLossMultiplier: [0.3, 1.5],      // ブラフ罰（旧: 0.5-3.0 → 弱体化）
+  bluffLossMultiplier: [0.3, 1.5],
   cooperationBonus: [0.0, 1.0],
 
   // --- 競り: NT vs 色立ち ---
@@ -80,8 +79,7 @@ export const PARAM_BOUNDS = {
   pointCardSafetyThreshold: [0.3, 0.8],
   tenHoldThreshold: [0.3, 0.9],
   nonTrumpAceWaiting: [0.0, 1.0],
-  // ▼ 新規: 裏J釣り戦略のパラメータ
-  baitBackJWindow: [1, 4],   // 裏J釣りを狙うトリック数
+  baitBackJWindow: [1, 4],
   baitBackJChance: [0.0, 1.0],
 
   // --- 副官打牌 ---
