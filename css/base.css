@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700;800;900&display=swap');
+
+:root{font-family:'DM Sans','Noto Sans JP',sans-serif;color:#f2f5ef;background:#10231f;font-synthesis:none;--felt:#0d4435;--felt-deep:#082e26;--gold:#e1bc70;--muted:#a2b2aa;--line:rgba(226,239,230,.13);--panel:#122d27;--home-gold:#e6c77f;--home-border:rgba(219,231,218,.13)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 35%,#164538 0%,#102b25 48%,#0a1b18 100%);color:#f2f5ef}
+body:has(.home-screen:not(.hidden)){background:radial-gradient(ellipse at 15% 12%,rgba(39,93,68,.28),transparent 35%),radial-gradient(ellipse at 90% 8%,rgba(190,150,78,.08),transparent 32%),linear-gradient(145deg,#102822 0%,#0c211c 55%,#081713 100%);background-attachment:fixed}
+button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.42;cursor:not-allowed}
+.hidden{display:none!important}
+
+/* トップバー */
+.topbar{height:70px;padding:0 clamp(18px,4vw,54px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:rgba(7,23,19,.48)}
+.brand{width:42px;height:42px;display:grid;place-items:center;border:1px solid rgba(225,188,112,.36);border-radius:13px;background:linear-gradient(145deg,rgba(225,188,112,.15),rgba(225,188,112,.025));color:#f1ead9;font-size:23px;font-weight:900;letter-spacing:-.08em;text-decoration:none}
+.brand span{font-size:14px;color:var(--gold);margin-left:2px}
+.top-actions{display:flex;align-items:center;gap:16px}
+.quiet-button,.text-button,.back-button{border:0;background:transparent;color:#d1ddd6}.quiet-button:hover,.text-button:hover,.back-button:hover{color:#fff}
+.account-chip{font-size:12px;color:var(--gold);border:1px solid rgba(225,188,112,.25);border-radius:99px;padding:7px 12px;background:rgba(0,0,0,.16)}
+.profile-nav{padding:8px 13px;font-size:12px;border:1px solid rgba(237,213,157,.32);background:linear-gradient(135deg,#e3c782,#c6a85f)}
+
+/* 画面共通 */
+#app{min-height:calc(100vh - 70px)}
+.screen{width:min(1100px,100%);margin:0 auto;padding:clamp(24px,5vh,54px) clamp(18px,4vw,52px)}
+.eyebrow{color:var(--gold);font-size:10px;font-weight:700;letter-spacing:.23em}
+.subcopy{margin:0;color:#adbbb3;font-size:14px}
+.section-title{margin:20px 0 10px;font-size:11px;letter-spacing:.18em;color:#e8d7a9;font-weight:700;text-transform:uppercase;padding-left:10px;border-left:3px solid rgba(225,188,112,.55)}
+.micro-copy{color:#91a59a;font-size:11px}
+
+/* ナロースクリーン */
+.narrow-screen{max-width:650px;padding-top:38px}
+.narrow-screen .back-button{display:block;margin-bottom:35px}
+.narrow-screen h1{font-size:36px;margin:9px 0 10px}
+
+/* フォーム */
+.form-card{margin-top:24px;padding:22px;border:1px solid var(--line);border-radius:14px;background:rgba(14,36,30,.85);display:grid;gap:16px}
+.form-card label{display:grid;gap:8px;font-size:12px;color:#c8d4cd}
+.form-card input{width:100%;font-size:14px;color:#f6f7f2;background:#0c211c;border:1px solid #35534a;border-radius:8px;padding:10px 11px;outline:none}
+.form-actions{display:flex;gap:9px}.form-actions button{flex:1}
+.form-card .micro-copy{line-height:1.7;margin:0}
+
+/* ダイアログ */
+dialog{border:1px solid #476356;border-radius:14px;background:#112a23;color:#f2f5ef;max-width:380px;width:calc(100% - 36px)}
+dialog::backdrop{background:rgba(0,0,0,.67)}
+.dialog-inner{padding:24px;text-align:center}
+.dialog-inner h2{font-size:21px;margin:11px 0 9px}
+.dialog-inner p{font-size:13px;line-height:1.7;color:#bdcbc3;white-space:pre-line}
+.dialog-inner button{width:100%;margin-top:16px}
+.dialog-card-slot{display:flex;justify-content:center;margin:12px 0 8px}
+.dialog-card-slot .announcement-card{width:110px;height:155px;border-radius:12px}
+.dialog-card-slot .announcement-card .rank{font-size:32px;left:10px;top:8px;font-weight:900}
+.dialog-card-slot .announcement-card .suit{font-size:30px;left:10px;top:48px}
+
+/* トースト */
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;z-index:50;padding:11px 17px;border:1px solid var(--line);border-radius:9px;background:#132c25;color:#eff5ef;font-size:12px;transition:opacity .2s,transform .2s}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* 局ログ */
+.game-log-trigger{flex:none;padding:6px 10px;border:1px solid rgba(225,188,112,.35);border-radius:99px;background:rgba(0,0,0,.2);color:#e8d7a9;font-size:11px;white-space:nowrap}
+.game-log-trigger span{margin-left:3px;color:var(--gold);font-variant-numeric:tabular-nums}
+.game-log-dialog{width:min(520px,calc(100vw - 28px));max-width:none;max-height:min(76dvh,620px);padding:20px;border:1px solid rgba(225,188,112,.35);border-radius:16px;background:#102b25;color:#f2f5ef}
+.game-log-dialog::backdrop{background:rgba(0,10,8,.7)}
+.game-log-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.game-log-head h2{margin:5px 0 0;font-size:22px}
+.game-log-list{max-height:min(58dvh,480px);overflow:auto;padding:8px 2px 2px}
+.game-log-entry{display:grid;grid-template-columns:56px minmax(0,1fr);gap:10px;padding:10px 5px;border-bottom:1px solid rgba(226,239,230,.08);font-size:13px;line-height:1.45}
+.game-log-entry small{color:var(--gold);font-size:10px;white-space:nowrap}
+.game-log-empty{color:var(--muted);font-size:13px;text-align:center;padding:24px 0}
+
+/* モバイル base */
+@media(max-width:760px){
+  .topbar{height:48px;padding-inline:10px}
+  .brand{width:30px;height:30px;border-radius:9px;font-size:17px}
+  .profile-nav{min-height:32px;padding:5px 9px;font-size:10px}
+  #app{min-height:calc(100vh - 48px)}
+  .narrow-screen{padding:16px 14px}
+  .narrow-screen h1{font-size:26px}
+  .toast{font-size:11px!important;padding:9px 13px!important;bottom:16px!important}
+  .dialog-card-slot .announcement-card{width:120px;height:170px;border-radius:14px}
+  .dialog-card-slot .announcement-card .rank{font-size:36px;left:12px;top:10px}
+  .dialog-card-slot .announcement-card .suit{font-size:34px;left:12px;top:54px}
+}
