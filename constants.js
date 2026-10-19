@@ -2,18 +2,9 @@ export const SUITS = ["♣", "♦", "♥", "♠"];
 export const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 export const SV = { "♣": 1, "♦": 2, "♥": 3, "♠": 4, NT: 5 };
 
-// ▼ 修正: 実測に近い保守的な値へ
-// (旧: 13:0.82, 14:0.75, 15:0.65, 16:0.55, 17:0.42, 18:0.30, 19:0.18, 20:0.08)
-// 新: 「bid 13 でも実際の勝率は60%程度」という現実に即した校正
 export const CALIBRATION = {
-  13: 0.62,
-  14: 0.55,
-  15: 0.45,
-  16: 0.35,
-  17: 0.25,
-  18: 0.15,
-  19: 0.08,
-  20: 0.04
+  13: 0.62, 14: 0.55, 15: 0.45, 16: 0.35,
+  17: 0.25, 18: 0.15, 19: 0.08, 20: 0.04
 };
 
 // ========================================
@@ -24,30 +15,25 @@ export const SWEET_SPOT_WIDTH = 0.40;
 export const SWEET_SPOT_BONUS = 2.5;
 
 // ========================================
-// ブラフ検知
+// ブラフ判定（▼ 修正: 0.45 → 0.35 に緩和）
+// p >= 0.35 の立ちは「honest」とみなし、罰しない
+// これにより「スイートスポット圏内(p=0.55)」は絶対に罰されない
 // ========================================
-export const HONEST_THRESHOLD = 0.45;
+export const HONEST_THRESHOLD = 0.35;
 
 // ========================================
 // 立ち強度テーブル
-// 「strength X で立ち枚数 Y を宣言すると p = CALIBRATION[Y]」
-// ▼ 修正: 13-20 の値を実測に合わせて調整
 // ========================================
 export const BID_STRENGTH_TABLE = {
-  13: 4.0,
-  14: 5.0,
-  15: 6.5,
-  16: 8.0,
-  17: 9.5,
-  18: 11.0,
-  19: 12.5,
-  20: 14.0
+  13: 4.0, 14: 5.0, 15: 6.5, 16: 8.0,
+  17: 9.5, 18: 11.0, 19: 12.5, 20: 14.0
 };
 
 export const STRENGTH_TO_WINRATE = 0.06;
 
 // ========================================
-// パラメータ境界（43個）
+// パラメータ境界
+// （不要パラメータを削除: bluffWinReduction, participationReward, pointThresholdAwareness）
 // ========================================
 export const PARAM_BOUNDS = {
   // --- 基礎 ---
@@ -61,15 +47,13 @@ export const PARAM_BOUNDS = {
   roleCardPreservation: [0.0, 1.0],
   deputyFeedBias: [0.0, 1.0],
 
-  // --- 競り: 相手推理・ブラフ ---
-  opponentInferenceWeight: [0.0, 1.5],
-  suitConflictWeight: [0.2, 1.0],
+  // --- 競り: 相手推理（便乗）・ブラフ ---
+  opponentInferenceWeight: [0.0, 1.5],  // 便乗ボーナスの強さ
+  suitConflictWeight: [0.2, 1.0],       // 同スート衝突ペナルティ
   mightyShadowWeight: [0.0, 1.0],
   weakOpponentBoost: [0.0, 1.0],
-  bluffLossMultiplier: [0.5, 3.0],
-  bluffWinReduction: [0.0, 0.6],
+  bluffLossMultiplier: [0.3, 1.5],      // ブラフ罰（旧: 0.5-3.0 → 弱体化）
   cooperationBonus: [0.0, 1.0],
-  participationReward: [-0.1, 0.5],
 
   // --- 競り: NT vs 色立ち ---
   ntPreference: [0.5, 1.5],
@@ -96,6 +80,9 @@ export const PARAM_BOUNDS = {
   pointCardSafetyThreshold: [0.3, 0.8],
   tenHoldThreshold: [0.3, 0.9],
   nonTrumpAceWaiting: [0.0, 1.0],
+  // ▼ 新規: 裏J釣り戦略のパラメータ
+  baitBackJWindow: [1, 4],   // 裏J釣りを狙うトリック数
+  baitBackJChance: [0.0, 1.0],
 
   // --- 副官打牌 ---
   faceCardOnNapWin: [0.0, 1.0],
@@ -113,8 +100,7 @@ export const PARAM_BOUNDS = {
   nonDeclaredSuitWeight: [0.0, 1.0],
   queenHoardWeight: [0.0, 1.0],
   sameTwoHoardWeight: [0.0, 1.0],
-  allyYieldBonus: [0.0, 1.0],
-  pointThresholdAwareness: [0.0, 1.0]
+  allyYieldBonus: [0.0, 1.0]
 };
 
 // ========================================
@@ -132,14 +118,12 @@ export function defaultStrategy() {
     roleCardPreservation: 0.6,
     deputyFeedBias: 0.5,
 
-    opponentInferenceWeight: 0.5,
-    suitConflictWeight: 0.5,
+    opponentInferenceWeight: 0.4,
+    suitConflictWeight: 0.6,
     mightyShadowWeight: 0.3,
     weakOpponentBoost: 0.3,
-    bluffLossMultiplier: 1.0,
-    bluffWinReduction: 0.4,
+    bluffLossMultiplier: 0.6,
     cooperationBonus: 0.5,
-    participationReward: 0.15,
 
     ntPreference: 1.0,
     ntSuitLengthBonus: 1.5,
@@ -163,14 +147,16 @@ export function defaultStrategy() {
     pointCardSafetyThreshold: 0.5,
     tenHoldThreshold: 0.6,
     nonTrumpAceWaiting: 0.5,
+    baitBackJWindow: 3,
+    baitBackJChance: 0.6,
 
-    faceCardOnNapWin: 0.8,
+    faceCardOnNapWin: 0.9,
     preserveNextStronger: 0.9,
     deputyRevealUrgency: 0.5,
     deputyCoverWeight: 0.5,
     sameTwoDeputyBonus: 0.5,
 
-    allyFaceCardBonus: 0.8,
+    allyFaceCardBonus: 0.9,
     napWeaknessLeadWeight: 0.8,
     trumpAvoidWeight: 0.9,
     sameColorSuitAvoid: 0.8,
@@ -178,8 +164,7 @@ export function defaultStrategy() {
     nonDeclaredSuitWeight: 0.6,
     queenHoardWeight: 0.6,
     sameTwoHoardWeight: 0.5,
-    allyYieldBonus: 0.5,
-    pointThresholdAwareness: 0.5
+    allyYieldBonus: 0.5
   };
 }
 
