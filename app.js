@@ -471,14 +471,17 @@ function playStart(){
 function legal(i){let h=g.players[i].hand;if(!g.trick.length)return h;let suit=g.trick[0].card.suit,follow=h.filter(c=>c.suit===suit);return follow.length?follow:h}
 function trump(c){return g.contract.suit!=='NT'&&c.suit===g.contract.suit}
 
+// ▼ 修正: マイティ・正J・裏Jは1トリック目から有効、セイム2のみ2トリック目から有効
 function cardPower(entry,trick,trickNo=0){
   let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');
+  // マイティ・正J・裏Jは1トリック目から有効
+  if(mighty&&c.id==='♥Q')return 10000;
+  if(c.id==='♠A')return 9000;
+  if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
+  let black=s=>s==='♣'||s==='♠';
+  if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
+  // セイム2のみ2トリック目から有効
   if(trickNo>0){
-    if(mighty&&c.id==='♥Q')return 10000;
-    if(c.id==='♠A')return 9000;
-    if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
-    let black=s=>s==='♣'||s==='♠';
-    if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
     if(allSame&&c.suit===led&&c.rank==='2')return 6000;
   }
   if(trump(c))return 5000+RANKS.indexOf(c.rank);
