@@ -1,13 +1,13 @@
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
 function computeBidStrength(hand, suit, params) {
   if (suit === 'NT') return ntHandStrength(hand, params);
   return colorStrength(hand, suit, params);
 }
 
-// ▼ 連合軍評価 = 勝敗 + 連合軍全体の平均獲得点（kitty点込み）
-function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, kittyAlliancePoints, nap, deputy) {
+// ▼ 連合軍評価を「全体平均獲得点」ベースから「勝敗＋NAP阻止」ベースに変更
+function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
   const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
   const p = estimatedWinRate(safeStrength, num);
   const diff = Math.max(0, num - 12);
@@ -36,16 +36,19 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
     if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
   }
 
+  // 連合軍全体の獲得点（キティ点は NAP軍に入るので除外）
   const pts = takenPoints || [0, 0, 0, 0, 0];
   const totalAlliancePoints = pts.reduce((n, v, i) => {
     if (i === nap) return n;
     if (!solo && i === deputy) return n;
     return n + (v || 0);
-  }, 0) + (kittyAlliancePoints || 0);
+  }, 0);
   const allianceCount = solo ? 4 : 3;
   const avgAlliancePoints = totalAlliancePoints / allianceCount;
+  const napPts = pts[nap] + (solo ? 0 : pts[deputy]);
 
-  const allyDelta = (won ? -0.5 : 0.5) + (avgAlliancePoints - 4.4) * 0.4;
+  // ▼ 連合軍評価: 勝敗とNAP阻止をシンプルに評価
+  const allyDelta = (won ? -0.5 : 0.5) + (napPts < num ? 0.3 : 0);
 
   return {
     napDelta: Number.isFinite(napDelta) ? napDelta : 0,
@@ -62,36 +65,31 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
 
+  const currentBids = matchBidHistory.filter(b => b.round === round);
+
   let high = { num: 12, suit: '', player: -1, solo: false };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
-      // ▼ 修正: 本ラウンドの既存 bids を毎回渡す（便乗・相手推理を有効化）
-      const currentBids = matchBidHistory.filter(b => b.round === round);
       const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s);
-      if (bid && bid.num > high.num) {
-        high = { ...bid, player: s };
-        matchBidHistory.push({ round, seat: s, num: bid.num, suit: bid.suit, solo: bid.solo === true });
-        while (matchBidHistory.length > 50) matchBidHistory.shift();
-      }
+      if (bid && bid.num > high.num) high = { ...bid, player: s };
     }
   }
   if (high.player < 0) {
-    const bottomSeat = matchScores.indexOf(Math.min(...matchScores));
-    high = { num: 13, suit: SUITS[0], player: bottomSeat, solo: false };
-    matchBidHistory.push({ round, seat: bottomSeat, num: 13, suit: SUITS[0], solo: false });
-    while (matchBidHistory.length > 50) matchBidHistory.shift();
+    high = { num: 13, suit: SUITS[0], player: matchScores.indexOf(Math.min(...matchScores)), solo: false };
   }
 
   const nap = high.player, trump = high.suit, num = high.num;
   const isSoloBid = high.solo === true;
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
 
+  matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
+  if (matchBidHistory.length > 50) matchBidHistory.shift();
+
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false };
   hands[nap].push(...kitty); sortHand(hands[nap]);
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
-  // ▼ 捨て札の得点札は連合軍に加算
-  const kittyAlliancePoints = discard.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank)).length;
+  const kittyPts = discard.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank)).length;
 
   let deputy = -1;
   let call;
@@ -113,6 +111,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   }
 
   const roundPts = [0, 0, 0, 0, 0];
+  roundPts[nap] += kittyPts;
   const played = [], voids = [{}, {}, {}, {}, {}];
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
 
@@ -166,7 +165,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     active = w.seat;
     trickNo++;
     const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
-    const allyPts = roundPts.reduce((n, p, i) => n + (i !== nap && (contractBase.solo || i !== deputy) ? p : 0), 0) + kittyAlliancePoints;
+    const allyPts = roundPts.reduce((n, p, i) => n + (i !== nap && (contractBase.solo || i !== deputy) ? p : 0), 0);
     if (allyPts > 20 - num || (napPts >= num && (num === 20 || allyPts >= 1))) break;
   }
 
@@ -187,9 +186,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   return {
     nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
-    kittyAlliancePoints,
     strengthAtBid, revealTrickNo,
-    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, kittyAlliancePoints, nap, deputy)
+    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy)
   };
 }
 
@@ -310,7 +308,8 @@ export function generateInsights(strategies) {
     safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し',
     opponentInferenceWeight: '相手推論（便乗）', suitConflictWeight: 'スート衝突回避',
     mightyShadowWeight: 'マイティ影', weakOpponentBoost: '弱相手ブースト',
-    bluffLossMultiplier: 'ブラフ罰', cooperationBonus: '協力ボーナス',
+    bluffLossMultiplier: 'ブラフ罰',
+    cooperationBonus: '協力ボーナス',
     ntPreference: 'NT選好', ntSuitLengthBonus: 'NT長さ', ntAceWeight: 'NT A評価',
     ntMightyBonus: 'NTマイティ', highBidNtThreshold: 'NT移行閾値',
     aceWeakSuitBonus: '弱点A', aceShortBonus: '短A', aceLongPenalty: '長Aペナ',
