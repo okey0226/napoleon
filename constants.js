@@ -7,12 +7,23 @@ export const CALIBRATION = {
   17: 0.25, 18: 0.15, 19: 0.08, 20: 0.04
 };
 
+// ========================================
+// スイートスポット
+// ========================================
 export const SWEET_SPOT_TARGET = 0.55;
 export const SWEET_SPOT_WIDTH = 0.40;
 export const SWEET_SPOT_BONUS = 2.5;
 
+// ========================================
+// ブラフ判定（▼ 修正: 0.45 → 0.35 に緩和）
+// p >= 0.35 の立ちは「honest」とみなし、罰しない
+// これにより「スイートスポット圏内(p=0.55)」は絶対に罰されない
+// ========================================
 export const HONEST_THRESHOLD = 0.35;
 
+// ========================================
+// 立ち強度テーブル（▼ 修正: 全体的に引き上げ）
+// ========================================
 export const BID_STRENGTH_TABLE = {
   13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
   17: 12.0, 18: 14.0, 19: 16.0, 20: 18.0
@@ -20,7 +31,11 @@ export const BID_STRENGTH_TABLE = {
 
 export const STRENGTH_TO_WINRATE = 0.06;
 
+// ========================================
+// パラメータ境界
+// ========================================
 export const PARAM_BOUNDS = {
+  // --- 基礎 ---
   bidThreshold: [2.0, 6.0],
   riskTolerance: [0.1, 1.0],
   leadAggression: [0.2, 1.0],
@@ -30,17 +45,23 @@ export const PARAM_BOUNDS = {
   safeAceWeight: [0.0, 1.0],
   roleCardPreservation: [0.0, 1.0],
   deputyFeedBias: [0.0, 1.0],
+
+  // --- 競り: 相手推理（便乗）・ブラフ ---
   opponentInferenceWeight: [0.0, 1.5],
   suitConflictWeight: [0.2, 1.0],
   mightyShadowWeight: [0.0, 1.0],
   weakOpponentBoost: [0.0, 1.0],
   bluffLossMultiplier: [0.3, 1.5],
   cooperationBonus: [0.0, 1.0],
+
+  // --- 競り: NT vs 色立ち ---
   ntPreference: [0.5, 1.5],
   ntSuitLengthBonus: [0.5, 3.0],
   ntAceWeight: [1.0, 3.0],
   ntMightyBonus: [2.0, 5.0],
   highBidNtThreshold: [14, 18],
+
+  // --- 指名: A vs 2 判断 ---
   aceWeakSuitBonus: [0.0, 0.5],
   aceShortBonus: [0.0, 0.3],
   aceLongPenalty: [0.0, 0.3],
@@ -48,6 +69,8 @@ export const PARAM_BOUNDS = {
   sameTwoShortBonus: [0.2, 0.6],
   sameTwoLongPenalty: [0.0, 0.5],
   sameTwoHighBidBonus: [0.0, 0.4],
+
+  // --- ナポレオン打牌 ---
   trumpExhaustionThreshold: [2, 6],
   baitModeWindow: [1, 4],
   baitMinTrumps: [3, 6],
@@ -58,11 +81,15 @@ export const PARAM_BOUNDS = {
   nonTrumpAceWaiting: [0.0, 1.0],
   baitBackJWindow: [1, 4],
   baitBackJChance: [0.0, 1.0],
+
+  // --- 副官打牌 ---
   faceCardOnNapWin: [0.0, 1.0],
   preserveNextStronger: [0.5, 1.0],
   deputyRevealUrgency: [0.0, 1.0],
   deputyCoverWeight: [0.0, 1.0],
   sameTwoDeputyBonus: [0.0, 1.0],
+
+  // --- 連合軍打牌 ---
   allyFaceCardBonus: [0.0, 1.0],
   napWeaknessLeadWeight: [0.0, 1.5],
   trumpAvoidWeight: [0.5, 1.0],
@@ -74,6 +101,9 @@ export const PARAM_BOUNDS = {
   allyYieldBonus: [0.0, 1.0]
 };
 
+// ========================================
+// デフォルト戦略
+// ========================================
 export function defaultStrategy() {
   return {
     bidThreshold: 4.0,
@@ -85,17 +115,20 @@ export function defaultStrategy() {
     safeAceWeight: 0.7,
     roleCardPreservation: 0.6,
     deputyFeedBias: 0.5,
+
     opponentInferenceWeight: 0.4,
     suitConflictWeight: 0.6,
     mightyShadowWeight: 0.3,
     weakOpponentBoost: 0.3,
     bluffLossMultiplier: 0.6,
     cooperationBonus: 0.5,
+
     ntPreference: 1.0,
     ntSuitLengthBonus: 1.5,
     ntAceWeight: 2.0,
     ntMightyBonus: 3.5,
     highBidNtThreshold: 16,
+
     aceWeakSuitBonus: 0.3,
     aceShortBonus: 0.15,
     aceLongPenalty: 0.15,
@@ -103,6 +136,7 @@ export function defaultStrategy() {
     sameTwoShortBonus: 0.4,
     sameTwoLongPenalty: 0.25,
     sameTwoHighBidBonus: 0.2,
+
     trumpExhaustionThreshold: 3,
     baitModeWindow: 2,
     baitMinTrumps: 4,
@@ -113,11 +147,13 @@ export function defaultStrategy() {
     nonTrumpAceWaiting: 0.5,
     baitBackJWindow: 3,
     baitBackJChance: 0.6,
+
     faceCardOnNapWin: 0.9,
     preserveNextStronger: 0.9,
     deputyRevealUrgency: 0.5,
     deputyCoverWeight: 0.5,
     sameTwoDeputyBonus: 0.5,
+
     allyFaceCardBonus: 0.9,
     napWeaknessLeadWeight: 0.8,
     trumpAvoidWeight: 0.9,
@@ -130,19 +166,23 @@ export function defaultStrategy() {
   };
 }
 
-// ▼ NaN 保護付き突然変異
+// ========================================
+// 突然変異
+// ========================================
 export function mutateStrategy(base, rate = 0.12) {
   const out = { ...base };
   for (const [k, [lo, hi]] of Object.entries(PARAM_BOUNDS)) {
     if (Math.random() < rate) {
       const step = (hi - lo) * 0.08;
-      const cur = Number.isFinite(out[k]) ? out[k] : (lo + hi) / 2;
-      out[k] = Math.max(lo, Math.min(hi, cur + (Math.random() - 0.5) * step * 2));
+      out[k] = Math.max(lo, Math.min(hi, out[k] + (Math.random() - 0.5) * step * 2));
     }
   }
   return out;
 }
 
+// ========================================
+// デッキ操作
+// ========================================
 export function shuffledDeck() {
   const d = [];
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
@@ -157,6 +197,9 @@ export function sortHand(h) {
   h.sort((a, b) => SV[b.suit] - SV[a.suit] || RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
 }
 
+// ========================================
+// スイートスポット・立ち評価
+// ========================================
 export function sweetSpotFactor(p) {
   const distance = Math.abs(p - SWEET_SPOT_TARGET);
   if (distance >= SWEET_SPOT_WIDTH) return 0;
@@ -186,6 +229,9 @@ export function strengthBucket(strength) {
   return Math.round(strength * 2);
 }
 
+// ========================================
+// カラー系ヘルパー
+// ========================================
 export function isSameColorSuit(suit1, suit2) {
   const black = ['♣', '♠'];
   return black.includes(suit1) === black.includes(suit2);
