@@ -1,6 +1,6 @@
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
-const CALIBRATION={13:0.82,14:0.75,15:0.65,16:0.55,17:0.42,18:0.30,19:0.18,20:0.08};
-const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
+const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
+const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='home-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence')$('concurrent-count').textContent='同接: '+m.count+'人'}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -400,8 +400,22 @@ function playStart(){
 function legal(i){let h=g.players[i].hand;if(!g.trick.length)return h;let suit=g.trick[0].card.suit,follow=h.filter(c=>c.suit===suit);return follow.length?follow:h}
 function trump(c){return g.contract.suit!=='NT'&&c.suit===g.contract.suit}
 
-function cardPower(entry,trick){let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');if(mighty&&c.id==='♥Q')return 10000;if(c.id==='♠A')return 9000;if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;let black=s=>s==='♣'||s==='♠';if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;if(allSame&&c.suit===led&&c.rank==='2')return 6000;if(trump(c))return 5000+RANKS.indexOf(c.rank);if(c.suit===led)return 3000+RANKS.indexOf(c.rank);return 1000+RANKS.indexOf(c.rank)}
-function winning(trick=g.trick){return trick.reduce((best,e)=>cardPower(e,trick)>cardPower(best,trick)?e:best,trick[0])}
+// ▼ 修正: trickNoを受け取るように変更
+function cardPower(entry,trick,trickNo=0){
+  let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');
+  if(trickNo>0){
+    if(mighty&&c.id==='♥Q')return 10000;
+    if(c.id==='♠A')return 9000;
+    if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
+    let black=s=>s==='♣'||s==='♠';
+    if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
+    if(allSame&&c.suit===led&&c.rank==='2')return 6000;
+  }
+  if(trump(c))return 5000+RANKS.indexOf(c.rank);
+  if(c.suit===led)return 3000+RANKS.indexOf(c.rank);
+  return 1000+RANKS.indexOf(c.rank);
+}
+function winning(trick=g.trick){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo)>cardPower(best,trick,g.trickNo)?e:best,trick[0])}
 
 // ==========================================
 // 判定理由付き: ローカルbotのカード選択
@@ -429,12 +443,16 @@ function chooseLocalBotCard(i){
     const leadValue=c=>cardValue(c)+(c.rank==='A'?3:c.rank==='K'?1:0)+g.players[i].hand.filter(x=>x.suit===c.suit).length*.25;
     const safeH=h.filter(c=>{if(c.rank!=='A')return true;if(c.id==='♠A')return true;return isSafeToCashAce(c.suit,i)});
     const candidates=safeH.length?safeH:h;
-    const strongLead=candidates.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
+    // ▼ 修正: 1周目のリードでは2を除外
+    const legalCandidates = g.trickNo === 0 ? candidates.filter(c => c.rank !== '2') : candidates;
+    const finalCands = legalCandidates.length ? legalCandidates : candidates;
+    
+    const strongLead=finalCands.filter(c=>c.rank==='A'||c.id==='♠A'||(c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||(c.suit==='♣'||c.suit==='♠')===(g.contract.suit==='♣'||g.contract.suit==='♠'))));
     if(strongLead.length&&Math.random()<g.aiWeights.leadAggression){const c=strongLead.sort((a,b)=>leadValue(b)-leadValue(a))[0];return{card:c,reason:'lead-strong',detail:{leadAggression:g.aiWeights.leadAggression,strongCount:strongLead.length,strongCards:strongLead.map(x=>x.id)}}}
-    const nonAce=candidates.filter(c=>c.rank!=='A');
+    const nonAce=finalCands.filter(c=>c.rank!=='A');
     if(nonAce.length&&Math.random()<g.aiWeights.safeAceWeight){const c=nonAce.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];return{card:c,reason:'lead-non-ace',detail:{safeAceWeight:g.aiWeights.safeAceWeight,nonAceCount:nonAce.length}}}
-    const c=candidates.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];
-    return{card:c,reason:'lead-fallback',detail:{candidateCount:candidates.length,safeHCount:safeH.length}}
+    const c=finalCands.slice().sort((a,b)=>leadValue(b)-leadValue(a))[0];
+    return{card:c,reason:'lead-fallback',detail:{candidateCount:finalCands.length,safeHCount:safeH.length}}
   }
 
   const winningCards=h.filter(c=>winning(g.trick.concat([{player:i,card:c}])).player===i),
@@ -459,6 +477,8 @@ function chooseLocalDeputyCard(i,h){
   const isFace=card=>POINT.includes(card.rank),sameColor=(a,b)=>['♣','♠'].includes(a)===['♣','♠'].includes(b);
   const isRole=card=>card.id===call?.id||card.id==='♠A'||trumpSuit!=='NT'&&card.rank==='J'&&(card.suit===trumpSuit||sameColor(card.suit,trumpSuit));
   const winnerWith=card=>winning(g.trick.concat([{player:i,card}]));
+  // ▼ 修正: low関数が定義されていなかったので追加
+  const low=cards=>cards.slice().sort((a,b)=>cardValue(a)-cardValue(b))[0];
   const teamWinningCards=h.filter(card=>sideOf(winnerWith(card).player)===ownSide);
   const canEnemyOvertake=card=>{const trial=g.trick.concat([{player:i,card}]),current=winning(trial),remaining=4-g.trick.length;for(let step=1;step<=remaining;step++){const seat=(i+step)%5;if(sideOf(seat)===ownSide)continue;const hand=g.players[seat].hand,follow=hand.filter(x=>x.suit===led),options=follow.length?follow:hand;for(const response of options)if(sideOf(winning(trial.concat([{player:seat,card:response}])).player)!==ownSide)return true}return sideOf(current.player)!==ownSide};
   const safeTeamWins=teamWinningCards.filter(card=>!canEnemyOvertake(card));
