@@ -1,0 +1,121 @@
+/* ゲーム画面（デスクトップ） */
+.game-screen{max-width:1200px;height:calc(100dvh - 70px);min-height:640px;padding:12px 24px 0;display:flex;flex-direction:column}
+.game-head{display:flex;align-items:center;justify-content:space-between;height:42px;flex-shrink:0}
+.game-head .back-button{font-size:12px}
+.game-meta{display:flex;align-items:center;gap:16px;color:#b4c4bc;font-size:12px}
+.game-meta b{color:#f7f4e9;font-size:15px}
+.mode-tag,.rating-tag{padding:6px 9px;border-radius:99px;background:rgba(0,0,0,.2);font-size:10px}
+.rating-tag{color:var(--gold)}
+.phase-label{font-size:12px;color:var(--gold);min-width:80px;text-align:right}
+
+.contract-info{display:flex;flex-shrink:0;min-height:34px;align-items:center;justify-content:center;gap:9px;margin:0 auto 4px;padding:3px 12px;border:1px solid rgba(225,188,112,.28);border-radius:9px;background:rgba(6,25,20,.72);color:#dce8df}
+.contract-bid{color:var(--gold);font-size:14px}
+.contract-call-label,.contract-pending{font-size:11px;color:#a9b9ae}
+.contract-info .contract-card{width:30px;height:42px}
+
+.table-area{position:relative;flex:1;min-height:400px;display:grid;place-items:center}
+.table-area:before{content:'';position:absolute;inset:9% 15% 10%;border:1px solid rgba(211,235,215,.17);border-radius:50%;background:radial-gradient(ellipse,#126046 0%,#0b4a37 53%,#083b2f 100%)}
+.players-ring{position:absolute;inset:4% 9%;pointer-events:none}
+.player-seat{position:absolute;z-index:3;min-width:108px;padding:9px 12px;text-align:center;border:1px solid rgba(225,239,229,.16);border-radius:11px;background:rgba(7,26,21,.82)}
+.player-seat .seat-name{font-size:12px;font-weight:700}
+.player-seat .seat-role{font-size:9px;color:var(--gold);margin-top:4px}
+.taken-cards{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:3px;max-width:190px;margin:5px auto 0}
+.taken-label{flex-basis:100%;font-size:8px;line-height:1;color:#91a59a}
+.taken-card{padding:3px 4px;border-radius:4px;background:rgba(255,255,255,.08);font-size:9px;font-weight:700;line-height:1;color:#edf4ee;white-space:nowrap}
+.taken-card.red{color:#ef8a81}
+.player-seat.active{border-color:var(--gold)}
+.player-seat.trick-winner{border-color:rgba(94,222,151,.82)}
+.player-seat.deputy-seat{border-color:rgba(225,188,112,.8)}
+.seat-role.deputy-status{display:inline-block;padding:3px 8px;border:1px solid rgba(225,188,112,.48);border-radius:999px;background:rgba(225,188,112,.14);color:#f0cf88;font-size:10px;font-weight:800}
+.com-badge{display:inline-flex;vertical-align:middle;margin-left:5px;padding:2px 5px;border-radius:4px;background:rgba(91,160,236,.2);color:#9bcaff;font-size:8px}
+.lead-badge{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:4px;color:#9ee6b6;font-size:9px;font-weight:700}
+.lead-badge i{width:8px;height:8px;border-radius:50%;background:#62e29a}
+.player-seat.me{border-color:rgba(143,200,160,.5)}
+.player-seat.pos-0{bottom:1%;left:50%;transform:translateX(-50%)}
+.player-seat.pos-1{bottom:23%;right:1%}
+.player-seat.pos-2{top:19%;right:2%}
+.player-seat.pos-3{top:19%;left:2%}
+.player-seat.pos-4{bottom:23%;left:1%}
+
+.center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
+.center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
+.trick-cards{position:absolute;inset:0;z-index:2;display:block;min-height:0;pointer-events:none}
+.trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px}
+.trick-card.played-seat-0{left:50%;top:70%}
+.trick-card.played-seat-1{left:76%;top:62%}
+.trick-card.played-seat-2{left:76%;top:39%}
+.trick-card.played-seat-3{left:24%;top:39%}
+.trick-card.played-seat-4{left:24%;top:62%}
+
+.table-message{position:relative;z-index:12;flex:none;width:min(760px,100%);min-height:28px;margin:3px auto 5px;padding:5px 14px;border:1px solid rgba(225,188,112,.18);border-radius:999px;background:rgba(5,22,18,.76);color:#e8d7a9;font-size:12px;line-height:1.35;text-align:center;overflow-wrap:anywhere;display:flex;align-items:center;justify-content:center}
+.kitty-view{order:-1;display:flex;align-items:center;gap:8px;min-height:92px}
+.kitty-view .card{width:64px;height:92px}
+.open-label{align-self:center;color:var(--gold);font-size:10px;font-weight:700;margin-right:3px}
+.auction-clock{font-weight:800;font-size:12px;color:var(--gold);padding:3px 9px;border:1px solid rgba(225,188,112,.38);border-radius:99px}
+.player-color-0{--player-color:#79dfb7}.player-color-1{--player-color:#ff9e82}.player-color-2{--player-color:#83bdff}.player-color-3{--player-color:#c9a4ff}.player-color-4{--player-color:#f0ce70}
+.player-seat .seat-name{color:var(--player-color,#f2f5ef)}
+.player-seat .seat-name:before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:var(--player-color,#f2f5ef);vertical-align:1px}
+
+.bid-history{margin-top:8px;padding-top:6px;border-top:1px solid rgba(226,239,230,.12);text-align:left}
+.bid-history-title{margin-bottom:4px;color:#8fa69a;font-size:9px;letter-spacing:.08em}
+.bid-history-list{display:grid;gap:2px;max-height:76px;overflow-y:auto}
+.bid-history-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:7px;font-size:10px;line-height:1.35}
+.bid-history-row small{color:#788c80;font-size:9px}
+.bid-history-row strong{color:var(--gold);font-variant-numeric:tabular-nums}
+
+.action-panel{position:absolute;z-index:10;bottom:8%;left:50%;transform:translateX(-50%);width:min(420px,92%);padding:15px;border-radius:13px;border:1px solid rgba(234,235,218,.18);background:rgba(9,26,22,.96);text-align:center}
+.panel-title{font-size:12px;color:#d3ded6;margin-bottom:11px}
+.panel-row{display:flex;justify-content:center;align-items:center;gap:7px;flex-wrap:wrap}
+.panel-row+.panel-row{margin-top:10px}
+#call-panel{width:min(540px,96%);max-height:min(67dvh,520px);overflow-y:auto}
+#auction-panel .panel-title{font-size:14px;margin-bottom:13px}
+#auction-panel .panel-title strong{display:block;margin-top:5px;color:var(--gold);font-size:24px;line-height:1.2}
+.call-card-preview{display:flex;justify-content:center;align-items:center;gap:16px;margin:0 auto 12px}
+#call-panel .call-preview-card{width:70px;height:100px}
+.call-card-preview strong{display:block;margin-top:4px;color:var(--gold);font-size:22px}
+.call-warning{min-height:14px;margin-top:5px;color:#e6be72;font-size:10px}
+.call-rank-choice{min-width:31px}
+.call-rank-choice.selected{border-color:var(--gold);color:var(--gold)}
+.suit-choice,.small-action{border:1px solid #456256;background:#1a3a30;color:#edf4ee;border-radius:7px;padding:8px 10px;font-weight:700}
+.suit-choice.selected{border-color:var(--gold);color:var(--gold)}
+.small-action{font-size:11px}
+.small-action.pass{background:#49302b;border-color:#73504a}
+.bid-number{min-width:30px;font-size:20px;font-weight:800;color:var(--gold)}
+.play-confirm-preview{display:flex;justify-content:center;align-items:center;gap:13px;margin:4px auto 12px}
+.play-confirm-preview .card{width:48px;height:68px}
+.play-confirm-actions{display:flex;justify-content:center;gap:8px}
+.play-confirm-actions button{flex:1;max-width:170px}
+
+/* カード */
+.card{width:51px;height:73px;flex-shrink:0;border:1px solid rgba(226,229,223,.9);border-radius:7px;background:#fbfaf6;color:#19251f;position:relative}
+.card .rank{position:absolute;left:5px;top:4px;font-size:15px;font-weight:800;line-height:1}
+.card .suit{position:absolute;left:6px;top:22px;font-size:14px}
+.card.red{color:#c6453f}
+.card-back{background:repeating-linear-gradient(45deg,#233d35,#233d35 4px,#315549 4px,#315549 8px);border:2px solid #c3ae79}
+
+/* 手札 */
+.hand-dock{height:155px;flex-shrink:0;position:relative;padding-top:18px;border-top:1px solid rgba(225,240,226,.1);background:rgba(3,16,13,.35)}
+.hand-label{position:absolute;top:3px;left:9px;font-size:10px;color:#9aada2}
+.hand{height:132px;display:flex;align-items:flex-end;justify-content:center;padding:0 16px 9px;overflow-x:auto;overflow-y:visible}
+.hand .card{margin-left:-18px;transition:transform .15s,margin .15s}
+.hand .card:first-child{margin-left:0}
+.hand .card.playable{cursor:pointer}
+.hand .card.playable:hover,.hand .card.selected{transform:translateY(-17px);z-index:5}
+.hand .card:not(.playable){opacity:.88}
+.hand .card.protected{opacity:.48;cursor:not-allowed}
+
+/* 結果パネル */
+.result-panel{position:absolute;z-index:20;inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(420px,92%);max-height:min(82vh,650px);overflow-y:auto;padding:23px;border-radius:16px;background:#102820;border:1px solid rgba(225,188,112,.5);text-align:center}
+.result-panel h2{margin:0 0 8px;color:var(--gold);font-size:20px}
+.result-panel p{font-size:13px;line-height:1.8;color:#c3d0c8}
+.round-score-list{margin:9px 0 11px;padding-top:6px;border-top:1px solid var(--line);text-align:left}
+.round-score-row{display:flex;justify-content:space-between;gap:12px;padding:4px 2px;border-bottom:1px solid rgba(226,239,230,.07);font-size:11px}
+.round-score-row>strong{text-align:right}
+.round-score-row strong small{display:block;margin-top:3px;color:#8a9a90;font-size:9px}
+.round-score-row .score-up{color:#a9d2ae}.round-score-row .score-down{color:#e89685}
+
+/* 捨て札モード */
+.hand.discard-mode{justify-content:flex-start;gap:8px;padding:0 16px 10px;overflow-x:auto}
+.hand.discard-mode .card{width:56px;height:82px;flex:0 0 56px;margin-left:0;cursor:pointer;touch-action:manipulation}
+.hand.discard-mode .card.selected{transform:translateY(-9px);outline:2px solid var(--gold);outline-offset:2px;z-index:8}
+.hand.discard-mode .card.protected{opacity:.55}
