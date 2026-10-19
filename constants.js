@@ -1,7 +1,20 @@
 export const SUITS = ["♣", "♦", "♥", "♠"];
 export const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 export const SV = { "♣": 1, "♦": 2, "♥": 3, "♠": 4, NT: 5 };
-export const CALIBRATION = { 13: 0.82, 14: 0.75, 15: 0.65, 16: 0.55, 17: 0.42, 18: 0.30, 19: 0.18, 20: 0.08 };
+
+// ▼ 修正: 実測に近い保守的な値へ
+// (旧: 13:0.82, 14:0.75, 15:0.65, 16:0.55, 17:0.42, 18:0.30, 19:0.18, 20:0.08)
+// 新: 「bid 13 でも実際の勝率は60%程度」という現実に即した校正
+export const CALIBRATION = {
+  13: 0.62,
+  14: 0.55,
+  15: 0.45,
+  16: 0.35,
+  17: 0.25,
+  18: 0.15,
+  19: 0.08,
+  20: 0.04
+};
 
 // ========================================
 // スイートスポット
@@ -17,10 +30,18 @@ export const HONEST_THRESHOLD = 0.45;
 
 // ========================================
 // 立ち強度テーブル
+// 「strength X で立ち枚数 Y を宣言すると p = CALIBRATION[Y]」
+// ▼ 修正: 13-20 の値を実測に合わせて調整
 // ========================================
 export const BID_STRENGTH_TABLE = {
-  13: 2.0, 14: 5.5, 15: 7.5, 16: 9.5, 17: 11.5,
-  18: 12.0, 19: 14.0, 20: 16.0
+  13: 4.0,
+  14: 5.0,
+  15: 6.5,
+  16: 8.0,
+  17: 9.5,
+  18: 11.0,
+  19: 12.5,
+  20: 14.0
 };
 
 export const STRENGTH_TO_WINRATE = 0.06;
@@ -97,11 +118,10 @@ export const PARAM_BOUNDS = {
 };
 
 // ========================================
-// デフォルト戦略（初期値は理論的最適の近似）
+// デフォルト戦略
 // ========================================
 export function defaultStrategy() {
   return {
-    // 基礎
     bidThreshold: 4.0,
     riskTolerance: 0.5,
     leadAggression: 0.6,
@@ -112,7 +132,6 @@ export function defaultStrategy() {
     roleCardPreservation: 0.6,
     deputyFeedBias: 0.5,
 
-    // 競り: 相手推理・ブラフ
     opponentInferenceWeight: 0.5,
     suitConflictWeight: 0.5,
     mightyShadowWeight: 0.3,
@@ -122,14 +141,12 @@ export function defaultStrategy() {
     cooperationBonus: 0.5,
     participationReward: 0.15,
 
-    // 競り: NT vs 色立ち
     ntPreference: 1.0,
     ntSuitLengthBonus: 1.5,
     ntAceWeight: 2.0,
     ntMightyBonus: 3.5,
     highBidNtThreshold: 16,
 
-    // 指名
     aceWeakSuitBonus: 0.3,
     aceShortBonus: 0.15,
     aceLongPenalty: 0.15,
@@ -138,7 +155,6 @@ export function defaultStrategy() {
     sameTwoLongPenalty: 0.25,
     sameTwoHighBidBonus: 0.2,
 
-    // ナポレオン打牌
     trumpExhaustionThreshold: 3,
     baitModeWindow: 2,
     baitMinTrumps: 4,
@@ -148,14 +164,12 @@ export function defaultStrategy() {
     tenHoldThreshold: 0.6,
     nonTrumpAceWaiting: 0.5,
 
-    // 副官打牌
     faceCardOnNapWin: 0.8,
     preserveNextStronger: 0.9,
     deputyRevealUrgency: 0.5,
     deputyCoverWeight: 0.5,
     sameTwoDeputyBonus: 0.5,
 
-    // 連合軍打牌
     allyFaceCardBonus: 0.8,
     napWeaknessLeadWeight: 0.8,
     trumpAvoidWeight: 0.9,
