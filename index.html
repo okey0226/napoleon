@@ -59,7 +59,16 @@
       </div>
     </section>
   </main>
-  <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title"><div class="game-log-head"><div><div class="eyebrow">COM MATCH</div><h2 id="game-log-title">局ログ</h2></div><button id="game-log-close" class="quiet-button" type="button">閉じる</button></div><div id="game-log-list" class="game-log-list" aria-live="polite"></div></dialog>
+  <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title">
+    <div class="game-log-head">
+      <div><div class="eyebrow">COM MATCH</div><h2 id="game-log-title">局ログ</h2></div>
+      <div style="display:flex;gap:8px;">
+        <button id="game-log-download" class="quiet-button" type="button">ログDL</button>
+        <button id="game-log-close" class="quiet-button" type="button">閉じる</button>
+      </div>
+    </div>
+    <div id="game-log-list" class="game-log-list" aria-live="polite"></div>
+  </dialog>
   <div id="toast" class="toast" role="status"></div>
   <dialog id="message-dialog"><div class="dialog-inner"><div id="dialog-eyebrow" class="eyebrow">Napoleon</div><h2 id="dialog-title"></h2><div id="dialog-card" class="dialog-card-slot hidden"></div><p id="dialog-body"></p><button id="dialog-ok" class="primary-button">OK</button></div></dialog>
 
