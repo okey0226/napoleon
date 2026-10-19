@@ -6,8 +6,12 @@
   <meta name="theme-color" content="#102c25">
   <title>Napoleon</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/style.css">
-  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/home.css">
+  <link rel="stylesheet" href="/css/profile.css">
+  <link rel="stylesheet" href="/css/game.css">
+  <link rel="stylesheet" href="/css/game-mobile.css">
+  <script type="module" src="/js/app.js"></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="#home" aria-label="Napoleon ホーム">N<span>♠</span></a><div class="top-actions"><button id="profile-open" class="primary-button profile-nav">プレイヤー登録</button><button id="account-chip" class="account-chip hidden" type="button"></button></div></header>
@@ -71,6 +75,5 @@
   </dialog>
   <div id="toast" class="toast" role="status"></div>
   <dialog id="message-dialog"><div class="dialog-inner"><div id="dialog-eyebrow" class="eyebrow">Napoleon</div><h2 id="dialog-title"></h2><div id="dialog-card" class="dialog-card-slot hidden"></div><p id="dialog-body"></p><button id="dialog-ok" class="primary-button">OK</button></div></dialog>
-
 </body>
 </html>
