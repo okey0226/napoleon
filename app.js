@@ -39,7 +39,7 @@ function sameColorSuitOf(trump) {
   return SUITS.find(s => s !== trump && black.includes(s) === black.includes(trump));
 }
 
-// ▼ 修正: カード指名の強化（ai-tactics.js のロジックを反映）
+// ▼ 修正: 正J優先
 function chooseBotCall(hand, discard, trump, level, bid) {
   const used = new Set([...hand, ...discard].map(c => c.id));
   const p = g.aiWeights;
@@ -47,18 +47,17 @@ function chooseBotCall(hand, discard, trump, level, bid) {
   // 優先1: ♠A（未所持なら確実に味方化）
   if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
 
-  // 優先2: 裏J釣り（自分が裏Jを持っていない場合、裏Jを指名して釣り＆狩りの準備）
+  // 優先2: 正J（切札J）を優先、次に裏J
   if (trump !== 'NT') {
     const sc = sameColorSuitOf(trump);
     const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
     const hasTrumpJ = hand.some(c => c.suit === trump && c.rank === 'J');
     
-    if (sc && !hasBackJ && !used.has(sc + 'J')) {
-      return { suit: sc, rank: 'J', id: sc + 'J' };
-    }
-    // 切札Jを持っていないなら切札Jを指名
     if (!hasTrumpJ && !used.has(trump + 'J')) {
       return { suit: trump, rank: 'J', id: trump + 'J' };
+    }
+    if (sc && !hasBackJ && !used.has(sc + 'J')) {
+      return { suit: sc, rank: 'J', id: sc + 'J' };
     }
   }
 
@@ -77,7 +76,7 @@ function chooseBotCall(hand, discard, trump, level, bid) {
 
     // 弱点スートのA
     if (!hasA && !used.has(suit + 'A')) {
-      let score = 0.5; // 基本値
+      let score = 0.5;
       if (len >= 1 && len <= 3) score += (p.aceWeakSuitBonus ?? 0.3);
       if (isShort) score += (p.aceShortBonus ?? 0.15);
       if (isLong) score -= (p.aceLongPenalty ?? 0.15);
@@ -539,9 +538,7 @@ function chooseLocalBotCard(i){
   return{card:c,reason:'default-low',detail:{points,trickLength:g.trick.length}}
 }
 
-// ==========================================
-// 判定理由付き: ローカル副官のカード選択
-// ==========================================
+// ▼ 修正: 高カード温存ロジック
 function chooseLocalDeputyCard(i,h){
   const contract=g.contract,nap=contract.nap,call=contract.call,trumpSuit=contract.suit,ownSide='nap',led=g.trick[0]?.card.suit,lastSeat=g.trick.length===4;
   const sideOf=seat=>seat===nap||(!contract.solo&&(contract.revealedCall?seat===contract.deputy:g.players[seat].hand.some(c=>c.id===call?.id)))?'nap':'alliance';
@@ -555,6 +552,25 @@ function chooseLocalDeputyCard(i,h){
 
   if(!g.trick.length){
     const napHand=g.players[nap].hand,napHasTrump=trumpSuit!=='NT'&&napHand.some(card=>card.suit===trumpSuit),napAces=SUITS.filter(suit=>napHand.some(card=>card.suit===suit&&card.rank==='A'));
+    
+    // NAPがそのスートで勝てそうか判定
+    const napCanWinSuit = (suit) => {
+      const napHasVoid = g.voids[nap]?.[suit];
+      return (napHasVoid && napHasTrump) || napAces.includes(suit);
+    };
+
+    // 自分が持っているAを温存するか、確実に勝ちに行くか
+    const secureAces = h.filter(c => c.rank === 'A' && !isRole(c));
+    if (secureAces.length) {
+      const ace = secureAces[0];
+      if (napCanWinSuit(ace.suit)) {
+        const lowCards = h.filter(c => c.rank !== 'A' && c.suit !== trumpSuit);
+        if (lowCards.length) return { card: low(lowCards), reason: 'dep-preserve-ace', detail: { ace: ace.id } };
+      } else {
+        return { card: ace, reason: 'dep-secure-ace' };
+      }
+    }
+
     const returnSuit=napAces.find(suit=>h.some(card=>card.suit===suit));
     if(returnSuit){const c=low(h.filter(card=>card.suit===returnSuit));return{card:c,reason:'dep-lead-return-suit',detail:{returnSuit,napAces}}}
     if(trumpSuit!=='NT'&&napHand.some(card=>card.suit===trumpSuit)&&h.some(card=>card.suit===trumpSuit)){const c=low(h.filter(card=>card.suit===trumpSuit));return{card:c,reason:'dep-lead-trump',detail:{trumpSuit}}}
