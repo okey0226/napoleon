@@ -1,4 +1,4 @@
-import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, sameColorSuitOf, isSameColorSuit } from './constants.js';
+import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy } from './constants.js';
 
 const FACE = ['10', 'J', 'Q', 'K', 'A'];
 
@@ -19,6 +19,7 @@ export function cardPower(contract, trickNo, card, trick) {
     if (card.id === "♠A") return 9000;
     if (contract.suit !== "NT" && card.rank === "J" && card.suit === contract.suit) return 8000;
     if (contract.suit !== "NT" && card.rank === "J" && card.suit !== contract.suit && isSameColorSuit(card.suit, contract.suit)) return 7000;
+    // セイム2は trickNo > 0 (2周目以降) でのみ発動
     if (allSame && card.suit === led && card.rank === "2") return 6000;
   }
 
@@ -85,9 +86,6 @@ export function soloAdjustedStrength(hand, trump) {
 // ==========================================
 // 3. 立ち判断
 // ==========================================
-
-// ▼ 修正: bidHistory は「今局の立ちのみ」を受け取る前提に変更
-// NaN ガードを各所に追加
 function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
   if (!Array.isArray(currentBids)) return base;
@@ -131,14 +129,12 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const baseStr = handStrength(hand);
   if (!Number.isFinite(baseStr) || baseStr < params.bidThreshold) return null;
 
-  // ▼ 修正: bidHistory は「今局のみ」を使う想定だが、念のため安全にパース
   const currentRound = Math.max(0, ...(bidHistory || []).map(b => b?.round || 0));
   const currentBids = (bidHistory || []).filter(b => b && b.round === currentRound);
 
   const targetMin = Math.max(minBid, (currentHigh?.num ?? 12) + 1, 13);
   const candidates = [];
 
-  // 色立ち x 4スート
   for (const suit of SUITS) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
@@ -149,7 +145,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     }
   }
 
-  // NT
   const ntStr = ntHandStrength(hand, params);
   const ntAdj = adjustStrengthForOpponents(ntStr, 'NT', currentBids, params, mySeat, 'nt');
   for (let num = targetMin; num <= 20; num++) {
@@ -159,7 +154,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
   }
 
-  // Solo x 4スート
   for (const suit of SUITS) {
     const ss = soloAdjustedStrength(hand, suit);
     for (let num = targetMin; num <= 20; num++) {
@@ -196,17 +190,14 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params) {
   };
   const used = new Set([...(hand || []), ...(discard || [])].map(c => c.id));
 
-  // 優先1: ♠A
   if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
 
-  // 優先2-3: 切札J / 同色J（色立ちのみ、♥Qは対象外）
   if (trump !== 'NT') {
     if (!used.has(trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
     const sc = sameColorSuitOf(trump);
     if (sc && !used.has(sc + 'J')) return { suit: sc, rank: 'J', id: sc + 'J' };
   }
 
-  // 優先4: A vs 2 スコアリング
   let bestCard = null;
   let bestScore = -Infinity;
 
@@ -337,15 +328,17 @@ function chooseNapoleonLead(ctx) {
     const enemyTrumps = remTrumps - myTr.length;
     const strongest = iHoldStrongestTrump(hand, playedCards, contract.suit);
 
-    // 押し切り
     if (enemyTrumps > params.trumpExhaustionThreshold && strongest) {
       const highTr = myTr.filter(c => ['A', 'K'].includes(c.rank));
       if (highTr.length) return highTr.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
     }
 
-    // 釣り
     if (!strongest && trickNo <= params.baitModeWindow && myTr.length >= params.baitMinTrumps) {
-      return myTr.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+      // 釣り: 1周目に2を切らないように除外
+      const baitCandidates = myTr.filter(c => trickNo > 0 || c.rank !== '2');
+      if (baitCandidates.length) {
+        return baitCandidates.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+      }
     }
   }
 
@@ -379,14 +372,15 @@ function chooseNapoleonLead(ctx) {
     .sort((a, b) => b.count - a.count);
   for (const sl of suitLens) {
     if (sl.count >= 3) {
-      const low = legal.filter(c => c.suit === sl.suit && !isFace(c))
+      const low = legal.filter(c => c.suit === sl.suit && !isFace(c) && (trickNo > 0 || c.rank !== '2'))
         .sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
       if (low) return low;
     }
   }
 
-  // 6. 低札
-  return legal.slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  // 6. 低札（1周目は2を除外）
+  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
 }
 
 function chooseNapoleonFollow(ctx) {
@@ -443,7 +437,9 @@ export function chooseDeputyCard(ctx) {
       const trumps = legal.filter(c => isTrump(contract, c));
       if (trumps.length) return low(trumps);
     }
-    return low(legal);
+    // 1周目のリードでは2を避ける
+    const candidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
+    return low(candidates.length ? candidates : legal);
   }
 
   const ledSuit = trick[0].card.suit;
@@ -504,7 +500,7 @@ function chooseAllianceLead(ctx) {
     const sc = sameColorSuitOf(trump);
     const avoidSuits = [trump, sc].filter(Boolean);
 
-    const leadable = legal.filter(c => !avoidSuits.includes(c.suit) && !isFace(c));
+    const leadable = legal.filter(c => !avoidSuits.includes(c.suit) && !isFace(c) && (trickNo > 0 || c.rank !== '2'));
     if (leadable.length && Math.random() < (p.napWeaknessLeadWeight || 0.8) + 0.3) {
       const bySuitLen = SUITS.filter(s => !avoidSuits.includes(s))
         .map(s => ({ suit: s, cards: leadable.filter(c => c.suit === s) }))
@@ -517,13 +513,13 @@ function chooseAllianceLead(ctx) {
   }
 
   if (contract.suit === 'NT') {
-    const spadeLow = legal.filter(c => c.suit === '♠' && !isFace(c));
+    const spadeLow = legal.filter(c => c.suit === '♠' && !isFace(c) && (trickNo > 0 || c.rank !== '2'));
     if (spadeLow.length && trickNo <= 3 && Math.random() < (p.spadeLeadPriority || 0.7) + 0.2) {
       return spadeLow.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
     }
     const weakSuit = estimateNapWeakSuit(playedCards, contract);
     if (weakSuit) {
-      const weakLow = legal.filter(c => c.suit === weakSuit && !isFace(c));
+      const weakLow = legal.filter(c => c.suit === weakSuit && !isFace(c) && (trickNo > 0 || c.rank !== '2'));
       if (weakLow.length) return weakLow[0];
     }
   }
@@ -532,11 +528,12 @@ function chooseAllianceLead(ctx) {
     .filter(x => x.suit !== contract.suit && x.cards.length >= 3)
     .sort((a, b) => b.cards.length - a.cards.length);
   for (const sl of suitLens) {
-    const lowCard = sl.cards.filter(c => !isFace(c))[0];
+    const lowCard = sl.cards.filter(c => !isFace(c) && (trickNo > 0 || c.rank !== '2'))[0];
     if (lowCard) return lowCard;
   }
 
-  return legal.slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
 }
 
 function chooseAllianceFollow(ctx) {
