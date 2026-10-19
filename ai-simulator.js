@@ -6,8 +6,8 @@ function computeBidStrength(hand, suit, params) {
   return colorStrength(hand, suit, params);
 }
 
-// ▼ matchRatingChanges と完全一致させる
-function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo) {
+// ▼ 連合軍評価を「全体平均獲得点」ベースに変更
+function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
   const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
   const p = estimatedWinRate(safeStrength, num);
   const diff = Math.max(0, num - 12);
@@ -17,7 +17,7 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
   const bluffGap = Math.max(0, num - maxHonest);
   const isHonest = bluffGap === 0;
   const coopBonus = params?.cooperationBonus ?? 0.5;
-  const bluffPenalty = params?.bluffLossMultiplier ?? 1.0;
+  const bluffPenalty = params?.bluffLossMultiplier ?? 0.6;
 
   let napDelta = 0;
   let deputyDelta = 0;
@@ -36,9 +36,24 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
     if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
   }
 
+  // 連合軍全体の獲得点（キティ点は NAP軍に入るので除外）
+  const pts = takenPoints || [0, 0, 0, 0, 0];
+  const totalAlliancePoints = pts.reduce((n, v, i) => {
+    if (i === nap) return n;
+    if (!solo && i === deputy) return n;
+    return n + (v || 0);
+  }, 0);
+  const allianceCount = solo ? 4 : 3;
+  const avgAlliancePoints = totalAlliancePoints / allianceCount;
+
+  // 連合軍評価: 全体平均が4.4以上か + NAP失敗ボーナス
+  const allyDelta = (won ? -0.5 : 0.5) + (avgAlliancePoints - 4.4) * 0.4;
+
   return {
     napDelta: Number.isFinite(napDelta) ? napDelta : 0,
     deputyDelta: Number.isFinite(deputyDelta) ? deputyDelta : 0,
+    allyDelta: Number.isFinite(allyDelta) ? allyDelta : 0,
+    avgAlliancePoints,
     p,
     diff
   };
@@ -49,7 +64,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
 
-  // 今局の競り履歴のみを抽出
   const currentBids = matchBidHistory.filter(b => b.round === round);
 
   let high = { num: 12, suit: '', player: -1, solo: false };
@@ -67,7 +81,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   const isSoloBid = high.solo === true;
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
 
-  // 履歴に追加
   matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
   if (matchBidHistory.length > 50) matchBidHistory.shift();
 
@@ -130,8 +143,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
       let chosen;
       if (!contractBase.solo && revealed && seat === deputy) chosen = chooseDeputyCard(ctx);
       else chosen = chooseCardToPlay(ctx);
-      
-      // フォールバック（選ばれたカードが不正な場合）
+
       if (!chosen || !legal.some(c => c.id === chosen.id)) {
         chosen = legal[Math.floor(Math.random() * legal.length)];
       }
@@ -174,7 +186,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo,
-    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo)
+    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy)
   };
 }
 
@@ -208,7 +220,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
     const hands = [[], [], [], [], []];
     const matchScores = [0, 0, 0, 0, 0];
-    const matchBidHistory = []; // マッチ全体の履歴（simRound内でフィルタリングされる）
+    const matchBidHistory = [];
     const contracts = [];
     for (let r = 1; r <= 10; r++) contracts.push(simRound(hands, r, matchScores, seatParams, matchBidHistory));
 
@@ -234,8 +246,8 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         } else {
           st.alN++;
           if (!c.made) st.alW++;
-          const pts = c.takenPoints[seat] || 0;
-          matchRating += (pts - 4.4) * 0.4 + (c.made ? -0.5 : 0.5);
+          // ▼ 連合軍全体評価を使用
+          matchRating += c.rating.allyDelta || 0;
         }
       }
 
@@ -252,8 +264,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   for (let i = 0; i < pool.length; i++) {
     const st = stats[i];
     if (!st.n) continue;
-    
-    // NaN ガード
+
     const avgRating = Number.isFinite(st.totalRating / st.n) ? st.totalRating / st.n : 0;
     const napRate = Number.isFinite(st.napN ? st.napW / st.napN : 0) ? (st.napN ? st.napW / st.napN : 0) : 0;
     const depRate = Number.isFinite(st.depN ? st.depW / st.depN : 0) ? (st.depN ? st.depW / st.depN : 0) : 0;
@@ -295,10 +306,10 @@ export function generateInsights(strategies) {
     bidThreshold: '立ち強度', riskTolerance: 'リスク許容', leadAggression: 'リード積極性',
     followAggression: 'フォロー積極性', trumpBonus: '切り札評価', mightyBonus: 'マイティ評価',
     safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し',
-    opponentInferenceWeight: '相手推論', suitConflictWeight: 'スート衝突回避',
+    opponentInferenceWeight: '相手推論（便乗）', suitConflictWeight: 'スート衝突回避',
     mightyShadowWeight: 'マイティ影', weakOpponentBoost: '弱相手ブースト',
-    bluffLossMultiplier: 'ブラフ罰', bluffWinReduction: 'ブラフ勝報酬削減',
-    cooperationBonus: '協力ボーナス', participationReward: '参加報酬',
+    bluffLossMultiplier: 'ブラフ罰',
+    cooperationBonus: '協力ボーナス',
     ntPreference: 'NT選好', ntSuitLengthBonus: 'NT長さ', ntAceWeight: 'NT A評価',
     ntMightyBonus: 'NTマイティ', highBidNtThreshold: 'NT移行閾値',
     aceWeakSuitBonus: '弱点A', aceShortBonus: '短A', aceLongPenalty: '長Aペナ',
@@ -308,13 +319,14 @@ export function generateInsights(strategies) {
     baitMinTrumps: '釣り最小トランプ', strongTrumpLeadAggression: '押し切り',
     aceCashUrgency: 'A早期', pointCardSafetyThreshold: 'ポイント安全',
     tenHoldThreshold: '10温存', nonTrumpAceWaiting: 'A待ち',
+    baitBackJWindow: '裏J釣り窓', baitBackJChance: '裏J釣り確率',
     faceCardOnNapWin: 'NAP勝ち絵札', preserveNextStronger: '次強温存',
     deputyRevealUrgency: '判明緊急', deputyCoverWeight: '弱点カバー', sameTwoDeputyBonus: 'セイム2副官',
     allyFaceCardBonus: '連合絵札', napWeaknessLeadWeight: 'NAP弱点リード',
     trumpAvoidWeight: 'トランプ回避', sameColorSuitAvoid: '裏J回避',
     spadeLeadPriority: 'スペード優先', nonDeclaredSuitWeight: '非宣言スート',
     queenHoardWeight: 'Q温存', sameTwoHoardWeight: '2温存',
-    allyYieldBonus: '味方譲り', pointThresholdAwareness: '4.4点意識'
+    allyYieldBonus: '味方譲り'
   };
   const deltas = Object.entries(PARAM_BOUNDS)
     .map(([k, [lo, hi]]) => {
