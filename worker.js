@@ -1,5 +1,5 @@
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid } from './constants.js';
-import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength } from './ai-tactics.js';
+import { winningEntry, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 
 export const schema = [
@@ -66,8 +66,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/api/setup-db") {
-      try { 
-        await forceInitDB(env); 
+      try {
+        await forceInitDB(env);
         if (url.searchParams.get("reset") === "ai") {
           await env.DB.batch([
             env.DB.prepare("DELETE FROM ai_strategy_log"),
@@ -77,10 +77,10 @@ export default {
           __cachedBotStrategyTime = 0;
           return response({ ok: true, message: "AI learning data reset successfully" });
         }
-        return response({ ok: true, message: "Database initialized successfully" }); 
-      } catch (e) { 
+        return response({ ok: true, message: "Database initialized successfully" });
+      } catch (e) {
         console.error("setup-db error:", e.message, e.stack);
-        return response({ error: e.message, stack: e.stack }, { status: 500 }); 
+        return response({ error: e.message, stack: e.stack }, { status: 500 });
       }
     }
     if (!globalThis.__dbInitialized) {
@@ -231,7 +231,11 @@ function auctionDone(m, seat, room) {
       m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return;
     }
   }
-  const strengthAtBid = handStrength(m.seats[seat].hand);
+  // ▼ 修正: ai-simulator.js の computeBidStrength と同じ尺度に統一
+  const botParams = m.botStrategy || defaultStrategy();
+  const strengthAtBid = m.auction.high.suit === 'NT'
+    ? ntHandStrength(m.seats[seat].hand, botParams)
+    : colorStrength(m.seats[seat].hand, m.auction.high.suit, botParams);
   const isSoloBid = m.auction.high.solo === true;
   m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid };
   beginDiscard(m, seat, room);
@@ -241,7 +245,6 @@ function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.ki
 function callCard(m, seat, suit, rank, room) { if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; const card = { suit, rank, id: suit + rank }; if (m.kitty.some(x => x.id === card.id)) return; const isOwn = m.seats[seat].hand.some(c => c.id === card.id); const forceSolo = isSoloForcedInMatch(m); if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false; m.contract.ready = m.seats.map(p => p.bot); m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = []; m.notice = suit + rank + "が指名されました" + (m.contract.solo ? "（ひとり立ち）" : "") + "。全員の確認後に開始します。"; publish(m, room); }
 function discardCards(m, seat, ids, room) { if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return; const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return; const removed = h.filter(c => ids.includes(c.id)); m.seats[seat].hand = h.filter(c => !ids.includes(c.id)); const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)); m.seats[m.contract.nap].points += kittyPoints.length; m.seats[m.contract.nap].taken.push(...kittyPoints); m.kitty = removed; sortHand(m.seats[seat].hand); m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000; m.notice = "捨て札を決めました。副官に指名するカードを選んでください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
-// ▼ 修正: 連合軍評価を勝敗＋NAP阻止ベースに変更
 function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
   const meanArt = art.reduce((n, x) => n + x, 0) / 5;
   const cs = contracts || [];
@@ -276,7 +279,6 @@ function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
         if (c.napWin && c.revealTrickNo != null) roundDelta += Math.max(0, c.revealTrickNo - 3) * 0.3;
       } else {
         role = 'ally';
-        // ▼ 連合軍評価: 勝敗とNAP阻止をシンプルに評価
         roundDelta = (c.napWin ? -0.5 : 0.5) + (c.points < c.num ? 0.3 : 0);
       }
       delta += Number.isFinite(roundDelta) ? roundDelta : 0;
