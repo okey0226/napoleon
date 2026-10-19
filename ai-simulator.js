@@ -65,25 +65,28 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
 
-  const currentBids = matchBidHistory.filter(b => b.round === round);
-
+  // ▼ 修正: 各 bid をループ内で matchBidHistory に push し、currentBids を都度再計算
   let high = { num: 12, suit: '', player: -1, solo: false };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
+      const currentBids = matchBidHistory.filter(b => b.round === round);
       const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s);
-      if (bid && bid.num > high.num) high = { ...bid, player: s };
+      if (bid && bid.num > high.num) {
+        high = { ...bid, player: s };
+        matchBidHistory.push({ round, seat: s, num: bid.num, suit: bid.suit, solo: bid.solo === true });
+        if (matchBidHistory.length > 50) matchBidHistory.shift();
+      }
     }
   }
   if (high.player < 0) {
     high = { num: 13, suit: SUITS[0], player: matchScores.indexOf(Math.min(...matchScores)), solo: false };
+    matchBidHistory.push({ round, seat: high.player, num: high.num, suit: high.suit, solo: false });
+    if (matchBidHistory.length > 50) matchBidHistory.shift();
   }
 
   const nap = high.player, trump = high.suit, num = high.num;
   const isSoloBid = high.solo === true;
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
-
-  matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
-  if (matchBidHistory.length > 50) matchBidHistory.shift();
 
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false };
   hands[nap].push(...kitty); sortHand(hands[nap]);
