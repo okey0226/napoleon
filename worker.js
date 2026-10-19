@@ -69,7 +69,6 @@ export default {
       try { 
         await forceInitDB(env); 
         if (url.searchParams.get("reset") === "ai") {
-          // ▼ 修正: .run() を削除 (batchにはprepareの結果をそのまま渡す)
           await env.DB.batch([
             env.DB.prepare("DELETE FROM ai_strategy_log"),
             env.DB.prepare("DELETE FROM ai_weights")
@@ -80,7 +79,6 @@ export default {
         }
         return response({ ok: true, message: "Database initialized successfully" }); 
       } catch (e) { 
-        // ▼ 修正: エラー詳細を画面に表示
         console.error("setup-db error:", e.message, e.stack);
         return response({ error: e.message, stack: e.stack }, { status: 500 }); 
       }
@@ -243,6 +241,7 @@ function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.ki
 function callCard(m, seat, suit, rank, room) { if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; const card = { suit, rank, id: suit + rank }; if (m.kitty.some(x => x.id === card.id)) return; const isOwn = m.seats[seat].hand.some(c => c.id === card.id); const forceSolo = isSoloForcedInMatch(m); if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false; m.contract.ready = m.seats.map(p => p.bot); m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = []; m.notice = suit + rank + "が指名されました" + (m.contract.solo ? "（ひとり立ち）" : "") + "。全員の確認後に開始します。"; publish(m, room); }
 function discardCards(m, seat, ids, room) { if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return; const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return; const removed = h.filter(c => ids.includes(c.id)); m.seats[seat].hand = h.filter(c => !ids.includes(c.id)); const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)); m.seats[m.contract.nap].points += kittyPoints.length; m.seats[m.contract.nap].taken.push(...kittyPoints); m.kitty = removed; sortHand(m.seats[seat].hand); m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000; m.notice = "捨て札を決めました。副官に指名するカードを選んでください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
+// ▼ 修正: ai-simulator.js の computeRoundRating と完全一致
 function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
   const meanArt = art.reduce((n, x) => n + x, 0) / 5;
   const cs = contracts || [];
@@ -277,9 +276,16 @@ function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
         if (c.napWin && c.revealTrickNo != null) roundDelta += Math.max(0, c.revealTrickNo - 3) * 0.3;
       } else {
         role = 'ally';
-        const pts = (c.takenPoints && c.takenPoints[seat]) || 0;
-        roundDelta = (pts - 4.4) * 0.4;
-        roundDelta += c.napWin ? -0.5 : +0.5;
+        // ▼ 連合軍全体の平均獲得点で評価
+        const pts = c.takenPoints || [0, 0, 0, 0, 0];
+        const totalAlliancePoints = pts.reduce((n, v, i) => {
+          if (i === c.nap) return n;
+          if (!c.solo && i === c.deputy) return n;
+          return n + (v || 0);
+        }, 0);
+        const allianceCount = c.solo ? 4 : 3;
+        const avgAlliancePoints = totalAlliancePoints / allianceCount;
+        roundDelta = (c.napWin ? -0.5 : 0.5) + (avgAlliancePoints - 4.4) * 0.4;
       }
       delta += Number.isFinite(roundDelta) ? roundDelta : 0;
       rounds.push({ bid: c.num, role, delta: Math.round(roundDelta * 100) / 100 });
