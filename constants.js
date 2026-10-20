@@ -8,21 +8,19 @@ export const CALIBRATION = {
 };
 
 // ========================================
-// スイートスポット
+// スイートスポット（v1.2: 下方シフト + 拡大）
 // ========================================
-export const SWEET_SPOT_TARGET = 0.55;
-export const SWEET_SPOT_WIDTH = 0.40;
+export const SWEET_SPOT_TARGET = 0.50;
+export const SWEET_SPOT_WIDTH = 0.55;
 export const SWEET_SPOT_BONUS = 2.5;
 
 // ========================================
-// ブラフ判定（▼ 修正: 0.45 → 0.35 に緩和）
-// p >= 0.35 の立ちは「honest」とみなし、罰しない
-// これにより「スイートスポット圏内(p=0.55)」は絶対に罰されない
+// ブラフ判定
 // ========================================
 export const HONEST_THRESHOLD = 0.35;
 
 // ========================================
-// 立ち強度テーブル（▼ 修正: 全体的に引き上げ）
+// 立ち強度テーブル
 // ========================================
 export const BID_STRENGTH_TABLE = {
   13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
@@ -30,6 +28,21 @@ export const BID_STRENGTH_TABLE = {
 };
 
 export const STRENGTH_TO_WINRATE = 0.06;
+
+// ========================================
+// レート関連の新定数（v1.2）
+// ========================================
+export const HONEST_BID_FIXED_BONUS = 1.5;   // 勝敗無関係のhonest bid固定ボーナス
+export const ALLY_LOSS_PENALTY = -0.9;       // NAP勝利時の連合軍ペナルティ（旧 -0.5）
+export const ALLY_WIN_BONUS = 0.5;           // NAP敗北時の連合軍ボーナス
+export const ALLY_BLOCK_BONUS = 0.3;         // NAP阻止ボーナス（napPts < num時）
+export const RANK_1_BONUS = 1.5;             // 1位（旧 +0.5）
+export const RANK_2_BONUS = 0.5;
+export const RANK_4_PENALTY = -0.5;
+export const RANK_5_PENALTY = -1.5;          // 5位（旧 -0.5）
+export const ART_WEIGHT = 0.3;
+export const ELO_K = 32;
+export const ELO_INIT = 1000;
 
 // ========================================
 // パラメータ境界
@@ -240,4 +253,99 @@ export function isSameColorSuit(suit1, suit2) {
 export function sameColorSuitOf(trump) {
   if (trump === 'NT') return null;
   return SUITS.find(s => s !== trump && isSameColorSuit(s, trump));
+}
+
+// ========================================
+// 共通レート計算（v1.2: 3実装を一本化）
+// ai-simulator / worker / app すべてがこの関数を参照する
+// ========================================
+export function rateRound(seat, roundData, params = null, mult = 1) {
+  const {
+    nap, deputy, solo, num,
+    won, points = 0, revealTrickNo = null,
+    takenPoints = [0, 0, 0, 0, 0], strengthAtBid = 8
+  } = roundData || {};
+  const p = params || defaultStrategy();
+  const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
+  const winrate = estimatedWinRate(safeStrength, num);
+  const diff = Math.max(0, num - 12) * Math.max(1, mult);
+  const highBoost = 1 + 0.5 * Math.max(0, num - 17);
+  const soloMult = solo ? 1.5 : 1.0;
+  const maxHonest = findMaxHonestBid(safeStrength);
+  const bluffGap = Math.max(0, num - maxHonest);
+  const isHonest = bluffGap === 0;
+  const bluffPenalty = p.bluffLossMultiplier ?? 0.6;
+
+  let delta = 0;
+
+  if (seat === nap) {
+    if (won) {
+      delta = ((1 - winrate) * diff * 8 + sweetSpotFactor(winrate) * SWEET_SPOT_BONUS * highBoost) * soloMult;
+      if (points > num) delta -= (points - num) * 0.3;
+    } else {
+      delta = -winrate * diff * 8 * soloMult;
+      if (!isHonest) delta -= bluffGap * bluffPenalty * 2;
+    }
+    if (isHonest) delta += HONEST_BID_FIXED_BONUS;
+  } else if (!solo && seat === deputy) {
+    delta = ((won ? 1 : 0) - winrate) * diff * 3.2;
+    if (won && revealTrickNo != null) delta += Math.max(0, revealTrickNo - 3) * 0.3;
+  } else {
+    const napPts = (takenPoints[nap] || 0) + (solo ? 0 : (takenPoints[deputy] || 0));
+    delta = (won ? ALLY_LOSS_PENALTY : ALLY_WIN_BONUS) + (napPts < num ? ALLY_BLOCK_BONUS : 0);
+  }
+
+  return Number.isFinite(delta) ? delta : 0;
+}
+
+// ========================================
+// マッチ全体のレートΔ計算
+// scores/art は席順、contracts は各局の結果配列
+// ========================================
+export function matchRatingChanges(scores, art, ratings, matchStats, contracts, paramsList = null) {
+  const meanArt = (art || []).reduce((n, x) => n + x, 0) / 5;
+  const cs = contracts || [];
+  return scores.map((score, seat) => {
+    let delta = 0;
+    const rounds = [];
+    for (const c of cs) {
+      const params = (paramsList && paramsList[seat]) || defaultStrategy();
+      const roundDelta = rateRound(seat, {
+        nap: c.nap, deputy: c.deputy, solo: !!c.solo, num: c.num,
+        won: !!c.napWin, points: c.points || 0,
+        revealTrickNo: c.revealTrickNo ?? null,
+        takenPoints: c.takenPoints || [0, 0, 0, 0, 0],
+        strengthAtBid: c.strengthAtBid ?? 8
+      }, params, c.mult || 1);
+      delta += roundDelta;
+      const role = seat === c.nap ? 'nap' : (!c.solo && seat === c.deputy ? 'dep' : 'ally');
+      rounds.push({ bid: c.num, role, delta: Math.round(roundDelta * 100) / 100 });
+    }
+    delta += (art[seat] - meanArt) * ART_WEIGHT;
+    const rank = 1 + scores.filter(x => x > score).length;
+    if (rank === 1) delta += RANK_1_BONUS;
+    else if (rank === 2) delta += RANK_2_BONUS;
+    else if (rank === 4) delta += RANK_4_PENALTY;
+    else if (rank === 5) delta += RANK_5_PENALTY;
+    const outcome = rank <= 2 ? 'win' : rank >= 4 ? 'loss' : 'draw';
+    return {
+      seat,
+      delta: Math.round(delta * 10) / 10,
+      placement: rank,
+      art: art[seat] - meanArt,
+      outcome,
+      breakdown: { rounds, rank }
+    };
+  });
+}
+
+// ========================================
+// Elo（スキルレート）: K=32, 標準Elo式
+// ========================================
+export function computeEloDelta(playerElo, opponentElos, outcome) {
+  if (!opponentElos || !opponentElos.length) return 0;
+  const oppAvg = opponentElos.reduce((s, e) => s + e, 0) / opponentElos.length;
+  const expected = 1 / (1 + Math.pow(10, (oppAvg - playerElo) / 400));
+  const actual = outcome === 'win' ? 1 : outcome === 'loss' ? 0 : 0.5;
+  return Math.round(ELO_K * (actual - expected));
 }
