@@ -1,5 +1,5 @@
-import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid } from './constants.js';
-import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength } from './ai-tactics.js';
+import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT } from './constants.js';
+import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 
 function safeJsonParse(str, fallback = null) {
@@ -29,7 +29,8 @@ export const schema = [
   "CREATE INDEX IF NOT EXISTS ai_strategy_gen ON ai_strategy_log(generation DESC, avg_rating_delta DESC)",
   "CREATE INDEX IF NOT EXISTS ai_strategy_rate ON ai_strategy_log(avg_rating_delta DESC)",
   "CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
-  "CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)"
+  "CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)",
+  "CREATE TABLE IF NOT EXISTS player_elo (user_id TEXT PRIMARY KEY, elo INTEGER NOT NULL DEFAULT 1000)"
 ];
 
 const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
@@ -79,8 +80,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/api/setup-db") {
-      try { 
-        await forceInitDB(env); 
+      try {
+        await forceInitDB(env);
         if (url.searchParams.get("reset") === "ai") {
           await env.DB.batch([
             env.DB.prepare("DELETE FROM ai_strategy_log"),
@@ -90,10 +91,10 @@ export default {
           __cachedBotStrategyTime = 0;
           return response({ ok: true, message: "AI learning data reset successfully" });
         }
-        return response({ ok: true, message: "Database initialized successfully" }); 
-      } catch (e) { 
+        return response({ ok: true, message: "Database initialized successfully" });
+      } catch (e) {
         console.error("setup-db error:", e.message, e.stack);
-        return response({ error: e.message, stack: e.stack }, { status: 500 }); 
+        return response({ error: e.message, stack: e.stack }, { status: 500 });
       }
     }
     if (!globalThis.__dbInitialized) {
@@ -123,13 +124,15 @@ export default {
           env.DB.prepare("INSERT OR IGNORE INTO player_precision(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_art_rate(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_ally_feed(user_id) VALUES(?)").bind(userId),
-          env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId)
+          env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_elo(user_id) VALUES(?)").bind(userId)
         ]);
         const token = hex(crypto.getRandomValues(new Uint8Array(32)));
         const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
         await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
         const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
-        return response({ ...player, sessionToken: token });
+        const eloRow = await env.DB.prepare("SELECT elo FROM player_elo WHERE user_id=?").bind(userId).first();
+        return response({ ...player, elo: eloRow?.elo ?? ELO_INIT, sessionToken: token });
       }
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
@@ -139,14 +142,15 @@ export default {
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
         if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
-        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
+        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow, eloRow] = await Promise.all([
           env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_precision WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,plays FROM player_art_rate WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,successes FROM player_ally_feed WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,successes FROM player_bold_bid_rate WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT result,delta,rating_after,created_at FROM match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all(),
-          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first()
+          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first(),
+          env.DB.prepare("SELECT elo FROM player_elo WHERE user_id=?").bind(userId).first()
         ]);
         const matchStats = matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0 };
         const performance = performanceRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 };
@@ -154,6 +158,7 @@ export default {
         const artRate = artRateRow || { attempts: 0, plays: 0 };
         const allyFeed = allyFeedRow || { attempts: 0, successes: 0 };
         const boldBid = boldBidRow || { attempts: 0, successes: 0 };
+        const elo = eloRow?.elo ?? ELO_INIT;
         const [ratingRank, performanceRankValues] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS ahead FROM players WHERE rating>?").bind(p.rating).first(),
           Promise.all([
@@ -167,9 +172,12 @@ export default {
           ])
         ]);
         const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
-        return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
+        return response({ ...p, elo, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
       }
-      if (request.method === "GET" && url.pathname === "/api/rating/top") { const { results } = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players ORDER BY rating DESC,games DESC LIMIT 50").all(); return response(results); }
+      if (request.method === "GET" && url.pathname === "/api/rating/top") {
+        const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games, COALESCE(e.elo, 1000) AS elo FROM players p LEFT JOIN player_elo e ON e.user_id = p.user_id ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
+        return response(results);
+      }
       if (request.method === "GET" && url.pathname === "/api/ai/weights") { try { const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first(); return response(w || { weights: '{}', games: 0 }); } catch (e) { return response({ weights: '{}', games: 0 }); } }
       if (request.method === "POST" && url.pathname === "/api/ai/report") {
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
@@ -231,7 +239,7 @@ async function beginMatch(kind, roomCode, group, room, env) {
     auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0,
     notice: "配札しました。競り開始まで7秒です。",
     playedCards: [], voids: [{}, {}, {}, {}, {}],
-    allianceKittyPoints: 0  // v1.1: 捨て札の連合軍共有得点
+    allianceKittyPoints: 0
   };
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
@@ -253,12 +261,12 @@ function deal(m) {
   m.result = null; m.contract = null; m.auction = null; m.active = -1; m.phase = "prep";
   m.deadline = Date.now() + 7000;
   m.playedCards = []; m.voids = [{}, {}, {}, {}, {}];
-  m.allianceKittyPoints = 0; // v1.1: 局ごとにリセット
+  m.allianceKittyPoints = 0;
   m.notice = "競り開始まで7秒です。";
   const green = m.seats.findIndex(p => !p.hand.some(c => ["10", "J", "Q", "K", "A"].includes(c.rank)));
   if (green >= 0 && m.redraws < 5) {
     m.redraws++;
-    m.mult = m.mult + 1; // v1.1: 単調増加（旧: m.mult >= 4 ? 2 : m.mult + 1）
+    m.mult = m.mult + 1;
     m.phase = "redeal";
     m.notice = m.seats[green].player.username + "の手札に10・J・Q・K・Aがありません。倍率" + m.mult + "倍で配り直します。";
     m.deadline = Date.now() + 1800;
@@ -277,7 +285,6 @@ function publicState(m) {
     lastTrickWinner: m.lastTrickWinner ?? null,
     finalRoundRule: m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null,
     notice: m.notice, active: m.active,
-    // v1.1: 捨て札の連合軍共有得点を公開
     allianceKittyPoints: m.allianceKittyPoints || 0,
     players: m.seats.map((p, seat) => ({
       seat, name: p.bot ? p.player.username : (p.player.playerId || p.player.username),
@@ -287,7 +294,6 @@ function publicState(m) {
       role: m.contract ? (m.contract.nap === seat ? (m.contract.revealedCall && m.contract.solo ? "ナポレオン（ひとり立ち）" : "ナポレオン") : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    // v1.1: 捨て札の中身を全員に公開（プレイ中も表示）
     revealedKitty: (m.phase !== "auction" && m.kitty) ? m.kitty : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : null, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
@@ -316,7 +322,11 @@ function auctionDone(m, seat, room) {
       m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return;
     }
   }
-  const strengthAtBid = handStrength(m.seats[seat].hand);
+  // v1.2: スート対応の strengthAtBid を採用（旧 handStrength のみ）
+  const bs = defaultStrategy();
+  const strengthAtBid = m.auction.high.suit === 'NT'
+    ? ntHandStrength(m.seats[seat].hand, bs)
+    : colorStrength(m.seats[seat].hand, m.auction.high.suit, bs);
   const isSoloBid = m.auction.high.solo === true;
   m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid };
   beginDiscard(m, seat, room);
@@ -331,7 +341,6 @@ function discardCards(m, seat, ids, room) {
   const removed = h.filter(c => ids.includes(c.id));
   m.seats[seat].hand = h.filter(c => !ids.includes(c.id));
   const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
-  // ▼ v1.1: 捨て札得点は連合軍の共有得点として保持（NAP個人の points / taken には加算しない）
   m.allianceKittyPoints = (m.allianceKittyPoints || 0) + kittyPoints.length;
   m.kitty = removed;
   sortHand(m.seats[seat].hand);
@@ -343,55 +352,6 @@ function discardCards(m, seat, ids, room) {
   if (m.seats[seat].bot) botAction(m, room);
 }
 
-function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
-  const meanArt = art.reduce((n, x) => n + x, 0) / 5;
-  const cs = contracts || [];
-  return scores.map((score, seat) => {
-    let delta = 0;
-    const rounds = [];
-    for (const c of cs) {
-      const safeStrength = Number.isFinite(c.strengthAtBid) ? c.strengthAtBid : 8;
-      const p = estimatedWinRate(safeStrength, c.num);
-      const diff = Math.max(0, c.num - 12);
-      const highBoost = 1 + 0.5 * Math.max(0, c.num - 17);
-      const soloMult = c.solo ? 1.5 : 1.0;
-      const maxHonest = findMaxHonestBid(safeStrength);
-      const bluffGap = Math.max(0, c.num - maxHonest);
-      const isHonest = bluffGap === 0;
-      const actual = c.napWin ? 1 : 0;
-      let roundDelta = 0;
-      let role = 'ally';
-      if (seat === c.nap) {
-        role = 'nap';
-        if (c.napWin) {
-          roundDelta = ((1 - p) * diff * 8 + sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost) * soloMult;
-          if (c.points > c.num) roundDelta -= (c.points - c.num) * 0.3;
-          if (isHonest) roundDelta += 0.75;
-        } else {
-          roundDelta = -p * diff * 8 * soloMult;
-          if (!isHonest) roundDelta -= bluffGap * 2.0;
-        }
-      } else if (!c.solo && seat === c.deputy) {
-        role = 'dep';
-        roundDelta = (actual - p) * diff * 3.2;
-        if (c.napWin && c.revealTrickNo != null) roundDelta += Math.max(0, c.revealTrickNo - 3) * 0.3;
-      } else {
-        role = 'ally';
-        roundDelta = (c.napWin ? -0.5 : 0.5) + (c.points < c.num ? 0.3 : 0);
-      }
-      delta += Number.isFinite(roundDelta) ? roundDelta : 0;
-      rounds.push({ bid: c.num, role, delta: Math.round(roundDelta * 100) / 100 });
-    }
-    delta += (art[seat] - meanArt) * 0.3;
-    const rank = 1 + scores.filter(x => x > score).length;
-    if (rank === 1) delta += 0.5;
-    else if (rank === 5) delta -= 0.5;
-    delta -= 0.05 * cs.length;
-    const outcome = score > 0 ? 'win' : score < 0 ? 'loss' : 'draw';
-    return { seat, delta: Math.round(delta * 10) / 10, placement: rank, art: art[seat] - meanArt, outcome, breakdown: { rounds, rank } };
-  });
-}
-
 async function finish(m, room, env) {
   m.matchScores = m.matchScores || Array(5).fill(0); m.matchArt = m.matchArt || Array(5).fill(0); m.matchContracts = m.matchContracts || [];
   m.matchStats = m.matchStats || Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 }));
@@ -400,7 +360,6 @@ async function finish(m, room, env) {
   const finalRule = m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null;
   const nap = m.contract.nap, unit = Math.max(0, m.contract.num - 12) * m.mult * (m.round >= 10 ? 2 : 1);
   const team = m.contract.solo ? [nap] : Array.from(new Set([nap, m.contract.deputy]));
-  // v1.1: NAP軍得点は個人の points のみ（捨て札共有は連合軍側）
   const points = team.reduce((n, i) => n + m.seats[i].points, 0);
   const allianceKitty = m.allianceKittyPoints || 0;
   const made = points >= m.contract.num && (m.contract.num === 20 || points < 20);
@@ -420,13 +379,19 @@ async function finish(m, room, env) {
   if (m.contract.solo) { art[nap] += made ? 4 : 2; if (made) { m.matchStats[nap].soloWins++; } }
   if (!made && !m.contract.solo && m.contract.num - points >= 3) { art[nap] -= 2; art[m.contract.deputy] -= 1; }
   for (let i = 0; i < 5; i++) { m.matchScores[i] += scores[i]; m.matchArt[i] += art[i]; }
-  m.matchContracts.push({ round: m.round, nap, deputy: m.contract.deputy, num: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, points, napWin: made, revealTrickNo: m.contract.revealTrickNo ?? null, takenPoints: m.seats.map(s => s.roundPoints || 0), strengthAtBid: m.contract.strengthAtBid ?? 8, allianceKittyPoints: allianceKitty });
+  m.matchContracts.push({
+    round: m.round, nap, deputy: m.contract.deputy, num: m.contract.num, suit: m.contract.suit,
+    solo: !!m.contract.solo, points, napWin: made, revealTrickNo: m.contract.revealTrickNo ?? null,
+    takenPoints: m.seats.map(s => s.roundPoints || 0),
+    strengthAtBid: m.contract.strengthAtBid ?? 8,
+    allianceKittyPoints: allianceKitty,
+    mult: m.mult || 1
+  });
   const replayAllLast = !!(finalRule && scores[finalRule.bottomSeat] > 0 && m.matchScores[finalRule.bottomSeat] === m.matchScores[finalRule.fourthSeat]);
   const lastRound = m.round >= 10 && !replayAllLast;
   if (replayAllLast) m.playoff = true;
   m.result = {
     round: m.round, made, points, bid: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, stake: unit,
-    // v1.1: 捨て札共有得点を結果に含める
     allianceKittyPoints: allianceKitty,
     scoreChanges: scores.map((delta, seat) => ({ seat, delta, role: seat === nap ? "ナポレオン" : !m.contract.solo && seat === m.contract.deputy ? "副官" : "連合軍" })),
     artChanges: art.map((delta, seat) => ({ seat, delta })),
@@ -437,6 +402,7 @@ async function finish(m, room, env) {
   m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000;
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
+  // v1.2: 共通 matchRatingChanges を使用
   const ratingChanges = matchRatingChanges(m.matchScores, m.matchArt, m.seats.map(seat => Number(seat.player.rating) || 1000), m.matchStats, m.matchContracts);
   m.result.ratingChanges = ratingChanges;
   const placementOrder = m.matchScores.map((score, seat) => ({ score, seat })).sort((a, b) => b.score - a.score || a.seat - b.seat);
@@ -446,13 +412,28 @@ async function finish(m, room, env) {
     if (userIds.length) {
       try {
         const placeholders = userIds.map(() => "?").join(",");
-        const { results: profiles } = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + placeholders + ")").bind(...userIds).all();
-        const byId = new Map(profiles.map(profile => [profile.user_id, profile])); const statements = [];
+        const [profileRes, eloRes] = await Promise.all([
+          env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + placeholders + ")").bind(...userIds).all(),
+          env.DB.prepare("SELECT user_id, elo FROM player_elo WHERE user_id IN (" + placeholders + ")").bind(...userIds).all()
+        ]);
+        const byId = new Map(profileRes.results.map(profile => [profile.user_id, profile]));
+        const eloMap = new Map((eloRes.results || []).map(row => [row.user_id, row.elo]));
+        const statements = [];
         for (let seat = 0; seat < m.seats.length; seat++) {
           const player = m.seats[seat], userId = player.player.userId, profile = userId && byId.get(userId);
           if (!profile) continue;
           const change = ratingChanges[seat], rating = profile.rating + change.delta, outcome = change.outcome;
           change.rating = rating; const stat = m.matchStats[seat];
+          // v1.2: Elo 計算（対戦相手のElo平均を基準、ボットは ELO_INIT 扱い）
+          const currentElo = eloMap.get(userId) ?? ELO_INIT;
+          const oppElos = m.seats.filter((_, i) => i !== seat).map(s => {
+            if (!s.player.userId) return ELO_INIT;
+            return eloMap.get(s.player.userId) ?? ELO_INIT;
+          });
+          const eloDelta = computeEloDelta(currentElo, oppElos, outcome);
+          const newElo = Math.max(100, currentElo + eloDelta);
+          change.eloDelta = eloDelta;
+          change.elo = newElo;
           statements.push(
             env.DB.prepare("UPDATE players SET rating=?,wins=wins+?,losses=losses+?,games=games+1 WHERE user_id=?").bind(rating, outcome === "win" ? 1 : 0, outcome === "loss" ? 1 : 0, profile.user_id),
             env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(profile.user_id, profile.username, outcome, change.delta, rating),
@@ -463,13 +444,14 @@ async function finish(m, room, env) {
             env.DB.prepare("INSERT INTO player_art_rate(user_id,attempts,plays) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,plays=plays+excluded.plays").bind(profile.user_id, stat.artAttempts, stat.dramaticPlays),
             env.DB.prepare("INSERT INTO player_ally_feed(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.allyFeedAttempts, stat.allyFeedSuccesses),
             env.DB.prepare("INSERT INTO player_bold_bid_rate(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.boldAttempts, stat.boldSuccesses),
-            env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0))
+            env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0)),
+            env.DB.prepare("INSERT INTO player_elo(user_id, elo) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET elo=excluded.elo").bind(userId, newElo)
           );
-          updates.push({ connId: player.connId, change, rating, outcome });
+          updates.push({ connId: player.connId, change, rating, outcome, elo: newElo });
         }
         if (statements.length) await env.DB.batch(statements);
       } catch (error) { console.error("ranked match settlement failed", m.id, error); m.result.rateSaveFailed = true; }
-      if (!m.result.rateSaveFailed) for (const update of updates) { try { sendSafe(conns.get(update.connId), { type: "rating-updated", result: update.outcome, delta: update.change.delta, rating: update.rating, placement: update.change.placement, art: update.change.art, breakdown: update.change.breakdown }); } catch (error) { console.warn("rating notification failed", m.id, error); } }
+      if (!m.result.rateSaveFailed) for (const update of updates) { try { sendSafe(conns.get(update.connId), { type: "rating-updated", result: update.outcome, delta: update.change.delta, rating: update.rating, elo: update.elo, eloDelta: update.change.eloDelta, placement: update.change.placement, art: update.change.art, breakdown: update.change.breakdown }); } catch (error) { console.warn("rating notification failed", m.id, error); } }
     }
   }
   publish(m, room); matches.delete(m.id);
@@ -508,7 +490,6 @@ function playCard(m, seat, id, room, env) {
   if (taken.length >= 3 && m.roundDrama[w] < 2) { m.matchStats[w].artAttempts++; if (artfulCard(m, winningEntryObj, m.trick)) { m.roundArt[w]++; m.roundDrama[w]++; m.matchStats[w].dramaticPlays++; } }
   m.seats[w].points += taken.length; m.seats[w].taken.push(...taken); m.seats[w].roundTaken.push(...taken); m.seats[w].roundPoints = (m.seats[w].roundPoints || 0) + taken.length;
   m.lastTrickWinner = w; m.active = w;
-  // v1.1: 連合軍得点に捨て札共有得点を含める
   const alliancePointsRaw = m.seats.reduce((n, p, i) => n + (i !== m.contract.nap && (m.contract.solo || i !== m.contract.deputy) ? p.points : 0), 0);
   const alliancePoints = alliancePointsRaw + (m.allianceKittyPoints || 0);
   const napPoints = m.seats.reduce((n, p, i) => n + (i === m.contract.nap || !m.contract.solo && i === m.contract.deputy ? p.points : 0), 0);
