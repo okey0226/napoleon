@@ -1,7 +1,6 @@
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
-// ▼ 安全なJSONパース用ヘルパー
 function safeJsonParse(str, fallback = null) {
   try {
     if (typeof str !== 'string' || !str.trim()) return fallback;
@@ -17,7 +16,6 @@ function computeBidStrength(hand, suit, params) {
   return colorStrength(hand, suit, params);
 }
 
-// ▼ 連合軍評価を「全体平均獲得点」ベースから「勝敗＋NAP阻止」ベースに変更
 function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
   const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
   const p = estimatedWinRate(safeStrength, num);
@@ -47,7 +45,7 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
     if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
   }
 
-  // 連合軍全体の獲得点（キティ点は NAP軍に入るので除外）
+  // v1.1: takenPoints は選手個人の獲得点札のみ（捨て札は含まない）
   const pts = takenPoints || [0, 0, 0, 0, 0];
   const totalAlliancePoints = pts.reduce((n, v, i) => {
     if (i === nap) return n;
@@ -58,7 +56,7 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
   const avgAlliancePoints = totalAlliancePoints / allianceCount;
   const napPts = pts[nap] + (solo ? 0 : pts[deputy]);
 
-  // ▼ 連合軍評価: 勝敗とNAP阻止をシンプルに評価
+  // v1.1: 連合軍評価は勝敗＋NAP阻止ベース（捨て札共有はsimRound側でallyPtsに加算済み）
   const allyDelta = (won ? -0.5 : 0.5) + (napPts < num ? 0.3 : 0);
 
   return {
@@ -101,6 +99,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
   const kittyPts = discard.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank)).length;
+  // ▼ v1.1: 捨て札得点は連合軍の共有得点。NAP個人得点には加算しない
+  const allianceKittyPts = kittyPts;
 
   let deputy = -1;
   let call;
@@ -122,7 +122,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   }
 
   const roundPts = [0, 0, 0, 0, 0];
-  roundPts[nap] += kittyPts;
+  // ▼ v1.1: roundPts[nap] += kittyPts; を削除（捨て札は個人得点に加算しない）
+
   const played = [], voids = [{}, {}, {}, {}, {}];
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
 
@@ -176,11 +177,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     active = w.seat;
     trickNo++;
     const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
-    const allyPts = roundPts.reduce((n, p, i) => n + (i !== nap && (contractBase.solo || i !== deputy) ? p : 0), 0);
+    // ▼ v1.1: 連合軍得点に捨て札共有得点を加算
+    const allyPtsRaw = roundPts.reduce((n, p, i) => n + (i !== nap && (contractBase.solo || i !== deputy) ? p : 0), 0);
+    const allyPts = allyPtsRaw + allianceKittyPts;
     if (allyPts > 20 - num || (napPts >= num && (num === 20 || allyPts >= 1))) break;
   }
 
   const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
+  // ▼ v1.1: napPts は選手個人の獲得点札のみ（捨て札は含まない）。全部取り負け判定もこのまま
   const made = napPts >= num && (num === 20 || napPts < 20);
   const unit = Math.max(0, num - 12) * (round >= 10 ? 2 : 1);
   const sign = made ? 1 : -1;
@@ -198,6 +202,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo,
+    // v1.1: 捨て札共有得点も返す（デバッグ・将来の表示用）
+    allianceKittyPoints: allianceKittyPts,
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy)
   };
 }
@@ -209,7 +215,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     existing = results || [];
   } catch { }
 
-  // ▼ 修正: 安全なJSONパースでベースラインを構築
   const baseline = existing.length
     ? existing.map(r => {
         const parsed = safeJsonParse(r.params, null);
@@ -323,7 +328,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 export function generateInsights(strategies) {
   if (!strategies || !strategies.length) return [];
   const base = defaultStrategy();
-  // ▼ 修正: 安全なJSONパース
   const topParams = safeJsonParse(strategies[0].params, {}) || {};
   const top = { ...base, ...topParams };
   const names = {
