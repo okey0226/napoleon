@@ -2,26 +2,24 @@ export const SUITS = ["♣", "♦", "♥", "♠"];
 export const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 export const SV = { "♣": 1, "♦": 2, "♥": 3, "♠": 4, NT: 5 };
 
+// ========================================
+// キャリブレーション（v1.3: 実測寄りに引き下げ）
+// 旧値は楽観的すぎてAIが過剰に立ち失敗していた
+// ========================================
 export const CALIBRATION = {
-  13: 0.62, 14: 0.55, 15: 0.45, 16: 0.35,
-  17: 0.25, 18: 0.15, 19: 0.08, 20: 0.04
+  13: 0.55, 14: 0.48, 15: 0.40, 16: 0.32,
+  17: 0.24, 18: 0.16, 19: 0.10, 20: 0.06
 };
 
 // ========================================
-// スイートスポット（v1.2: 下方シフト + 拡大）
+// スイートスポット（v1.2 から変更なし）
 // ========================================
 export const SWEET_SPOT_TARGET = 0.50;
 export const SWEET_SPOT_WIDTH = 0.55;
 export const SWEET_SPOT_BONUS = 2.5;
 
-// ========================================
-// ブラフ判定
-// ========================================
 export const HONEST_THRESHOLD = 0.35;
 
-// ========================================
-// 立ち強度テーブル
-// ========================================
 export const BID_STRENGTH_TABLE = {
   13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
   17: 12.0, 18: 14.0, 19: 16.0, 20: 18.0
@@ -30,16 +28,16 @@ export const BID_STRENGTH_TABLE = {
 export const STRENGTH_TO_WINRATE = 0.06;
 
 // ========================================
-// レート関連の新定数（v1.2）
+// レート関連定数（v1.2 から変更なし）
 // ========================================
-export const HONEST_BID_FIXED_BONUS = 1.5;   // 勝敗無関係のhonest bid固定ボーナス
-export const ALLY_LOSS_PENALTY = -0.9;       // NAP勝利時の連合軍ペナルティ（旧 -0.5）
-export const ALLY_WIN_BONUS = 0.5;           // NAP敗北時の連合軍ボーナス
-export const ALLY_BLOCK_BONUS = 0.3;         // NAP阻止ボーナス（napPts < num時）
-export const RANK_1_BONUS = 1.5;             // 1位（旧 +0.5）
+export const HONEST_BID_FIXED_BONUS = 1.5;
+export const ALLY_LOSS_PENALTY = -0.9;
+export const ALLY_WIN_BONUS = 0.5;
+export const ALLY_BLOCK_BONUS = 0.3;
+export const RANK_1_BONUS = 1.5;
 export const RANK_2_BONUS = 0.5;
 export const RANK_4_PENALTY = -0.5;
-export const RANK_5_PENALTY = -1.5;          // 5位（旧 -0.5）
+export const RANK_5_PENALTY = -1.5;
 export const ART_WEIGHT = 0.3;
 export const ELO_K = 32;
 export const ELO_INIT = 1000;
@@ -48,7 +46,6 @@ export const ELO_INIT = 1000;
 // パラメータ境界
 // ========================================
 export const PARAM_BOUNDS = {
-  // --- 基礎 ---
   bidThreshold: [2.0, 6.0],
   riskTolerance: [0.1, 1.0],
   leadAggression: [0.2, 1.0],
@@ -59,7 +56,6 @@ export const PARAM_BOUNDS = {
   roleCardPreservation: [0.0, 1.0],
   deputyFeedBias: [0.0, 1.0],
 
-  // --- 競り: 相手推理（便乗）・ブラフ ---
   opponentInferenceWeight: [0.0, 1.5],
   suitConflictWeight: [0.2, 1.0],
   mightyShadowWeight: [0.0, 1.0],
@@ -67,14 +63,12 @@ export const PARAM_BOUNDS = {
   bluffLossMultiplier: [0.3, 1.5],
   cooperationBonus: [0.0, 1.0],
 
-  // --- 競り: NT vs 色立ち ---
   ntPreference: [0.5, 1.5],
   ntSuitLengthBonus: [0.5, 3.0],
   ntAceWeight: [1.0, 3.0],
   ntMightyBonus: [2.0, 5.0],
   highBidNtThreshold: [14, 18],
 
-  // --- 指名: A vs 2 判断 ---
   aceWeakSuitBonus: [0.0, 0.5],
   aceShortBonus: [0.0, 0.3],
   aceLongPenalty: [0.0, 0.3],
@@ -83,7 +77,6 @@ export const PARAM_BOUNDS = {
   sameTwoLongPenalty: [0.0, 0.5],
   sameTwoHighBidBonus: [0.0, 0.4],
 
-  // --- ナポレオン打牌 ---
   trumpExhaustionThreshold: [2, 6],
   baitModeWindow: [1, 4],
   baitMinTrumps: [3, 6],
@@ -95,14 +88,12 @@ export const PARAM_BOUNDS = {
   baitBackJWindow: [1, 4],
   baitBackJChance: [0.0, 1.0],
 
-  // --- 副官打牌 ---
   faceCardOnNapWin: [0.0, 1.0],
   preserveNextStronger: [0.5, 1.0],
   deputyRevealUrgency: [0.0, 1.0],
   deputyCoverWeight: [0.0, 1.0],
   sameTwoDeputyBonus: [0.0, 1.0],
 
-  // --- 連合軍打牌 ---
   allyFaceCardBonus: [0.0, 1.0],
   napWeaknessLeadWeight: [0.0, 1.5],
   trumpAvoidWeight: [0.5, 1.0],
@@ -114,9 +105,6 @@ export const PARAM_BOUNDS = {
   allyYieldBonus: [0.0, 1.0]
 };
 
-// ========================================
-// デフォルト戦略
-// ========================================
 export function defaultStrategy() {
   return {
     bidThreshold: 4.0,
@@ -179,9 +167,6 @@ export function defaultStrategy() {
   };
 }
 
-// ========================================
-// 突然変異
-// ========================================
 export function mutateStrategy(base, rate = 0.12) {
   const out = { ...base };
   for (const [k, [lo, hi]] of Object.entries(PARAM_BOUNDS)) {
@@ -193,9 +178,6 @@ export function mutateStrategy(base, rate = 0.12) {
   return out;
 }
 
-// ========================================
-// デッキ操作
-// ========================================
 export function shuffledDeck() {
   const d = [];
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
@@ -210,9 +192,6 @@ export function sortHand(h) {
   h.sort((a, b) => SV[b.suit] - SV[a.suit] || RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
 }
 
-// ========================================
-// スイートスポット・立ち評価
-// ========================================
 export function sweetSpotFactor(p) {
   const distance = Math.abs(p - SWEET_SPOT_TARGET);
   if (distance >= SWEET_SPOT_WIDTH) return 0;
@@ -242,9 +221,6 @@ export function strengthBucket(strength) {
   return Math.round(strength * 2);
 }
 
-// ========================================
-// カラー系ヘルパー
-// ========================================
 export function isSameColorSuit(suit1, suit2) {
   const black = ['♣', '♠'];
   return black.includes(suit1) === black.includes(suit2);
@@ -256,8 +232,7 @@ export function sameColorSuitOf(trump) {
 }
 
 // ========================================
-// 共通レート計算（v1.2: 3実装を一本化）
-// ai-simulator / worker / app すべてがこの関数を参照する
+// 共通レート計算（v1.2 から変更なし）
 // ========================================
 export function rateRound(seat, roundData, params = null, mult = 1) {
   const {
@@ -298,10 +273,6 @@ export function rateRound(seat, roundData, params = null, mult = 1) {
   return Number.isFinite(delta) ? delta : 0;
 }
 
-// ========================================
-// マッチ全体のレートΔ計算
-// scores/art は席順、contracts は各局の結果配列
-// ========================================
 export function matchRatingChanges(scores, art, ratings, matchStats, contracts, paramsList = null) {
   const meanArt = (art || []).reduce((n, x) => n + x, 0) / 5;
   const cs = contracts || [];
@@ -339,9 +310,6 @@ export function matchRatingChanges(scores, art, ratings, matchStats, contracts, 
   });
 }
 
-// ========================================
-// Elo（スキルレート）: K=32, 標準Elo式
-// ========================================
 export function computeEloDelta(playerElo, opponentElos, outcome) {
   if (!opponentElos || !opponentElos.length) return 0;
   const oppAvg = opponentElos.reduce((s, e) => s + e, 0) / opponentElos.length;
