@@ -1,4 +1,4 @@
-import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
+import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
 function safeJsonParse(str, fallback = null) {
@@ -16,57 +16,31 @@ function computeBidStrength(hand, suit, params) {
   return colorStrength(hand, suit, params);
 }
 
+// v1.2: computeRoundRating は共通 rateRound に委譲
 function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
-  const safeStrength = Number.isFinite(strengthAtBid) ? strengthAtBid : 8;
-  const p = estimatedWinRate(safeStrength, num);
-  const diff = Math.max(0, num - 12);
-  const highBoost = 1 + 0.5 * Math.max(0, num - 17);
-  const soloMult = solo ? 1.5 : 1.0;
-  const maxHonest = findMaxHonestBid(safeStrength);
-  const bluffGap = Math.max(0, num - maxHonest);
-  const isHonest = bluffGap === 0;
-  const coopBonus = params?.cooperationBonus ?? 0.5;
-  const bluffPenalty = params?.bluffLossMultiplier ?? 0.6;
-
-  let napDelta = 0;
-  let deputyDelta = 0;
-
-  if (won) {
-    napDelta = ((1 - p) * diff * 8 + sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost) * soloMult;
-    if (pointsOverBid > 0) napDelta -= pointsOverBid * 0.3;
-    if (isHonest) napDelta += coopBonus * 1.5;
-  } else {
-    napDelta = -p * diff * 8 * soloMult;
-    if (!isHonest) napDelta -= bluffGap * bluffPenalty * 2;
-  }
-
-  if (!solo) {
-    deputyDelta = ((won ? 1 : 0) - p) * diff * 3.2;
-    if (won && revealTrickNo != null) deputyDelta += Math.max(0, revealTrickNo - 3) * 0.3;
-  }
-
-  // v1.1: takenPoints は選手個人の獲得点札のみ（捨て札は含まない）
   const pts = takenPoints || [0, 0, 0, 0, 0];
+  const roundData = {
+    nap, deputy, solo: !!solo, num, won: !!won,
+    points: (pts[nap] || 0) + (solo ? 0 : (pts[deputy] || 0)),
+    revealTrickNo,
+    takenPoints: pts,
+    strengthAtBid
+  };
+  const napDelta = rateRound(nap, roundData, params, 1);
+  const deputyDelta = (!solo && deputy !== nap) ? rateRound(deputy, roundData, params, 1) : 0;
+  let allySeat = -1;
+  for (let s = 0; s < 5; s++) {
+    if (s !== nap && (solo || s !== deputy)) { allySeat = s; break; }
+  }
+  const allyDelta = allySeat >= 0 ? rateRound(allySeat, roundData, params, 1) : 0;
+
   const totalAlliancePoints = pts.reduce((n, v, i) => {
     if (i === nap) return n;
     if (!solo && i === deputy) return n;
     return n + (v || 0);
   }, 0);
-  const allianceCount = solo ? 4 : 3;
-  const avgAlliancePoints = totalAlliancePoints / allianceCount;
-  const napPts = pts[nap] + (solo ? 0 : pts[deputy]);
-
-  // v1.1: 連合軍評価は勝敗＋NAP阻止ベース（捨て札共有はsimRound側でallyPtsに加算済み）
-  const allyDelta = (won ? -0.5 : 0.5) + (napPts < num ? 0.3 : 0);
-
-  return {
-    napDelta: Number.isFinite(napDelta) ? napDelta : 0,
-    deputyDelta: Number.isFinite(deputyDelta) ? deputyDelta : 0,
-    allyDelta: Number.isFinite(allyDelta) ? allyDelta : 0,
-    avgAlliancePoints,
-    p,
-    diff
-  };
+  const avgAlliancePoints = totalAlliancePoints / (solo ? 4 : 3);
+  return { napDelta, deputyDelta, allyDelta, avgAlliancePoints, p: estimatedWinRate(strengthAtBid, num), diff: Math.max(0, num - 12) };
 }
 
 function simRound(hands, round, matchScores, params, matchBidHistory) {
@@ -99,7 +73,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
   const kittyPts = discard.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank)).length;
-  // ▼ v1.1: 捨て札得点は連合軍の共有得点。NAP個人得点には加算しない
   const allianceKittyPts = kittyPts;
 
   let deputy = -1;
@@ -122,7 +95,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   }
 
   const roundPts = [0, 0, 0, 0, 0];
-  // ▼ v1.1: roundPts[nap] += kittyPts; を削除（捨て札は個人得点に加算しない）
 
   const played = [], voids = [{}, {}, {}, {}, {}];
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
@@ -177,14 +149,12 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     active = w.seat;
     trickNo++;
     const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
-    // ▼ v1.1: 連合軍得点に捨て札共有得点を加算
     const allyPtsRaw = roundPts.reduce((n, p, i) => n + (i !== nap && (contractBase.solo || i !== deputy) ? p : 0), 0);
     const allyPts = allyPtsRaw + allianceKittyPts;
     if (allyPts > 20 - num || (napPts >= num && (num === 20 || allyPts >= 1))) break;
   }
 
   const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
-  // ▼ v1.1: napPts は選手個人の獲得点札のみ（捨て札は含まない）。全部取り負け判定もこのまま
   const made = napPts >= num && (num === 20 || napPts < 20);
   const unit = Math.max(0, num - 12) * (round >= 10 ? 2 : 1);
   const sign = made ? 1 : -1;
@@ -202,8 +172,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     nap, deputy, num, solo: contractBase.solo,
     made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo,
-    // v1.1: 捨て札共有得点も返す（デバッグ・将来の表示用）
     allianceKittyPoints: allianceKittyPts,
+    mult: 1,
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy)
   };
 }
@@ -275,9 +245,12 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         }
       }
 
-      if (placement[seat] === 1) matchRating += 0.5;
-      else if (placement[seat] === 5) matchRating -= 0.5;
-      matchRating -= 0.05 * contracts.length;
+      // v1.2: 順位補正を拡大（旧 ±0.5 → ±1.5）
+      if (placement[seat] === 1) matchRating += RANK_1_BONUS;
+      else if (placement[seat] === 2) matchRating += RANK_2_BONUS;
+      else if (placement[seat] === 4) matchRating += RANK_4_PENALTY;
+      else if (placement[seat] === 5) matchRating += RANK_5_PENALTY;
+      // v1.2: -0.05 * contracts.length は撤廃（構造的デフレの原因だった）
 
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
