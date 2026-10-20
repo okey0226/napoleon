@@ -322,7 +322,6 @@ function auctionDone(m, seat, room) {
       m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return;
     }
   }
-  // v1.2: スート対応の strengthAtBid を採用（旧 handStrength のみ）
   const bs = defaultStrategy();
   const strengthAtBid = m.auction.high.suit === 'NT'
     ? ntHandStrength(m.seats[seat].hand, bs)
@@ -402,7 +401,6 @@ async function finish(m, room, env) {
   m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000;
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
-  // v1.2: 共通 matchRatingChanges を使用
   const ratingChanges = matchRatingChanges(m.matchScores, m.matchArt, m.seats.map(seat => Number(seat.player.rating) || 1000), m.matchStats, m.matchContracts);
   m.result.ratingChanges = ratingChanges;
   const placementOrder = m.matchScores.map((score, seat) => ({ score, seat })).sort((a, b) => b.score - a.score || a.seat - b.seat);
@@ -424,7 +422,6 @@ async function finish(m, room, env) {
           if (!profile) continue;
           const change = ratingChanges[seat], rating = profile.rating + change.delta, outcome = change.outcome;
           change.rating = rating; const stat = m.matchStats[seat];
-          // v1.2: Elo 計算（対戦相手のElo平均を基準、ボットは ELO_INIT 扱い）
           const currentElo = eloMap.get(userId) ?? ELO_INIT;
           const oppElos = m.seats.filter((_, i) => i !== seat).map(s => {
             if (!s.player.userId) return ELO_INIT;
@@ -517,6 +514,7 @@ function botAuctionBid(m, seat, room) {
   }
   doApprove(m, seat, room);
 }
+
 function botAction(m, room) {
   if (!m || m.phase === "result") return;
   m.botLevel = 3; const i = m.active, p = m.seats[i];
@@ -531,8 +529,10 @@ function botAction(m, room) {
       return;
     }
     const forceSolo = isSoloForcedInMatch(m);
-    if (forceSolo) { const hand = p.hand; const chosen = hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; callCard(m, i, chosen.suit, chosen.rank, room); }
-    else {
+    if (forceSolo) {
+      const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+      if (chosen) callCard(m, i, chosen.suit, chosen.rank, room);
+    } else {
       const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params);
       if (x) callCard(m, i, x.suit, x.rank, room);
     }
@@ -545,6 +545,8 @@ function botAction(m, room) {
   }
   if (m.phase === "play") {
     const legal = legalCards(m, i);
+    const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
+    const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
     const ctx = {
       hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
       playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
@@ -554,7 +556,8 @@ function botAction(m, room) {
       isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
       lastSeat: m.trick.length === 4,
       params,
-      call: m.contract.call
+      call: m.contract.call,
+      currentNapPoints
     };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
