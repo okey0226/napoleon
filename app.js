@@ -1,41 +1,27 @@
-import { matchRatingChanges, computeEloDelta, ELO_INIT } from './constants.js';
+import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import {
-  shouldBid,
-  chooseDiscard,
-  chooseDeputyCall,
-  chooseSoloCall,
-  chooseCardToPlay,
-  chooseDeputyCard,
-  winningEntry,
-  strongestSuit,
-  colorStrength,
-  ntHandStrength
+  shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
+  winningEntry, strongestSuit, colorStrength, ntHandStrength
 } from './ai-tactics.js';
 
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
 function safeJsonParse(str, fallback = null) {
-  try {
-    if (typeof str !== 'string' || !str.trim()) return fallback;
-    return JSON.parse(str);
-  } catch (e) {
-    console.warn('[safeJsonParse] failed:', e.message);
-    return fallback;
-  }
+  try { if (typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
+  catch (e) { console.warn('[safeJsonParse] failed:', e.message); return fallback; }
 }
-function sanitizeMessage(msg) {
-  return String(msg == null ? '' : msg).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 500);
-}
+function sanitizeMessage(msg) { return String(msg == null ? '' : msg).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 500); }
 async function readResponse(res) {
   const text = await res.text().catch(() => '');
-  let data = null;
-  let parseError = null;
+  let data = null, parseError = null;
   try { data = text ? JSON.parse(text) : null; } catch (e) { parseError = e; }
   return { data, text, parseError, ok: res.ok, status: res.status };
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],
+// ▼ v1.5: 経験学習用
+aiExperience:null,humanRoundLog:null};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='home-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence')$('concurrent-count').textContent='同接: '+m.count+'人'}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -50,7 +36,7 @@ function openGameLog(){renderGameLog();$('game-log-dialog').showModal()}
 
 function addDebugLog(type,data){if(!g.matchDebugLog)g.matchDebugLog=[];const entry={t:Date.now(),type};if(data&&typeof data==='object'){for(const k in data){try{entry[k]=data[k]}catch{}}}g.matchDebugLog.push(entry);if(g.matchDebugLog.length>3000)g.matchDebugLog.shift()}
 function sanitizeForLog(obj,depth=0){if(depth>6)return'[deep]';if(obj===null||obj===undefined)return obj;const t=typeof obj;if(t==='function')return'[fn]';if(t==='string'||t==='number'||t==='boolean')return obj;if(Array.isArray(obj))return obj.map(x=>sanitizeForLog(x,depth+1));if(t==='object'){const out={};for(const k in obj){try{out[k]=sanitizeForLog(obj[k],depth+1)}catch{out[k]='[err]'}}return out}return String(obj)}
-function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid}:null;return{version:'v1.3',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating,elo:g.account.elo}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog}}
+function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating,elo:g.account.elo}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
 function downloadLog(){try{const payload=buildLogPayload();const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const ts=new Date().toISOString().replace(/[:.]/g,'-');a.href=url;a.download='napoleon-log-'+ts+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);toast('ログをダウンロードしました')}catch(e){console.error('download failed',e);toast('ダウンロードに失敗しました: '+e.message)}}
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards}}
@@ -124,16 +110,40 @@ async function loadTopStrategy(){
     if (!res.ok) return;
     const { data } = await readResponse(res);
     if (data && data.strategy && typeof data.strategy === 'object') {
-      for (const [k, v] of Object.entries(data.strategy)) {
-        if (typeof v === 'number' && Number.isFinite(v)) g.aiWeights[k] = v;
-      }
-      if (data.source === 'learned' && data.generation) {
-        console.log('[AI] Top strategy loaded: gen ' + data.generation + ', avgRating: ' + data.avgRating);
-      }
+      for (const [k, v] of Object.entries(data.strategy)) if (typeof v === 'number' && Number.isFinite(v)) g.aiWeights[k] = v;
+      if (data.source === 'learned' && data.generation) console.log('[AI] Top strategy loaded: gen ' + data.generation + ', avgRating: ' + data.avgRating);
     }
-  } catch (e) {
-    console.warn('[loadTopStrategy]', e?.message);
-  }
+  } catch (e) { console.warn('[loadTopStrategy]', e?.message); }
+}
+
+// ▼ v1.5: 経験マップ読み込み
+async function loadExperience(){
+  try {
+    const res = await fetch('/api/ai/experience');
+    if (!res.ok) return;
+    const { data } = await readResponse(res);
+    if (data && typeof data === 'object') g.aiExperience = data;
+  } catch (e) { console.warn('[loadExperience]', e?.message); }
+}
+
+// ▼ v1.5: 局終了時に /api/ai/learn へ送信
+function sendRoundLearn(wonRound) {
+  try {
+    if (!g.humanRoundLog) return;
+    const payload = {
+      round: g.round,
+      wonRound: wonRound === true,
+      bid: g.humanRoundLog.bid || null,
+      call: g.humanRoundLog.call || null,
+      playDecisions: (g.humanRoundLog.playDecisions || []).filter(d => d.won !== null)
+    };
+    if (!payload.bid && !payload.call && !payload.playDecisions.length) return;
+    fetch('/api/ai/learn', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(() => loadExperience()).catch(() => {});
+  } catch (e) { console.warn('[sendRoundLearn]', e?.message); }
 }
 
 function startLocal(){
@@ -141,6 +151,9 @@ function startLocal(){
   g.matchDebugLog=[];
   addDebugLog('match-start',{botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights)});
   loadTopStrategy();
+  // ▼ v1.5: 経験マップを非同期ロード（初局は null でも可）
+  g.aiExperience = null;
+  loadExperience();
   g.localLog=[];
   $('game-log-open').classList.remove('hidden');
   $('game-log-count').textContent='0';
@@ -174,6 +187,8 @@ function roundStart(){
   clearTimers();clearTimeout(g.auction?.humanTimeout);
   g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];
   g.allianceKittyPoints=0;
+  // ▼ v1.5: 局ごとの人間ログをリセット
+  g.humanRoundLog = { round: g.round, bid: null, call: null, playDecisions: [] };
   g.players.forEach(p=>{p.roundTaken=[];p.roundPoints=0;});
   addGameLog('配札');
   $('round-label').textContent=g.round;
@@ -310,30 +325,23 @@ function humanBid(){
   scheduleComBids()
 }
 
-// ▼ v1.3: shouldBid に一本化（旧：comBid の独自実装を削除）
+// ▼ v1.5: shouldBid に経験を渡す
 function comBid(i,version){
   if(g.phase!=='auction'||version!==g.auction.version||!g.auction.active.includes(i))return;
   if(g.auction.botSeen[i]>=version)return;
   if(g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==i)return;
   g.auction.botSeen[i]=version;
-
   const h=g.players[i].hand;
   const currentBids=(g.bidHistory||[]).filter(b=>b.round===g.round);
-  const aiBid=shouldBid(h,g.auction.high,g.auction.minBid||13,g.aiWeights,currentBids,i);
-
-  // 立ち必須（オールラスト強制・requiredBidSeat指定）の判定
+  const aiBid=shouldBid(h,g.auction.high,g.auction.minBid||13,g.aiWeights,currentBids,i,g.aiExperience);
   const forcedStand=(g.auction.requiredBidSeat===i)||(g.round>=10&&g.auction.high.num<13&&g.auction.active[0]===i);
-
   let b=null;
   if(aiBid&&beatsBid(aiBid.num,aiBid.suit)){
     b={num:aiBid.num,suit:aiBid.suit,solo:aiBid.solo===true};
   }else if(forcedStand){
-    const suit=strongestSuit(h);
-    const num=g.auction.minBid||13;
-    if(beatsBid(num,suit))b={num,suit,solo:false};
-    else b={num,suit,solo:false}; // 強制時はそのまま（オールラストは min 13なので基本通る）
+    const suit=strongestSuit(h);const num=g.auction.minBid||13;
+    b={num,suit,solo:false};
   }
-
   if(b){
     g.bidHistory.push({round:g.round,seat:i,num:b.num,suit:b.suit,solo:b.solo});
     addGameLog(name(i)+'が'+b.num+b.suit+(b.solo?'（ひとり立ち）':'')+'を宣言');
@@ -349,8 +357,6 @@ function comBid(i,version){
     drawAuction();drawSeats();scheduleComBids();
     return;
   }
-
-  // 承認パス
   if(g.auction.high.player===i){if(g.auction.active.length===1)auctionEnd(i);return}
   removeBid(i);addGameLog(name(i)+'が承認');message(name(i)+'は承認しました');
   if(!g.auction.active.length){auctionEnd(-1);return}
@@ -373,6 +379,14 @@ function auctionEnd(w){
   const suit=g.auction.high.suit;
   const strengthAtBid=suit==='NT'?ntHandStrength(g.players[w].hand,g.aiWeights):colorStrength(g.players[w].hand,suit,g.aiWeights);
   g.contract={nap:w,num:g.auction.high.num,suit,deputy:-1,solo:false,revealTrickNo:null,strengthAtBid};
+  // ▼ v1.5: 人間が NAP を勝ち取った場合、宣言経験を記録
+  if (w === 0 && g.humanRoundLog) {
+    g.humanRoundLog.bid = {
+      strengthKey: quantizeStrength(strengthAtBid),
+      trumpType: suit === 'NT' ? 'NT' : 'color',
+      num: g.auction.high.num
+    };
+  }
   addDebugLog('contract-set',{nap:w,num:g.contract.num,suit:g.contract.suit,strengthAtBid,highBid:g.auction.high,bidHistory:sanitizeForLog(g.bidHistory)});
   addGameLog(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言を確定');
   phase('浮き札の交換');
@@ -409,6 +423,13 @@ function callUi(){
     g.contract.call={suit:s,rank:r,id:s+r};
     g.contract.solo=g.players[0].hand.some(c=>c.suit===s&&c.rank===r);
     if(forceSolo&&!g.contract.solo)return;
+    // ▼ v1.5: 人間が指名した場合、指名経験を記録
+    if (g.contract.nap === 0 && g.humanRoundLog) {
+      g.humanRoundLog.call = {
+        callId: s+r,
+        trumpSuit: g.contract.suit === 'NT' ? 'NT' : g.contract.suit
+      };
+    }
     addGameLog('副官指名 '+s+r+(g.contract.solo?'（ひとり立ち'+(forceSolo?'・強制':'')+'）':''));
     g.contract.revealedCall=false;
     g.kitty=[];
@@ -420,7 +441,6 @@ function callUi(){
   update()
 }
 
-// ▼ v1.3: 捨て札と副官指名を ai-tactics に一本化
 function kittyStart(){
   let n=g.contract.nap;
   g.players[n].hand.push(...g.kitty);
@@ -446,7 +466,7 @@ function kittyStart(){
     };
     return
   }
-  // COM: ai-tactics の chooseDiscard を使用
+  // COM: ai-tactics を使用
   const drop=chooseDiscard(g.players[n].hand,g.contract.suit);
   g.players[n].hand=g.players[n].hand.filter(c=>!drop.some(x=>x.id===c.id));
   g.kitty=drop;
@@ -460,8 +480,8 @@ function kittyStart(){
     g.contract.solo=true;
     addGameLog(name(n)+'が副官指名 '+g.contract.call.id+'（ひとり立ち・強制）');
   }else{
-    // COM: ai-tactics の chooseDeputyCall を使用
-    const call=chooseDeputyCall(g.players[n].hand,g.kitty,g.contract.suit,g.botLevel,g.contract.num,g.aiWeights);
+    // ▼ v1.5: 経験を渡す
+    const call=chooseDeputyCall(g.players[n].hand,g.kitty,g.contract.suit,g.botLevel,g.contract.num,g.aiWeights,g.aiExperience);
     g.contract.call={suit:call.suit,rank:call.rank,id:call.id};
     g.contract.solo=g.players[n].hand.some(c=>c.id===g.contract.call.id);
     addGameLog(name(n)+'が副官指名 '+g.contract.call.id+(g.contract.solo?'（ひとり立ち）':''));
@@ -548,62 +568,30 @@ function cardPower(entry,trick,trickNo=0){
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
   let black=s=>s==='♣'||s==='♠';
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
-  if(trickNo>0){
-    if(allSame&&c.suit===led&&c.rank==='2')return 6000;
-  }
+  if(trickNo>0){if(allSame&&c.suit===led&&c.rank==='2')return 6000}
   if(trump(c))return 5000+RANKS.indexOf(c.rank);
   if(c.suit===led)return 3000+RANKS.indexOf(c.rank);
   return 1000+RANKS.indexOf(c.rank);
 }
-
 function winning(trick=g.trick){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo)>cardPower(best,trick,g.trickNo)?e:best,trick[0])}
 
-// ▼ v1.3: chooseLocalBotCard / chooseLocalDeputyCard を廃止し、ai-tactics の chooseCardToPlay / chooseDeputyCard に一本化
+// ▼ v1.5: 経験を ctx に渡す
 function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
-  const contract={
-    nap:g.contract.nap,
-    num:g.contract.num,
-    suit:g.contract.suit,
-    solo:g.contract.solo,
-    deputy:g.contract.deputy,
-    revealedCall:g.contract.revealedCall,
-    call:g.contract.call
-  };
+  const contract={nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,revealedCall:g.contract.revealedCall,call:g.contract.call};
   const trick=g.trick.map(x=>({seat:x.player,card:x.card}));
   const deputyPts=(!g.contract.solo&&g.contract.deputy>=0)?(g.points[g.contract.deputy]||0):0;
   const currentNapPoints=(g.points[g.contract.nap]||0)+deputyPts;
-  const ctx={
-    hand,legal:legalCardsList,trick,
-    trickNo:g.trickNo,
-    contract,
-    playedCards:g.playedCards,
-    voids:g.voids,
-    seat,
-    deputy:g.contract.deputy,
-    params:g.aiWeights,
-    call:g.contract.call,
+  const ctx={hand,legal:legalCardsList,trick,trickNo:g.trickNo,contract,playedCards:g.playedCards,voids:g.voids,seat,deputy:g.contract.deputy,params:g.aiWeights,call:g.contract.call,
     isMySideNap:seat===contract.nap||(contract.revealedCall&&seat===contract.deputy),
-    isCurrentNapWinning:false,
-    isRevealed:contract.revealedCall,
-    isNapLeading:false,
-    lastSeat:trick.length===4,
-    currentNapPoints
-  };
+    isCurrentNapWinning:false,isRevealed:contract.revealedCall,isNapLeading:false,lastSeat:trick.length===4,currentNapPoints,
+    experience:g.aiExperience};
   if(trick.length>0){
     const winner=winningEntry(contract,g.trickNo,trick);
-    if(winner){
-      ctx.isCurrentNapWinning=winner.seat===contract.nap||(!contract.solo&&winner.seat===contract.deputy);
-      ctx.isNapLeading=trick[0].seat===contract.nap;
-    }
+    if(winner){ctx.isCurrentNapWinning=winner.seat===contract.nap||(!contract.solo&&winner.seat===contract.deputy);ctx.isNapLeading=trick[0].seat===contract.nap}
   }
-  try{
-    return chooseCardToPlay(ctx);
-  }catch(e){
-    addDebugLog('chooseCardToPlay-error',{seat,message:e?.message,stack:e?.stack});
-    return null;
-  }
+  try{return chooseCardToPlay(ctx)}catch(e){addDebugLog('chooseCardToPlay-error',{seat,message:e?.message,stack:e?.stack});return null}
 }
 
 function playTurn(){
@@ -621,12 +609,7 @@ function playTurn(){
       if(g.phase!=='play')return;
       const seat=g.active;
       const legalCardsList=legal(seat);
-      if(!legalCardsList.length){
-        addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});
-        g.active=(seat+4)%5;
-        playTurn();
-        return;
-      }
+      if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+4)%5;playTurn();return}
       const chosen=computeBotPlay(seat);
       if(chosen&&legalCardsList.some(x=>x.id===chosen.id)){
         logPlayDecision(seat,chosen,{reason:'ai-tactics'},buildPlayContext(seat));
@@ -661,6 +644,14 @@ function play(i,c){
   h.splice(h.findIndex(x=>x.id===c.id),1);
   g.trick.push({player:i,card:c});
   g.playedCards.push({suit:c.suit,rank:c.rank,id:c.id,seat:i});
+  // ▼ v1.5: 人間 (seat 0) のプレイ判断を記録
+  if (i === 0 && g.humanRoundLog && g.contract) {
+    const role = g.contract.nap === 0 ? 'nap' : (!g.contract.solo && g.contract.revealedCall && g.contract.deputy === 0 ? 'dep' : 'ally');
+    const phase = trickPhaseOf(g.trickNo);
+    const pointsTier = pointsTierOf(g.trick.filter(e => POINT.includes(e.card.rank)).length);
+    const rankTier = rankTierOf(c.rank);
+    g.humanRoundLog.playDecisions.push({ trickNo: g.trickNo, role, phase, pointsTier, rankTier, won: null });
+  }
   if(g.trick.length>1){const ledSuit=g.trick[0].card.suit;if(c.suit!==ledSuit){if(!g.voids[i])g.voids[i]={};g.voids[i][ledSuit]=true}}
   if(artfulCard({player:i,card:c},g.trick)){g.matchStats[i].artAttempts=(g.matchStats[i].artAttempts||0)+1}
   const reveal=g.contract.call?.id===c.id&&!g.contract.revealedCall;
@@ -694,6 +685,15 @@ function play(i,c){
   addGameLog(name(w)+'が第'+(g.trickNo+1)+'勝負を獲得（'+taken.length+'点札）');
   g.lastTrickWinner=w;
   g.active=w;
+  // ▼ v1.5: トリック完了時に人間の play decision を勝敗確定
+  if (g.humanRoundLog && g.contract) {
+    const humanIsNapSide = g.contract.nap === 0 || (!g.contract.solo && g.contract.deputy === 0);
+    const napTeamWon = w === g.contract.nap || (!g.contract.solo && w === g.contract.deputy);
+    const humanWonTrick = humanIsNapSide ? napTeamWon : !napTeamWon;
+    for (const d of g.humanRoundLog.playDecisions) {
+      if (d.trickNo === g.trickNo && d.won === null) d.won = humanWonTrick;
+    }
+  }
   const alliancePointsRaw=g.points.reduce((n,points,i)=>n+(i!==g.contract.nap&&(g.contract.solo||i!==g.contract.deputy)?points:0),0);
   const alliancePoints=alliancePointsRaw+(g.allianceKittyPoints||0);
   const napPoints=g.points.reduce((n,points,i)=>n+(i===g.contract.nap||!g.contract.solo&&i===g.contract.deputy?points:0),0);
@@ -712,14 +712,17 @@ function finishGame(){
   const exact=success&&pts===c.num;
   const bold=c.num>=15;
   const napStat=g.matchStats[c.nap];
-  napStat.declarerAttempts++;
-  napStat.bidTotal+=c.num;
+  napStat.declarerAttempts++;napStat.bidTotal+=c.num;
   if(success)napStat.declarerSuccesses++;
   napStat.exactAttempts++;
   if(exact)napStat.exactSuccesses++;
   if(bold){napStat.boldAttempts++;if(exact)napStat.boldSuccesses++}
   if(c.solo){napStat.soloAttempts++;if(success)napStat.soloSuccesses++}
   if(!c.solo&&c.deputy!==c.nap){const depStat=g.matchStats[c.deputy];depStat.deputyAttempts++;if(success)depStat.deputySuccesses++}
+
+  // ▼ v1.5: 局終了時に経験学習データを送信（wonRound = NAP軍が勝ったか）
+  sendRoundLearn(success);
+
   try{const lastPlacePenalty=g.matchScores.filter(s=>s>g.matchScores[0]).length===4?1:0;fetch('/api/ai/report',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({napoleonWon:(()=>{const cc=g.contract,side=cc.solo?[cc.nap]:[cc.nap,cc.deputy],pts=side.reduce((n,i)=>n+g.points[i],0);return pts>=cc.num})(),exactWins:g.roundArt.filter(a=>a>=4).length,lastPlacePenalty})}).then(r=>r.json()).then(d=>{if(d.weights)Object.assign(g.aiWeights,d.weights)}).catch(()=>{})}catch{}
   let finalRule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null,sign=success?1:-1,unit=Math.max(0,c.num-12)*g.mult*(g.round>=10?2:1),scores=Array(5).fill(0);
   scores[c.nap]=sign*unit*(c.solo?4:2);
@@ -736,12 +739,31 @@ function finishGame(){
   const format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),final=g.round>=10&&!replayAllLast;
   const ratings=final?matchRatingChanges(g.matchScores,g.matchArt,[g.rate,1000,1000,1000,1000],g.matchStats,g.matchContracts):null;
   let eloDelta=0;
-  if(final&&ratings){
-    const oppElos=[1000,1000,1000,1000];
-    eloDelta=computeEloDelta(g.elo,oppElos,ratings[0].outcome);
-    g.elo=Math.max(100,g.elo+eloDelta);
+  if(final&&ratings){const oppElos=[1000,1000,1000,1000];eloDelta=computeEloDelta(g.elo,oppElos,ratings[0].outcome);g.elo=Math.max(100,g.elo+eloDelta)}
+  if(final){g.rate+=ratings[0].delta;$('rating-label').textContent=g.rate}
+  // ▼ v1.5: マッチ終了 + 人間が1位 なら勝利パターンも送信
+  if (final && ratings) {
+    try {
+      const rank = 1 + g.matchScores.filter(s => s > g.matchScores[0]).length;
+      const wonMatch = rank === 1;
+      const playerWonAsNap = g.matchContracts.filter(mc => mc.nap === 0 && mc.napWin).length;
+      const playerWonAsDeputy = g.matchContracts.filter(mc => !mc.solo && mc.deputy === 0 && mc.nap !== 0 && mc.napWin).length;
+      const playerWonAsAlly = g.matchContracts.filter(mc => mc.nap !== 0 && (mc.solo || mc.deputy !== 0) && !mc.napWin).length;
+      const avgBid = g.matchContracts.filter(mc => mc.nap === 0).reduce((n, mc) => n + mc.num, 0) / Math.max(1, g.matchContracts.filter(mc => mc.nap === 0).length);
+      const exactWins = g.matchContracts.filter(mc => mc.nap === 0 && mc.napWin && mc.points === mc.num).length;
+      const soloWins = g.matchContracts.filter(mc => mc.nap === 0 && mc.solo && mc.napWin).length;
+      fetch('/api/ai/report', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          wonMatch, playerRank: rank, aiWeights: g.aiWeights,
+          playerWonAsNap, playerWonAsDeputy, playerWonAsAlly,
+          avgBid, exactWins, soloWins, matchRatingDelta: ratings[0].delta,
+          contracts: g.matchContracts, userId: g.account?.id || null, playerId: g.account?.id || 'guest'
+        })
+      }).catch(() => {});
+    } catch (e) { console.warn('[learn match-end]', e?.message); }
   }
-  if(final){g.rate+=ratings[0].delta;$('rating-label').textContent=g.rate;}
   phase('結果');
   addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚（捨て札連合軍'+g.allianceKittyPoints+'pt）');
   message(replayAllLast?'プレーオフ':success?'NAP TEAM WINS':'ALLIANCE WINS');
@@ -827,10 +849,7 @@ async function loadStrategyLab(){
     const insights = (insightRes.data && Array.isArray(insightRes.data.insights)) ? insightRes.data.insights : [];
     const generations = Array.isArray(genRes.data) ? genRes.data : [];
     renderStrategyLab({strategies,insights,generations});
-  }catch(e){
-    console.warn('[loadStrategyLab]', e?.message);
-    wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>';
-  }
+  }catch(e){console.warn('[loadStrategyLab]', e?.message);wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>'}
 }
 
 function renderStrategyLab({strategies,insights,generations}){
@@ -856,10 +875,7 @@ function renderStrategyLab({strategies,insights,generations}){
     const doRun=async()=>{
       const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});
       const { data, text, parseError } = await readResponse(res);
-      if (parseError) {
-        const preview = sanitizeMessage(text).slice(0,180);
-        throw new Error(`HTTP ${res.status} JSON解析失敗: ${sanitizeMessage(parseError.message)} / 本文先頭: ${preview}`);
-      }
+      if (parseError) { const preview = sanitizeMessage(text).slice(0,180); throw new Error(`HTTP ${res.status} JSON解析失敗: ${sanitizeMessage(parseError.message)} / 本文先頭: ${preview}`); }
       if(!res.ok||!data||data.error)throw new Error(sanitizeMessage(data?.error)||`HTTP ${res.status}`);
       return data;
     };
@@ -878,10 +894,8 @@ function renderStrategyLab({strategies,insights,generations}){
       status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;
       await loadTopStrategy();
       await loadStrategyLab()
-    }catch(e){
-      status.textContent='実行できませんでした: '+sanitizeMessage(e?.message||'ネットワークエラー');
-      console.warn('[run-selfplay]', e);
-    }finally{btn.disabled=false}
+    }catch(e){status.textContent='実行できませんでした: '+sanitizeMessage(e?.message||'ネットワークエラー');console.warn('[run-selfplay]', e);}
+    finally{btn.disabled=false}
   };
   $('refresh-strategy').onclick=()=>loadStrategyLab();
 }
@@ -949,12 +963,7 @@ function renderOnline(){
   const isAuctionOrDiscard = (s.phase === 'auction' || s.phase === 'discard');
   const kittySource = isAuctionOrDiscard ? (s.kitty || []) : (s.revealedKitty || []);
   const kittyCards = kittySource.map(c => cardEl(c));
-  if (kittyCards.length > 0) {
-    const label = document.createElement('span');
-    label.className = 'open-label';
-    label.textContent = s.phase === 'auction' ? 'オープン' : '捨て札';
-    kittyCards.unshift(label);
-  }
+  if (kittyCards.length > 0) { const label = document.createElement('span'); label.className = 'open-label'; label.textContent = s.phase === 'auction' ? 'オープン' : '捨て札'; kittyCards.unshift(label); }
   $('kitty-view').replaceChildren(...kittyCards);
   const clock=$('auction-clock');
   if(['prep','call','discard','play'].includes(s.phase)&&s.deadline){clock.classList.remove('hidden');clock.textContent=Math.max(0,Math.ceil((s.deadline-Date.now())/1000))+'秒'}else clock.classList.add('hidden');
