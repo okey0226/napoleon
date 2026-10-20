@@ -1,0 +1,17 @@
+name = "napoleon"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "napoleon-db"
+database_id = "97c86f88-a3bc-4adb-b3c5-f1e986db26b4"
+
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/ws", "/room"]
+
+# ▼ ここが最重要：1時間おき（毎時0分）に自動で自己対戦を回す設定 ▼
+[triggers]
+crons = ["0 * * * *"]
