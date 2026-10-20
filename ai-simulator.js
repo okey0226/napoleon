@@ -1,6 +1,17 @@
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
+// ▼ 安全なJSONパース用ヘルパー
+function safeJsonParse(str, fallback = null) {
+  try {
+    if (typeof str !== 'string' || !str.trim()) return fallback;
+    return JSON.parse(str);
+  } catch (e) {
+    console.warn('JSON parse failed:', e.message, 'Input:', typeof str === 'string' ? str.slice(0, 200) : str);
+    return fallback;
+  }
+}
+
 function computeBidStrength(hand, suit, params) {
   if (suit === 'NT') return ntHandStrength(hand, params);
   return colorStrength(hand, suit, params);
@@ -198,8 +209,16 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     existing = results || [];
   } catch { }
 
-  const baseline = existing.length ? existing.map(r => JSON.parse(r.params || '{}')) : [defaultStrategy()];
-  const generation = existing.length ? Math.max(...existing.map(r => r.generation || 0)) + 1 : 1;
+  // ▼ 修正: 安全なJSONパースでベースラインを構築
+  const baseline = existing.length
+    ? existing.map(r => {
+        const parsed = safeJsonParse(r.params, null);
+        if (parsed && typeof parsed === 'object') return parsed;
+        return defaultStrategy();
+      })
+    : [defaultStrategy()];
+
+  const generation = existing.length ? Math.max(...existing.map(r => Number(r.generation) || 0)) + 1 : 1;
 
   const challengers = baseline.map(b => mutateStrategy(b, 0.2));
   while (challengers.length < 5) challengers.push(mutateStrategy(baseline[0] || defaultStrategy(), 0.15));
@@ -283,9 +302,12 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   try {
     const top = await env.DB.prepare("SELECT params FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first();
     if (top) {
-      await env.DB.prepare(
-        "INSERT INTO ai_weights(id,weights,games,updated_at) VALUES(1,?,1,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET weights=excluded.weights, games=games+1, updated_at=CURRENT_TIMESTAMP"
-      ).bind(JSON.stringify(JSON.parse(top.params))).run();
+      const parsedTop = safeJsonParse(top.params, null);
+      if (parsedTop && typeof parsedTop === 'object') {
+        await env.DB.prepare(
+          "INSERT INTO ai_weights(id,weights,games,updated_at) VALUES(1,?,1,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET weights=excluded.weights, games=games+1, updated_at=CURRENT_TIMESTAMP"
+        ).bind(JSON.stringify(parsedTop)).run();
+      }
     }
   } catch (e) { console.error("failed to update ai_weights", e); }
 
@@ -301,7 +323,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 export function generateInsights(strategies) {
   if (!strategies || !strategies.length) return [];
   const base = defaultStrategy();
-  const top = { ...base, ...JSON.parse(strategies[0].params || '{}') };
+  // ▼ 修正: 安全なJSONパース
+  const topParams = safeJsonParse(strategies[0].params, {}) || {};
+  const top = { ...base, ...topParams };
   const names = {
     bidThreshold: '立ち強度', riskTolerance: 'リスク許容', leadAggression: 'リード積極性',
     followAggression: 'フォロー積極性', trumpBonus: '切り札評価', mightyBonus: 'マイティ評価',
