@@ -453,6 +453,7 @@ export default {
       } catch (e) { console.error('setup-db error:', e.message, e.stack); return response({ error: e.message, stack: e.stack }, { status: 500 }); }
     }
 
-    return new Response('Not found', { status: 404 });
+    // API以外のリクエストは静的ファイル（HTML/JS/CSS）を返す
+    return env.ASSETS.fetch(request);
   }
 };
