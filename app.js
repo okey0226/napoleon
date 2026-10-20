@@ -1,4 +1,30 @@
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
+
+// ▼ 安全なJSONパース・メッセージサニタイズ
+function safeJsonParse(str, fallback = null) {
+  try {
+    if (typeof str !== 'string' || !str.trim()) return fallback;
+    return JSON.parse(str);
+  } catch (e) {
+    console.warn('[safeJsonParse] failed:', e.message);
+    return fallback;
+  }
+}
+function sanitizeMessage(msg) {
+  return String(msg == null ? '' : msg).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 500);
+}
+async function readResponse(res) {
+  const text = await res.text().catch(() => '');
+  let data = null;
+  let parseError = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (e) {
+    parseError = e;
+  }
+  return { data, text, parseError, ok: res.ok, status: res.status };
+}
+
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
 const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
@@ -44,10 +70,8 @@ function chooseBotCall(hand, discard, trump, level, bid) {
   const used = new Set([...hand, ...discard].map(c => c.id));
   const p = g.aiWeights;
 
-  // 優先1: ♠A（未所持なら確実に味方化）
   if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
 
-  // 優先2: 正J（切札J）を優先、次に裏J
   if (trump !== 'NT') {
     const sc = sameColorSuitOf(trump);
     const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
@@ -61,7 +85,6 @@ function chooseBotCall(hand, discard, trump, level, bid) {
     }
   }
 
-  // 優先3: A vs 2 スコアリング
   let bestCard = null;
   let bestScore = -Infinity;
 
@@ -74,7 +97,6 @@ function chooseBotCall(hand, discard, trump, level, bid) {
     const isShort = len <= 2;
     const isLong = len >= 4;
 
-    // 弱点スートのA
     if (!hasA && !used.has(suit + 'A')) {
       let score = 0.5;
       if (len >= 1 && len <= 3) score += (p.aceWeakSuitBonus ?? 0.3);
@@ -84,7 +106,6 @@ function chooseBotCall(hand, discard, trump, level, bid) {
       if (score > bestScore) { bestScore = score; bestCard = { suit, rank: 'A', id: suit + 'A' }; }
     }
 
-    // セイム2の2
     if (!has2 && !hasA && !used.has(suit + '2')) {
       let score = (p.sameTwoAceCounter ?? 0.3);
       if (isShort) score += (p.sameTwoShortBonus ?? 0.4);
@@ -97,7 +118,6 @@ function chooseBotCall(hand, discard, trump, level, bid) {
 
   if (bestCard) return bestCard;
 
-  // フォールバック
   const cands = [];
   for (const s of SUITS) for (const r of RANKS) {
     if (!used.has(s + r) && (trump === 'NT' || s !== trump)) cands.push({ suit: s, rank: r, id: s + r });
@@ -124,7 +144,23 @@ function isSoloForced(){if(g.round<10||!g.contract)return false;const ranked=g.m
 
 function isSafeToCashAce(suit,seat){if(!g.contract)return false;if(suit==='♠')return true;if(g.trickNo>0){const twoPlayed=g.playedCards.some(c=>c.id===suit+'2');if(!twoPlayed){const anyVoid=[0,1,2,3,4].some(s=>s!==seat&&g.voids[s]&&g.voids[s][suit]);if(!anyVoid)return false}}if(g.contract.suit!=='NT'&&g.contract.suit!==suit){for(let s=0;s<5;s++){if(s===seat)continue;if(g.contract.revealedCall){if(s===g.contract.nap||(!g.contract.solo&&s===g.contract.deputy))continue}else{if(s===g.contract.nap)continue}if(g.voids[s]&&g.voids[s][suit])return false}}return true}
 
-async function loadTopStrategy(){try{const res=await fetch('/api/ai/top-strategy');if(!res.ok)return;const data=await res.json();if(data.strategy){Object.assign(g.aiWeights,data.strategy);if(data.source==='learned'&&data.generation){console.log('[AI] Top strategy loaded: gen '+data.generation+', avgRating: '+data.avgRating)}}}catch(e){}}
+async function loadTopStrategy(){
+  try {
+    const res = await fetch('/api/ai/top-strategy');
+    if (!res.ok) return;
+    const { data } = await readResponse(res);
+    if (data && data.strategy && typeof data.strategy === 'object') {
+      for (const [k, v] of Object.entries(data.strategy)) {
+        if (typeof v === 'number' && Number.isFinite(v)) g.aiWeights[k] = v;
+      }
+      if (data.source === 'learned' && data.generation) {
+        console.log('[AI] Top strategy loaded: gen ' + data.generation + ', avgRating: ' + data.avgRating);
+      }
+    }
+  } catch (e) {
+    console.warn('[loadTopStrategy]', e?.message);
+  }
+}
 
 function startLocal(){
   closeOnline();
@@ -471,16 +507,13 @@ function playStart(){
 function legal(i){let h=g.players[i].hand;if(!g.trick.length)return h;let suit=g.trick[0].card.suit,follow=h.filter(c=>c.suit===suit);return follow.length?follow:h}
 function trump(c){return g.contract.suit!=='NT'&&c.suit===g.contract.suit}
 
-// ▼ 修正: マイティ・正J・裏Jは1トリック目から有効、セイム2のみ2トリック目から有効
 function cardPower(entry,trick,trickNo=0){
   let c=entry.card,led=trick[0].card.suit,allSame=trick.every(x=>x.card.suit===led),mighty=trick.some(x=>x.card.id==='♠A');
-  // マイティ・正J・裏Jは1トリック目から有効
   if(mighty&&c.id==='♥Q')return 10000;
   if(c.id==='♠A')return 9000;
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit===g.contract.suit)return 8000;
   let black=s=>s==='♣'||s==='♠';
   if(g.contract.suit!=='NT'&&c.rank==='J'&&c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))return 7000;
-  // セイム2のみ2トリック目から有効
   if(trickNo>0){
     if(allSame&&c.suit===led&&c.rank==='2')return 6000;
   }
@@ -491,9 +524,6 @@ function cardPower(entry,trick,trickNo=0){
 
 function winning(trick=g.trick){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo)>cardPower(best,trick,g.trickNo)?e:best,trick[0])}
 
-// ==========================================
-// 判定理由付き: ローカルbotのカード選択
-// ==========================================
 function chooseLocalBotCard(i){
   const h=legal(i),level=g.botLevel||3;
   const low=cards=>cards.slice().sort((a,b)=>cardValue(a)-cardValue(b))[0];
@@ -541,7 +571,6 @@ function chooseLocalBotCard(i){
   return{card:c,reason:'default-low',detail:{points,trickLength:g.trick.length}}
 }
 
-// ▼ 修正: 高カード温存ロジック
 function chooseLocalDeputyCard(i,h){
   const contract=g.contract,nap=contract.nap,call=contract.call,trumpSuit=contract.suit,ownSide='nap',led=g.trick[0]?.card.suit,lastSeat=g.trick.length===4;
   const sideOf=seat=>seat===nap||(!contract.solo&&(contract.revealedCall?seat===contract.deputy:g.players[seat].hand.some(c=>c.id===call?.id)))?'nap':'alliance';
@@ -556,13 +585,11 @@ function chooseLocalDeputyCard(i,h){
   if(!g.trick.length){
     const napHand=g.players[nap].hand,napHasTrump=trumpSuit!=='NT'&&napHand.some(card=>card.suit===trumpSuit),napAces=SUITS.filter(suit=>napHand.some(card=>card.suit===suit&&card.rank==='A'));
     
-    // NAPがそのスートで勝てそうか判定
     const napCanWinSuit = (suit) => {
       const napHasVoid = g.voids[nap]?.[suit];
       return (napHasVoid && napHasTrump) || napAces.includes(suit);
     };
 
-    // 自分が持っているAを温存するか、確実に勝ちに行くか
     const secureAces = h.filter(c => c.rank === 'A' && !isRole(c));
     if (secureAces.length) {
       const ace = secureAces[0];
@@ -758,13 +785,13 @@ async function getUser(){try{g.user=await window.websim?.getUser?.()||null}catch
 
 function renderAccount(){if(!g.account)return;$('profile-open').textContent='PROFILE';$('account-chip').textContent='ID '+g.account.id+' · '+g.account.rating;$('account-chip').classList.remove('hidden');$('account-chip').onclick=records;$('profile-form').classList.add('hidden');$('profile-summary').classList.remove('hidden');$('profile-summary').innerHTML='<div class="profile-emblem">♠</div><div><div class="eyebrow">PLAYER CARD</div><div class="profile-summary-id">'+g.account.id+'</div><div class="micro-copy">RATE '+g.account.rating+' · '+g.account.wins+'W · '+g.account.losses+'L</div></div><button type="button" id="open-my-page" class="secondary-button">VIEW PROFILE</button>';document.getElementById('open-my-page').onclick=records}
 
-async function account(path){const id=$('account-id').value.trim(),password=$('account-password').value;if(!id||!password){toast('IDとパスワードを入力してください');return}try{const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,password})});const d=await r.json();if(!r.ok)throw Error(d.error||'処理できませんでした');g.account=d;g.sessionToken=d.sessionToken||null;if(d.sessionToken)localStorage.setItem('napoleon_session',d.sessionToken);renderAccount();toast(path.endsWith('register')?'登録しました':'ログインしました');records()}catch(e){toast(e.message)}}
+async function account(path){const id=$('account-id').value.trim(),password=$('account-password').value;if(!id||!password){toast('IDとパスワードを入力してください');return}try{const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,password})});const { data: d, parseError } = await readResponse(r);if(!r.ok || parseError)throw Error((d && d.error) || (parseError && 'JSON parse error') || '処理できませんでした');g.account=d;g.sessionToken=d.sessionToken||null;if(d.sessionToken)localStorage.setItem('napoleon_session',d.sessionToken);renderAccount();toast(path.endsWith('register')?'登録しました':'ログインしました');records()}catch(e){toast(sanitizeMessage(e.message)||'処理できませんでした')}}
 
-async function loadAccount(){const token=localStorage.getItem('napoleon_session');if(!token){renderHomeRating({unregistered:true});return}try{const r=await fetch('/api/account/me',{headers:{'x-session-token':token}});if(r.ok){g.account=await r.json();g.sessionToken=token;renderAccount();renderHomeRating(g.account)}else if(r.status===401||r.status===404){localStorage.removeItem('napoleon_session');g.sessionToken=null;renderHomeRating({unregistered:true})}}catch{}}
+async function loadAccount(){const token=localStorage.getItem('napoleon_session');if(!token){renderHomeRating({unregistered:true});return}try{const r=await fetch('/api/account/me',{headers:{'x-session-token':token}});const { data } = await readResponse(r);if(r.ok && data){g.account=data;g.sessionToken=token;renderAccount();renderHomeRating(g.account)}else if(r.status===401||r.status===404){localStorage.removeItem('napoleon_session');g.sessionToken=null;renderHomeRating({unregistered:true})}}catch{}}
 
 function renderHomeRating(d){const box=$('my-rating');if(!box)return;if(!d){box.classList.add('hidden');return}box.classList.remove('hidden');if(d.unregistered){box.innerHTML='<div class="rating-signup"><div><div class="eyebrow">YOUR RATING</div><h2>BUILD YOUR RATING</h2><p>REGISTER TO TRACK YOUR RATE AND MATCH HISTORY.</p></div><button id="rating-register" class="secondary-button">REGISTER</button></div>';$('rating-register').onclick=()=>screen('profile-screen');return}box.classList.add('hidden')}
 
-async function loadLeaderboard(){const section=$('leaderboard'),box=$('rating-leaders');if(!section||!box)return;try{const response=await fetch('/api/rating/top');if(!response.ok)throw Error();const leaders=(await response.json()).slice(0,g.leaderboardExpanded?50:3);if(!leaders.length){section.classList.add('hidden');return}section.classList.remove('hidden');box.classList.toggle('expanded',g.leaderboardExpanded);$('show-ranking').textContent=g.leaderboardExpanded?'TOP 3':'VIEW TOP 50';$('show-ranking').setAttribute('aria-expanded',String(g.leaderboardExpanded));box.innerHTML=leaders.map((player,i)=>{const username=String(player.username||player.id||'player'),href='https://websim.com/@'+encodeURIComponent(username),avatar='https://images.websim.com/avatar/'+encodeURIComponent(username);return'<article class="rating-leader rank-'+(i+1)+'"><span class="leader-place">'+String(i+1).padStart(2,'0')+'</span><a class="leader-person" href="'+escapeHTML(href)+'" target="_blank" rel="noopener noreferrer"><img src="'+escapeHTML(avatar)+'" alt="" loading="lazy"><span>@'+escapeHTML(username)+'</span></a><strong>'+Number(player.rating||0)+'<small> pt</small></strong></article>'}).join('')}catch{section.classList.add('hidden')}}
+async function loadLeaderboard(){const section=$('leaderboard'),box=$('rating-leaders');if(!section||!box)return;try{const response=await fetch('/api/rating/top');if(!response.ok)throw Error();const { data: leaders } = await readResponse(response);if(!Array.isArray(leaders))throw Error();const list = leaders.slice(0,g.leaderboardExpanded?50:3);if(!list.length){section.classList.add('hidden');return}section.classList.remove('hidden');box.classList.toggle('expanded',g.leaderboardExpanded);$('show-ranking').textContent=g.leaderboardExpanded?'TOP 3':'VIEW TOP 50';$('show-ranking').setAttribute('aria-expanded',String(g.leaderboardExpanded));box.innerHTML=list.map((player,i)=>{const username=String(player.username||player.id||'player'),href='https://websim.com/@'+encodeURIComponent(username),avatar='https://images.websim.com/avatar/'+encodeURIComponent(username);return'<article class="rating-leader rank-'+(i+1)+'"><span class="leader-place">'+String(i+1).padStart(2,'0')+'</span><a class="leader-person" href="'+escapeHTML(href)+'" target="_blank" rel="noopener noreferrer"><img src="'+escapeHTML(avatar)+'" alt="" loading="lazy"><span>@'+escapeHTML(username)+'</span></a><strong>'+Number(player.rating||0)+'<small> pt</small></strong></article>'}).join('')}catch{section.classList.add('hidden')}}
 
 function escapeHTML(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
@@ -774,8 +801,8 @@ async function records(){
   if(!token){$('records-content').innerHTML='<p class="subcopy">REGISTER TO UNLOCK PLAYER STATS.</p><button id="records-register" class="primary-button">プレイヤー登録</button>';$('records-register').onclick=()=>screen('profile-screen');return}
   try{
     const response=await fetch('/api/account/me',{headers:{'x-session-token':token}});
-    if(!response.ok)throw Error('UNABLE TO LOAD PLAYER STATS.');
-    const d=await response.json();
+    const { data: d, parseError } = await readResponse(response);
+    if(!response.ok || parseError || !d)throw Error('UNABLE TO LOAD PLAYER STATS.');
     g.account=d;renderAccount();
     const perf=d.performance||{},prec=d.precision||{},ally=d.allyFeed||{},bold=d.boldBid||{},art=d.artRate||{},ms=d.matchStats||{};
     const napAtt=Number(perf.declarer_attempts)||0,napWins=Number(perf.declarer_successes)||0,napWinRate=napAtt?napWins/napAtt:0;
@@ -809,7 +836,25 @@ async function records(){
   }catch(e){$('records-content').textContent='UNABLE TO LOAD PLAYER STATS.'}
 }
 
-async function loadStrategyLab(){const wrap=$('strategy-content');if(!wrap)return;wrap.innerHTML='<p class="subcopy">戦略を読み込み中…</p>';try{const[stratRes,insightRes,genRes]=await Promise.all([fetch('/api/ai/strategies?limit=10'),fetch('/api/ai/insights'),fetch('/api/ai/generations')]);const strategies=stratRes.ok?await stratRes.json():[];const insights=insightRes.ok?(await insightRes.json()).insights||[]:[];const generations=genRes.ok?await genRes.json():[];renderStrategyLab({strategies,insights,generations})}catch(e){wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>'}}
+async function loadStrategyLab(){
+  const wrap=$('strategy-content');
+  if(!wrap)return;
+  wrap.innerHTML='<p class="subcopy">戦略を読み込み中…</p>';
+  try{
+    const[stratRes,insightRes,genRes]=await Promise.all([
+      fetch('/api/ai/strategies?limit=10').then(r=>readResponse(r)).catch(()=>({data:null})),
+      fetch('/api/ai/insights').then(r=>readResponse(r)).catch(()=>({data:null})),
+      fetch('/api/ai/generations').then(r=>readResponse(r)).catch(()=>({data:null}))
+    ]);
+    const strategies = Array.isArray(stratRes.data) ? stratRes.data : [];
+    const insights = (insightRes.data && Array.isArray(insightRes.data.insights)) ? insightRes.data.insights : [];
+    const generations = Array.isArray(genRes.data) ? genRes.data : [];
+    renderStrategyLab({strategies,insights,generations});
+  }catch(e){
+    console.warn('[loadStrategyLab]', e?.message);
+    wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>';
+  }
+}
 
 function renderStrategyLab({strategies,insights,generations}){
   const wrap=$('strategy-content');
@@ -818,18 +863,51 @@ function renderStrategyLab({strategies,insights,generations}){
   else{cards=strategies.slice(0,5).map((s,i)=>{const rank=i+1;const delta=Number(s.avg_rating_delta||0);return`<article class="strategy-card rank-${rank}"><div class="strategy-rank">#${rank}</div><div class="strategy-meta"><span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span><strong>${delta>0?'+':''}${delta.toFixed(2)} <small>pt/試合</small></strong></div><div class="strategy-roles"><span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span><span>DEP ${(Number(s.deputy_win_rate)*100).toFixed(1)}%</span><span>ALLI ${(Number(s.alliance_win_rate)*100).toFixed(1)}%</span></div></article>`}).join('')}
   const paramNames={bidThreshold:'立ち強度',riskTolerance:'リスク許容',leadAggression:'リード積極性',followAggression:'フォロー積極性',trumpBonus:'切り札評価',mightyBonus:'マイティ評価',safeAceWeight:'A温存',roleCardPreservation:'役札温存',deputyFeedBias:'副官の絵札回し'};
   let paramRows='<p class="subcopy" style="padding:10px 0;">データなし</p>';
-  if(strategies.length>0){const params=JSON.parse(strategies[0].params||'{}');paramRows=Object.entries(params).map(([k,v])=>`<div class="param-row"><span>${paramNames[k]||k}</span><b>${Number(v).toFixed(2)}</b></div>`).join('')}
+  if(strategies.length>0){
+    const parsedParams = safeJsonParse(strategies[0].params, null);
+    if (parsedParams && typeof parsedParams === 'object') {
+      const rows = Object.entries(parsedParams).map(([k,v])=>`<div class="param-row"><span>${escapeHTML(paramNames[k]||k)}</span><b>${Number(v).toFixed(2)}</b></div>`).join('');
+      if (rows) paramRows = rows;
+    }
+  }
   const insightCards=insights.length>0?insights.map(ins=>`<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
   const genRows=generations.length>0?generations.slice(-10).map(gg=>{const delta=Number(gg.best_delta||0);return`<div class="gen-row"><span>Gen ${gg.generation}</span><b>${delta>0?'+':''}${delta.toFixed(2)}pt</b><small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small></div>`}).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
   wrap.innerHTML=`<div class="strategy-actions"><button id="run-selfplay" class="primary-button">自己対戦を実行（100局）</button><button id="refresh-strategy" class="secondary-button">再読み込み</button><span id="selfplay-status" class="micro-copy"></span></div><section class="strategy-section"><h2>TOP STRATEGIES（レート上昇順）</h2><div class="strategy-list">${cards}</div></section><section class="strategy-section"><h2>最上位戦略のパラメータ</h2><div class="param-table">${paramRows}</div></section><section class="strategy-section"><h2>学習インサイト</h2><div class="insight-list">${insightCards}</div></section><section class="strategy-section"><h2>世代推移</h2><div class="gen-list">${genRows}</div></section>`;
   $('run-selfplay').onclick=async()=>{
     const btn=$('run-selfplay'),status=$('selfplay-status');
     btn.disabled=true;status.textContent='自己対戦100局を実行中…（数秒かかります）';
-    const doRun=async()=>{const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});const data=await res.json();if(!res.ok||data.error)throw new Error(data.error||`HTTP ${res.status}`);return data};
-    try{let data;try{data=await doRun()}catch(e){if(e.message&&e.message.includes('no such table')){status.textContent='初回データベースセットアップ中…';const setupRes=await fetch('/api/setup-db');if(!setupRes.ok)throw new Error('データベースの初期化に失敗しました');status.textContent='自己対戦100局を実行中…（再試行）';data=await doRun()}else{throw e}}
-      status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;await loadTopStrategy();await loadStrategyLab()
-    }catch(e){status.textContent='実行できませんでした: '+(e.message||'ネットワークエラー')}
-    finally{btn.disabled=false}
+    const doRun=async()=>{
+      const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})});
+      const { data, text, parseError } = await readResponse(res);
+      if (parseError) {
+        const preview = sanitizeMessage(text).slice(0,180);
+        throw new Error(`HTTP ${res.status} JSON解析失敗: ${sanitizeMessage(parseError.message)} / 本文先頭: ${preview}`);
+      }
+      if(!res.ok||!data||data.error)throw new Error(sanitizeMessage(data?.error)||`HTTP ${res.status}`);
+      return data;
+    };
+    try{
+      let data;
+      try{
+        data=await doRun()
+      }catch(e){
+        if(e.message&&e.message.includes('no such table')){
+          status.textContent='初回データベースセットアップ中…';
+          const setupRes=await fetch('/api/setup-db');
+          if(!setupRes.ok)throw new Error('データベースの初期化に失敗しました');
+          status.textContent='自己対戦100局を実行中…（再試行）';
+          data=await doRun()
+        }else{
+          throw e
+        }
+      }
+      status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`;
+      await loadTopStrategy();
+      await loadStrategyLab()
+    }catch(e){
+      status.textContent='実行できませんでした: '+sanitizeMessage(e?.message||'ネットワークエラー');
+      console.warn('[run-selfplay]', e);
+    }finally{btn.disabled=false}
   };
   $('refresh-strategy').onclick=()=>loadStrategyLab();
 }
