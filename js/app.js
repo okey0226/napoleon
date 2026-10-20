@@ -3,6 +3,9 @@
 // 依存: js/core.js, js/debug.js, js/screens/*
 // 役割: エントリポイント。画面フック登録と全イベント配線
 // ============================================================
+window.onerror = function(message, source, lineno, colno, error) {
+  alert("JSエラー:\n" + message + "\n\n場所: " + source + "\n行: " + lineno);
+};
 import { $, g, screen, setScreenHooks, closeOnline, code, toast } from './core.js';
 import { openGameLog, downloadLog, addDebugLog } from './debug.js';
 import { startLocal } from './screens/game-local.js';
