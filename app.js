@@ -1,6 +1,5 @@
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
-// ▼ 安全なJSONパース・メッセージサニタイズ
 function safeJsonParse(str, fallback = null) {
   try {
     if (typeof str !== 'string' || !str.trim()) return fallback;
@@ -26,7 +25,7 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
+const g={round:1,rate:1000,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:1.0,ntSuitLengthBonus:1.5,ntAceWeight:2.0,ntMightyBonus:3.5,highBidNtThreshold:16,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5},players:[],kitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}]};let toastTimer;
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='home-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence')$('concurrent-count').textContent='同接: '+m.count+'人'}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -39,12 +38,9 @@ function addGameLog(text){if(!g.localLog)return;g.localLog.push({round:g.round,t
 function renderGameLog(){const list=$('game-log-list');list.innerHTML=g.localLog?.length?g.localLog.map(entry=>'<article class="game-log-entry"><small>第'+entry.round+'局</small><span>'+escapeHTML(entry.text)+'</span></article>').join(''):'<p class="game-log-empty">まだログはありません</p>';list.scrollTop=list.scrollHeight}
 function openGameLog(){renderGameLog();$('game-log-dialog').showModal()}
 
-// ==========================================
-// デバッグログ基盤
-// ==========================================
 function addDebugLog(type,data){if(!g.matchDebugLog)g.matchDebugLog=[];const entry={t:Date.now(),type};if(data&&typeof data==='object'){for(const k in data){try{entry[k]=data[k]}catch{}}}g.matchDebugLog.push(entry);if(g.matchDebugLog.length>3000)g.matchDebugLog.shift()}
 function sanitizeForLog(obj,depth=0){if(depth>6)return'[deep]';if(obj===null||obj===undefined)return obj;const t=typeof obj;if(t==='function')return'[fn]';if(t==='string'||t==='number'||t==='boolean')return obj;if(Array.isArray(obj))return obj.map(x=>sanitizeForLog(x,depth+1));if(t==='object'){const out={};for(const k in obj){try{out[k]=sanitizeForLog(obj[k],depth+1)}catch{out[k]='[err]'}}return out}return String(obj)}
-function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo}:null;return{version:'v1',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog}}
+function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo}:null;return{version:'v1.1',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog}}
 function downloadLog(){try{const payload=buildLogPayload();const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const ts=new Date().toISOString().replace(/[:.]/g,'-');a.href=url;a.download='napoleon-log-'+ts+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);toast('ログをダウンロードしました')}catch(e){console.error('download failed',e);toast('ダウンロードに失敗しました: '+e.message)}}
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards}}
@@ -53,9 +49,44 @@ function phase(t){const roundTag=g.playoff?'プレーオフ · ':g.round===9?'�
 function name(i){return i===0?'あなた':g.players[i]?.name||'COM '+i}
 function color(s){return s==='♥'||s==='♦'?'red':''}
 function cardEl(c,extra){const e=document.createElement('div');e.className='card '+(c?color(c.suit):'')+' '+(extra||'');if(c)e.innerHTML='<span class="rank">'+c.rank+'</span><span class="suit">'+c.suit+'</span>';return e}
-function renderContractInfo(){const box=$('contract-info');if(!box)return;const contract=g.contract;if(contract){box.classList.remove('hidden');const bid=document.createElement('strong');bid.className='contract-bid';bid.textContent='宣言 '+contract.num+contract.suit;const label=document.createElement('span');label.className='contract-call-label';label.textContent='副官札';box.replaceChildren(bid,label,contract.call?cardEl(contract.call,'contract-card'):Object.assign(document.createElement('span'),{className:'contract-pending',textContent:'指名前'}));return}box.classList.add('hidden');box.replaceChildren()}
+
+function renderContractInfo(){
+  const box=$('contract-info');
+  if(!box)return;
+  const contract=g.contract;
+  if(contract){
+    box.classList.remove('hidden');
+    const bid=document.createElement('strong');
+    bid.className='contract-bid';
+    bid.textContent='宣言 '+contract.num+contract.suit;
+    const label=document.createElement('span');
+    label.className='contract-call-label';
+    label.textContent='副官札';
+    const parts=[bid,label,contract.call?cardEl(contract.call,'contract-card'):Object.assign(document.createElement('span'),{className:'contract-pending',textContent:'指名前'})];
+    // ▼ v1.1: 捨て札の連合軍共有得点を表示
+    if(g.allianceKittyPoints>0){
+      const kp=document.createElement('span');
+      kp.className='contract-call-label';
+      kp.textContent='捨て札 '+g.allianceKittyPoints+'pt(連合軍)';
+      parts.push(kp);
+    }
+    box.replaceChildren(...parts);
+    return
+  }
+  box.classList.add('hidden');
+  box.replaceChildren()
+}
+
 function showKittyBacks(){$('kitty-view').replaceChildren(cardEl(null,'card-back'),cardEl(null,'card-back'))}
 function showOpenKitty(){const label=document.createElement('span');label.className='open-label';label.textContent='オープン';$('kitty-view').replaceChildren(label,...g.kitty.map(c=>cardEl(c)))}
+function showDiscardedKitty(){
+  const label=document.createElement('span');
+  label.className='open-label';
+  label.textContent='捨て札';
+  const cards=(g.kitty||[]).map(c=>cardEl(c));
+  if(cards.length)$('kitty-view').replaceChildren(label,...cards);
+  else $('kitty-view').replaceChildren();
+}
 function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r,id:s+r})));for(let i=d.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
@@ -65,7 +96,6 @@ function sameColorSuitOf(trump) {
   return SUITS.find(s => s !== trump && black.includes(s) === black.includes(trump));
 }
 
-// ▼ 修正: 正J優先
 function chooseBotCall(hand, discard, trump, level, bid) {
   const used = new Set([...hand, ...discard].map(c => c.id));
   const p = g.aiWeights;
@@ -185,6 +215,7 @@ function startLocal(){
   g.lastTrickWinner=null;
   g.playedCards=[];
   g.voids=[{},{},{},{},{}];
+  g.allianceKittyPoints=0; // v1.1
   g.matchStats=Array.from({length:5},()=>({declarerAttempts:0,declarerSuccesses:0,exactAttempts:0,exactSuccesses:0,boldAttempts:0,boldSuccesses:0,soloAttempts:0,soloSuccesses:0,deputyAttempts:0,deputySuccesses:0,artAttempts:0,dramaticPlays:0,allyFeedAttempts:0,allyFeedSuccesses:0,bidTotal:0}));
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
@@ -194,11 +225,34 @@ function startLocal(){
   roundStart()
 }
 
-function roundStart(){clearTimers();clearTimeout(g.auction?.humanTimeout);g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];g.players.forEach(p=>{p.roundTaken=[];p.roundPoints=0;});addGameLog('配札');$('round-label').textContent=g.round;$('auction-panel').classList.add('hidden');$('call-panel').classList.add('hidden');$('play-panel').classList.add('hidden');$('result-panel').classList.add('hidden');$('trick-cards').replaceChildren();$('kitty-view').replaceChildren();$('auction-clock').classList.add('hidden');let d=deck();g.players.forEach(p=>{p.hand=d.splice(0,10);p.taken=[];sort(p.hand)});g.kitty=d.splice(0,2);renderHand();drawSeats();phase('配札');message('手札を確認しています');later(checkGreen,900)}
+function roundStart(){
+  clearTimers();clearTimeout(g.auction?.humanTimeout);
+  g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];
+  g.allianceKittyPoints=0; // v1.1: 局ごとにリセット
+  g.players.forEach(p=>{p.roundTaken=[];p.roundPoints=0;});
+  addGameLog('配札');
+  $('round-label').textContent=g.round;
+  $('auction-panel').classList.add('hidden');$('call-panel').classList.add('hidden');$('play-panel').classList.add('hidden');$('result-panel').classList.add('hidden');
+  $('trick-cards').replaceChildren();$('kitty-view').replaceChildren();$('auction-clock').classList.add('hidden');
+  let d=deck();
+  g.players.forEach(p=>{p.hand=d.splice(0,10);p.taken=[];sort(p.hand)});
+  g.kitty=d.splice(0,2);
+  renderHand();drawSeats();phase('配札');message('手札を確認しています');later(checkGreen,900)
+}
 
 function checkGreen(){let i=g.players.findIndex(p=>!p.hand.some(c=>FACE.includes(c.rank)));if(i>=0&&g.greenRedraws<5){if(i===0){phase('手札確認');message('10・J・Q・K・Aがありません。公開して配り直しますか？');$('play-panel').classList.remove('hidden');$('play-panel').innerHTML='<div class="panel-title">手札に10・J・Q・K・Aがありません</div><div class="panel-row"><button class="small-action" id="green-ok">公開して配り直す</button><button class="small-action pass" id="green-skip">続ける</button></div>';$('green-ok').onclick=()=>greenRedraw('あなた');$('green-skip').onclick=()=>{$('play-panel').classList.add('hidden');prepAuction()};return}greenRedraw(name(i));return}prepAuction()}
 
-function greenRedraw(n){addGameLog(n+'の手札条件により配り直し');g.greenRedraws++;g.mult=g.mult>=4?2:g.mult+1;$('play-panel').classList.add('hidden');const d=$('message-dialog');$('dialog-title').textContent='手札を配り直します';$('dialog-body').textContent=n+'の手札に10・J・Q・K・Aがありません。倍率は'+g.mult+'倍です。';$('dialog-ok').onclick=()=>{d.close();roundStart()};d.showModal()}
+function greenRedraw(n){
+  addGameLog(n+'の手札条件により配り直し');
+  g.greenRedraws++;
+  g.mult=g.mult+1; // v1.1: 単調増加（旧: g.mult>=4?2:g.mult+1）
+  $('play-panel').classList.add('hidden');
+  const d=$('message-dialog');
+  $('dialog-title').textContent='手札を配り直します';
+  $('dialog-body').textContent=n+'の手札に10・J・Q・K・Aがありません。倍率は'+g.mult+'倍です。';
+  $('dialog-ok').onclick=()=>{d.close();roundStart()};
+  d.showModal()
+}
 
 function finalAuctionRule(scores,mult=1){const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>a.score-b.score||a.seat-b.seat),cutoff=ranked[1]?.score??0,gap=Math.max(0,(ranked[1]?.score??0)-(ranked[0]?.score??0)),rawMin=13+Math.floor(gap/(6*Math.max(1,mult)));return{eligible:ranked.filter(x=>x.score<=cutoff).map(x=>x.seat),bottomSeat:ranked[0]?.seat,fourthSeat:ranked[1]?.seat,thirdSeat:ranked[2]?.seat,thirdScore:ranked[2]?.score,minBid:Math.min(20,rawMin),canOvertake:rawMin<=20}}
 
@@ -355,6 +409,7 @@ function auctionEnd(w){
 function callUi(){
   g.phase='call';
   phase('副官指名');
+  showDiscardedKitty(); // v1.1: 捨て札を公開
   const forceSolo=isSoloForced();
   message(forceSolo?'⚠ Case A破綻：一人立ちが必須です。自分の手札から指名札を選んでください':'捨て札を決めました。副官に指名するカードを選んでください');
   let p=$('call-panel');
@@ -393,7 +448,6 @@ function callUi(){
 
 function kittyStart(){
   let n=g.contract.nap;
-  $('kitty-view').replaceChildren();
   g.players[n].hand.push(...g.kitty);
   sort(g.players[n].hand);
   g.phase='discard';
@@ -407,8 +461,8 @@ function kittyStart(){
       if(g.discard.size!==2)return;
       g.kitty=g.players[0].hand.filter(c=>g.discard.has(c.id));
       const kittyPoints=g.kitty.filter(c=>POINT.includes(c.rank));
-      g.points[g.contract.nap]+=kittyPoints.length;
-      g.players[g.contract.nap].taken.push(...kittyPoints);
+      // ▼ v1.1: 捨て札得点は連合軍の共有得点として保持（NAP個人には加算しない）
+      g.allianceKittyPoints += kittyPoints.length;
       g.players[0].hand=g.players[0].hand.filter(c=>!g.discard.has(c.id));
       sort(g.players[0].hand);
       $('game-screen').classList.remove('discarding');
@@ -424,15 +478,15 @@ function kittyStart(){
   g.players[n].hand=g.players[n].hand.filter(c=>!drop.includes(c));
   g.kitty=drop;
   const kittyPoints=drop.filter(c=>POINT.includes(c.rank));
-  g.points[n]+=kittyPoints.length;
-  g.players[n].taken.push(...kittyPoints);
+  // ▼ v1.1: 捨て札得点は連合軍の共有得点
+  g.allianceKittyPoints += kittyPoints.length;
   sort(g.players[n].hand);
   const forceSolo=isSoloForced();
   if(forceSolo){const hand=g.players[n].hand;const chosen=hand.slice().sort((a,b)=>cardValue(a)-cardValue(b))[0];g.contract.call={suit:chosen.suit,rank:chosen.rank,id:chosen.id};g.contract.solo=true;addGameLog(name(n)+'が副官指名 '+g.contract.call.id+'（ひとり立ち・強制）')}
   else{g.contract.call=chooseBotCall(g.players[n].hand,g.kitty,g.contract.suit,g.botLevel,g.contract.num);g.contract.solo=g.players[n].hand.some(c=>c.id===g.contract.call.id);addGameLog(name(n)+'が副官指名 '+g.contract.call.id+(g.contract.solo?'（ひとり立ち）':''))}
   g.contract.revealedCall=false;
   g.kitty=[];
-  later(()=>announceCall(g.contract.call,playStart),700)
+  later(()=>{showDiscardedKitty();announceCall(g.contract.call,playStart);},700)
 }
 
 function cardValue(c){return RANKS.indexOf(c.rank)+(c.suit===g.contract.suit?3:0)}
@@ -498,6 +552,7 @@ function playStart(){
   phase('カードプレイ');
   message(name(c.nap)+'が先攻です');
   $('call-panel').classList.add('hidden');
+  // ▼ v1.1: 捨て札は公開済み。プレイ中は contract-info の点数表示に切り替え
   $('kitty-view').replaceChildren();
   renderHand();
   drawSeats();
@@ -724,7 +779,10 @@ function play(i,c){
   addGameLog(name(w)+'が第'+(g.trickNo+1)+'勝負を獲得（'+taken.length+'点札）');
   g.lastTrickWinner=w;
   g.active=w;
-  const alliancePoints=g.points.reduce((n,points,i)=>n+(i!==g.contract.nap&&(g.contract.solo||i!==g.contract.deputy)?points:0),0),napPoints=g.points.reduce((n,points,i)=>n+(i===g.contract.nap||!g.contract.solo&&i===g.contract.deputy?points:0),0);
+  // ▼ v1.1: 連合軍得点に捨て札共有得点を加算
+  const alliancePointsRaw=g.points.reduce((n,points,i)=>n+(i!==g.contract.nap&&(g.contract.solo||i!==g.contract.deputy)?points:0),0);
+  const alliancePoints=alliancePointsRaw+(g.allianceKittyPoints||0);
+  const napPoints=g.points.reduce((n,points,i)=>n+(i===g.contract.nap||!g.contract.solo&&i===g.contract.deputy?points:0),0);
   if(alliancePoints>20-g.contract.num||napPoints>=g.contract.num&&(g.contract.num===20||alliancePoints>=1)){finishGame();return}
   message(name(w)+'が場札を取りました');
   drawSeats();
@@ -737,8 +795,8 @@ function finishGame(){
   g.phase='result';
   const c=g.contract;
   const side=c.solo?[c.nap]:[c.nap,c.deputy];
-  const pts=side.reduce((n,i)=>n+g.points[i],0);
-  const success=pts>=c.num&&(c.num===20||pts<20);
+  const pts=side.reduce((n,i)=>n+g.points[i],0); // v1.1: NAP軍は個人の points のみ（捨て札共有は含まない）
+  const success=pts>=c.num&&(c.num===20||pts<20); // v1.1: 全部取り負け（仕様）
   const exact=success&&pts===c.num;
   const bold=c.num>=15;
   const napStat=g.matchStats[c.nap];
@@ -760,18 +818,18 @@ function finishGame(){
   if(c.solo)art[c.nap]+=success?4:2;
   if(!success&&!c.solo&&c.num-pts>=3){art[c.nap]-=2;art[c.deputy]-=1}
   for(let i=0;i<5;i++){g.matchScores[i]+=scores[i];g.matchArt[i]+=art[i]}
-  g.matchContracts.push({round:g.round,nap:c.nap,deputy:c.deputy,num:c.num,suit:c.suit,solo:c.solo,points:pts,napWin:success,revealTrickNo:c.revealTrickNo??null,takenPoints:g.players.map(p=>p.roundPoints||0)});
+  g.matchContracts.push({round:g.round,nap:c.nap,deputy:c.deputy,num:c.num,suit:c.suit,solo:c.solo,points:pts,napWin:success,revealTrickNo:c.revealTrickNo??null,takenPoints:g.players.map(p=>p.roundPoints||0),allianceKittyPoints:g.allianceKittyPoints});
   const replayAllLast=!!(finalRule&&scores[finalRule.bottomSeat]>0&&g.matchScores[finalRule.bottomSeat]===g.matchScores[finalRule.fourthSeat]);
   if(replayAllLast)g.playoff=true;
   const format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),final=g.round>=10&&!replayAllLast,ratings=final?finalRatingDeltas(g.matchScores,g.matchArt,[g.rate,1000,1000,1000,1000],g.matchStats,g.matchContracts):null;
   if(final){g.rate+=ratings[0].delta;$('rating-label').textContent=g.rate}
   phase('結果');
-  addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚');
+  addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚（捨て札連合軍'+g.allianceKittyPoints+'pt）');
   message(replayAllLast?'プレーオフ':success?'NAP TEAM WINS':'ALLIANCE WINS');
   drawSeats();
   const finalRows=final?g.players.map((_,i)=>{const result=ratings[i],b=result.breakdown,roundStr=(b.rounds||[]).map(r=>(r.role==='nap'?'N':r.role==='dep'?'D':'A')+r.bid+':'+format(r.delta)).join(' ');return'<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">SIM RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · '+roundStr+'</small></strong></div>'}).join(''):'',r=$('result-panel');
   r.classList.remove('hidden');
-  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · SOLO':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · SIM RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
+  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · SOLO':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · SIM RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
   $('next-round').onclick=()=>{r.classList.add('hidden');if(final){screen('home-screen');return}g.round++;g.mult=1;g.greenRedraws=0;roundStart()}
 }
 
@@ -963,6 +1021,8 @@ function renderOnline(){
   g.players=s.players.map(p=>({name:p.name,bot:p.bot,hand:Array(p.handCount).fill(null),taken:p.taken||[]}));
   g.active=s.players.findIndex(p=>p.active===s.active);
   g.contract=s.contract?{nap:s.contract.nap,deputy:s.contract.deputy,num:s.contract.num,suit:s.contract.suit,solo:s.contract.solo,call:s.contract.call,revealedCall:s.contract.revealedCall}:null;
+  // ▼ v1.1: 捨て札の連合軍共有得点を反映
+  g.allianceKittyPoints = Number(s.allianceKittyPoints)||0;
   phase(({prep:'競り準備',auction:'競り',call:'指名札選び','call-reveal':'指名カード確認',discard:'浮き札の交換',play:'カードプレイ',result:'結果','round-result':'局結果',redeal:'配り直し','trick-end':'勝負の結果'})[s.phase]||'対戦中');
   $('round-label').textContent=s.round||1;
   if(s.phase==='prep')announceRound(g.round,s.finalRoundRule);
@@ -971,8 +1031,16 @@ function renderOnline(){
   message(s.notice||'');
   drawOnlineSeats(s);
   $('trick-cards').replaceChildren(...s.trick.map(x=>{const e=cardEl(x.card,'trick-card played-seat-'+x.seat);e.title=s.players[x.seat].name;return e}));
-  const kittyCards=(s.kitty||[]).map(c=>cardEl(c));
-  if(['auction','call'].includes(s.phase)){const label=document.createElement('span');label.className='open-label';label.textContent=s.phase==='auction'?'オープン':'捨て札';if(kittyCards.length)kittyCards.unshift(label);else kittyCards.push(label,cardEl(null,'card-back'),cardEl(null,'card-back'))}
+  // ▼ v1.1: オープン中はオープン、それ以降は捨て札（公開）を表示
+  const isAuctionOrDiscard = (s.phase === 'auction' || s.phase === 'discard');
+  const kittySource = isAuctionOrDiscard ? (s.kitty || []) : (s.revealedKitty || []);
+  const kittyCards = kittySource.map(c => cardEl(c));
+  if (kittyCards.length > 0) {
+    const label = document.createElement('span');
+    label.className = 'open-label';
+    label.textContent = s.phase === 'auction' ? 'オープン' : '捨て札';
+    kittyCards.unshift(label);
+  }
   $('kitty-view').replaceChildren(...kittyCards);
   const clock=$('auction-clock');
   if(['prep','call','discard','play'].includes(s.phase)&&s.deadline){clock.classList.remove('hidden');clock.textContent=Math.max(0,Math.ceil((s.deadline-Date.now())/1000))+'秒'}else clock.classList.add('hidden');
@@ -1033,7 +1101,7 @@ function drawOnlineControls(s){
   if(s.phase==='call'&&s.active===g.mySeat){
     const p=$('call-panel');p.classList.remove('hidden');
     let suit=g.onlineSuit||'♠',rank=g.onlineRank||'A';
-    const discarded=(s.kitty||[]).some(c=>c.suit===suit&&c.rank===rank);
+    const discarded=(s.revealedKitty||[]).some(c=>c.suit===suit&&c.rank===rank);
     p.innerHTML='<div class="panel-title">副官に指名するカード</div><div class="call-card-preview"><div id="online-call-preview"></div><div><div class="micro-copy">今回の指名</div><strong>'+suit+rank+'</strong><div class="call-warning">'+(discarded?'捨て札は指名できません':'自分の手札ならひとり立ち')+'</div></div></div><div class="panel-row">'+['♣','♦','♥','♠'].map(x=>'<button class="suit-choice '+(x===suit?'selected ':'')+(x==='♥'||x==='♦'?'red':'')+'" data-csuit="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row call-ranks">'+RANKS.map(x=>'<button class="small-action call-rank-choice '+(x===rank?'selected':'')+'" data-crank="'+x+'">'+x+'</button>').join('')+'</div><div class="panel-row"><button id="online-call" class="small-action" '+(discarded?'disabled':'')+'>決定</button></div>';
     p.querySelector('#online-call-preview').replaceChildren(cardEl({suit,rank},'call-preview-card'));
     p.querySelectorAll('[data-csuit]').forEach(b=>b.onclick=()=>{g.onlineSuit=b.dataset.csuit;drawOnlineControls(s)});
@@ -1068,7 +1136,8 @@ function showOnlineResult(s){
     content='<div class="eyebrow">MATCH COMPLETE</div><h2>RATE BREAKDOWN</h2>'+summary+'<div class="round-score-list">'+rows+'</div><button id="online-home" class="primary-button">BACK TO MENU</button>'
   }else{
     const rows=s.players.map((p,i)=>{const score=scores.find(x=>x.seat===i),role=score?.role==='ナポレオン'?'NAP':score?.role==='副官'?'DEPUTY':'ALLY';return'<div class="round-score-row"><span>'+p.name+' · '+role+'</span><strong>ROUND Δ '+format(score?.delta||0)+'<small>TOTAL '+format((result.matchScores||[])[i]||0)+'</small></strong></div>'}).join('');
-    content='<div class="eyebrow">ROUND '+String(result.round).padStart(2,'0')+' · RESULT</div><h2>'+(result.made?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+result.bid+result.suit+' · POINTS '+result.points+(result.solo?' · SOLO':'')+'</p><div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div><button id="next-online-round" class="primary-button">'+(result.allLastReplay?'ALL-LAST AGAIN':'NEXT ROUND')+'</button>'
+    const kittyInfo = Number(result.allianceKittyPoints)>0 ? '<p style="font-size:11px;color:#e8d7a9;">捨て札: '+result.allianceKittyPoints+'pt（連合軍共有）</p>' : '';
+    content='<div class="eyebrow">ROUND '+String(result.round).padStart(2,'0')+' · RESULT</div><h2>'+(result.made?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+result.bid+result.suit+' · POINTS '+result.points+(result.solo?' · SOLO':'')+'</p>'+kittyInfo+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div><button id="next-online-round" class="primary-button">'+(result.allLastReplay?'ALL-LAST AGAIN':'NEXT ROUND')+'</button>'
   }
   r.innerHTML=content;
   if(final)$('online-home').onclick=()=>{closeOnline();screen('home-screen')};
