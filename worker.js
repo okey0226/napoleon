@@ -2,6 +2,17 @@ import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand,
 import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 
+// ▼ 安全なJSONパース用ヘルパー
+function safeJsonParse(str, fallback = null) {
+  try {
+    if (typeof str !== 'string' || !str.trim()) return fallback;
+    return JSON.parse(str);
+  } catch (e) {
+    console.warn('worker JSON parse failed:', e.message, 'Input:', typeof str === 'string' ? str.slice(0, 200) : str);
+    return fallback;
+  }
+}
+
 export const schema = [
   "CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, player_id TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta INTEGER NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
@@ -31,9 +42,13 @@ async function loadBotStrategy(env) {
   try {
     const w = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
     if (w?.weights) {
-      __cachedBotStrategy = { ...defaultStrategy(), ...JSON.parse(w.weights) };
-      __cachedBotStrategyTime = Date.now();
-      return __cachedBotStrategy;
+      // ▼ 修正: 安全なJSONパース
+      const parsed = safeJsonParse(w.weights, null);
+      if (parsed && typeof parsed === 'object') {
+        __cachedBotStrategy = { ...defaultStrategy(), ...parsed };
+        __cachedBotStrategyTime = Date.now();
+        return __cachedBotStrategy;
+      }
     }
   } catch (e) { console.warn("bot strategy load failed", e); }
   return defaultStrategy();
@@ -162,7 +177,7 @@ export default {
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         try {
           const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first();
-          const weights = JSON.parse(w?.weights || '{}'); const lr = 0.005;
+          const weights = safeJsonParse(w?.weights, {}) || {}; const lr = 0.005;
           if (body.napoleonWon) { weights.bidThreshold = Math.max(2.0, (weights.bidThreshold || 4.0) - lr); weights.leadAggression = Math.min(1.0, (weights.leadAggression || 0.6) + lr); weights.followAggression = Math.min(1.0, (weights.followAggression || 0.4) + lr * 0.5); }
           else { weights.bidThreshold = Math.min(6.0, (weights.bidThreshold || 4.0) + lr); weights.leadAggression = Math.max(0.2, (weights.leadAggression || 0.6) - lr); weights.followAggression = Math.max(0.1, (weights.followAggression || 0.4) - lr * 0.5); }
           if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance || 0.5) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus || 0.6) + lr * 0.2); }
@@ -173,11 +188,28 @@ export default {
           return response({ ok: true, weights, games: (w?.games || 0) + 1 });
         } catch (e) { return response({ error: "save failed" }, 500); }
       }
-      if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") { try { const body = await request.json().catch(() => ({})); const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000)); const result = await runSelfPlayBatch(env, count); __cachedBotStrategy = null; __cachedBotStrategyTime = 0; return response({ ok: true, ...result }); } catch (e) { return response({ error: "self-play failed: " + (e.message || "unknown") }, 500); } }
+      if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") {
+        try {
+          const body = await request.json().catch(() => ({}));
+          const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000));
+          const result = await runSelfPlayBatch(env, count);
+          __cachedBotStrategy = null;
+          __cachedBotStrategyTime = 0;
+          return response({ ok: true, ...result });
+        } catch (e) {
+          // ▼ 修正: スタックトレースを含む詳細なエラーレスポンス
+          console.error('Self-play error:', e);
+          return response({
+            error: "self-play failed: " + (e.message || "unknown"),
+            stack: e.stack,
+            details: e.details || null
+          }, 500);
+        }
+      }
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
       if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
       if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
-      if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: JSON.parse(row.params), avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); const parsed = safeJsonParse(row.params, null); if (!parsed) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: parsed, avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
       return new Response("Not found", { status: 404 });
     } catch (err) {
       return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 });
@@ -276,7 +308,6 @@ function matchRatingChanges(scores, art, ratings, matchStats, contracts) {
         if (c.napWin && c.revealTrickNo != null) roundDelta += Math.max(0, c.revealTrickNo - 3) * 0.3;
       } else {
         role = 'ally';
-        // ▼ 連合軍評価: 勝敗とNAP阻止をシンプルに評価
         roundDelta = (c.napWin ? -0.5 : 0.5) + (c.points < c.num ? 0.3 : 0);
       }
       delta += Number.isFinite(roundDelta) ? roundDelta : 0;
