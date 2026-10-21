@@ -166,7 +166,7 @@ export function computeEloDelta(playerElo, opponentElos, outcome) {
 }
 
 // ========================================
-// v1.5: 経験学習ヘルパー
+// 経験学習ヘルパー
 // ========================================
 export const EXP_MIN_SAMPLES = 3;
 export const EXP_MAX_BLEND = 0.6;
