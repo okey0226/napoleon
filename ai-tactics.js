@@ -79,7 +79,6 @@ export function ntHandStrength(hand, params) {
     if (cards.some(c => c.rank === 'Q')) score += 0.6;
     if (cards.length >= 4) score += (params?.ntSuitLengthBonus ?? 1.2) * (cards.length - 3) * 0.5;
 
-    // v1.3: same-2 脆弱性。A持ちで2を持っていないスートは、相手の same-2 に負けるリスク。
     if (cards.some(c => c.rank === 'A') && !cards.some(c => c.rank === '2')) {
       const len = cards.length;
       if (len >= 3) score -= 0.5;
@@ -98,7 +97,6 @@ export function ntHandStrength(hand, params) {
   return score;
 }
 
-// v1.3: solo 用強度。色 bid と同様にトランプペナルティを課す。
 export function soloAdjustedStrength(hand, trump) {
   const base = handStrength(hand);
   const trumps = hand.filter(c => c.suit === trump);
@@ -114,7 +112,6 @@ export function soloAdjustedStrength(hand, trump) {
 // ==========================================
 // 3. 立ち判断
 // ==========================================
-// v1.3: 相手の高 bid は「相手が強い手」の証拠。自分は相対的に弱いので減点方向に修正。
 function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
   if (!Array.isArray(currentBids)) return base;
@@ -142,7 +139,6 @@ function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, t
   return base + adj * (1 + (params.opponentInferenceWeight ?? 0.4) * 0.5);
 }
 
-// v1.3: 旧式は p*(1-p)*diff 項が p*(1-p)*(-diff) と打ち消し合い、bid 枚数選択が無効化されていた。
 function computeBidEV(p, num, strength, params) {
   if (!Number.isFinite(p)) p = 0.5;
   const maxHonest = findMaxHonestBid(strength);
@@ -189,10 +185,8 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     return true;
   };
 
-  // v1.3: スート順序をランダム化して ♣ 偏重を抑制
   const SUIT_ORDER = SUITS.slice().sort(() => Math.random() - 0.5);
 
-  // ---- 通常(color)候補 ----
   for (const suit of SUIT_ORDER) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
@@ -207,7 +201,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     }
   }
 
-  // ---- NT候補 ----
   const ntStr = ntHandStrength(hand, params);
   const ntAdj = adjustStrengthForOpponents(ntStr, 'NT', currentBids, params, mySeat, 'nt');
   const ntStrengthKey = quantizeStrength(ntStr);
@@ -221,7 +214,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
   }
 
-  // ---- v1.3: solo候補は厳格ゲート（トランプ4枚以上） ----
   for (const suit of SUIT_ORDER) {
     const trumps = hand.filter(c => c.suit === suit);
     if (trumps.length < 4) continue;
@@ -339,9 +331,36 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
   return cands[0] || { suit: '♠', rank: 'A', id: '♠A' };
 }
 
-export function chooseSoloCall(hand) {
+// ==========================================
+// 5b. ソロ指名 —「副官指名として自然な札」を自分の手札から選ぶ
+// ==========================================
+// ひとり立ちを隠すため、通常の副官指名で使われる強い札 (♠A / 正J / 裏J / 非トランプA / 非トランプ2)
+// を自分の手札から優先して指名する。これにより、観測者には「通常の副官指名」と区別がつかない。
+export function chooseSoloCall(hand, trump = 'NT') {
   if (!Array.isArray(hand) || !hand.length) return { suit: "♠", rank: "A", id: "♠A" };
-  return hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+  // 1) ♠A（マイティ）
+  if (hand.some(c => c.id === '♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
+  // 2) 正J / 裏J
+  if (trump !== 'NT') {
+    if (hand.some(c => c.id === trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
+    const sc = sameColorSuitOf(trump);
+    if (sc && hand.some(c => c.id === sc + 'J')) return { suit: sc, rank: 'J', id: sc + 'J' };
+  }
+  // 3) 非トランプA（弱スート優先 — 自然な副官指名パターン）
+  const aces = hand.filter(c => c.rank === 'A' && (trump === 'NT' || c.suit !== trump));
+  if (aces.length) {
+    aces.sort((a, b) => SV[a.suit] - SV[b.suit]);
+    return { suit: aces[0].suit, rank: 'A', id: aces[0].id };
+  }
+  // 4) 非トランプ2（次点の副官指名）
+  const twos = hand.filter(c => c.rank === '2' && (trump === 'NT' || c.suit !== trump));
+  if (twos.length) {
+    twos.sort((a, b) => SV[a.suit] - SV[b.suit]);
+    return { suit: twos[0].suit, rank: '2', id: twos[0].id };
+  }
+  // 5) フォールバック: 手札で最も弱いランク
+  const fallback = hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+  return { suit: fallback.suit, rank: fallback.rank, id: fallback.id };
 }
 
 // ==========================================
@@ -519,13 +538,11 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
-  // v1.3: NT での same-2 見落としを修正。NT でも same-2 は発動するので、安全A判定を統一。
   const safeAces = legal.filter(c => {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
 
     if (c.id === '♠A') {
       if (contract.suit === 'NT') {
-        // NT の ♠A はマイティなので特別扱い（♥Q が出ていなければ安全）
         const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
         if (hqOut) return true;
         return countVoidSeats(voids, '♠', seat) === 0;
@@ -652,7 +669,6 @@ export function chooseDeputyCard(ctx) {
     if (secureAces.length) {
       const ace = secureAces[0];
       if (napCanWinSuit(ace.suit)) {
-        // v1.3: 中盤以降は A を早期キャッシュ（相手の trump 準備より先に確定させる）
         if (trickNo >= 4) return ace;
         const lowCards = legal.filter(c => c.rank !== 'A' && c.suit !== contract.suit);
         if (lowCards.length) return low(lowCards);
@@ -798,7 +814,6 @@ function chooseAllianceFollow(ctx) {
     return lowX(ctx, legal);
   }
 
-  // v1.3: 終盤の高得点トリックでは same-2 を優先して確定させる
   if (trickNo >= 3 && pointsInTrick >= 3) {
     const sameTwo = winningCards.find(c => c.rank === '2' && c.suit === ledSuit);
     if (sameTwo) return sameTwo;
