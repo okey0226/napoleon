@@ -65,17 +65,34 @@ export function colorStrength(hand, trump, params) {
   return base + trumpPenalty + trumps.length * 0.5 + (params?.trumpBonus || 0.6) * trumps.length * 0.2;
 }
 
+// ▼ 修正: NT手札強度をカラーと同スケールに。バランス型評価に変更。
+//   - 長スートボーナスを半減（(len-3) * 0.5倍）
+//   - 分布ペナルティを追加（void/singleton/6+枚スート）
+//   - 完全バランス（4-3-3-3等）にボーナス
+//   → 6枚切り札集中のハンドはNTで低評価、A/K/Q分散のハンドはNTで高評価
 export function ntHandStrength(hand, params) {
+  const lengths = SUITS.map(s => hand.filter(c => c.suit === s).length);
+  const maxLen = Math.max(...lengths);
+  const minLen = Math.min(...lengths);
+
   let score = 0;
   for (const suit of SUITS) {
     const cards = hand.filter(c => c.suit === suit);
-    score += cards.length * 0.5;
-    if (cards.some(c => c.rank === 'A')) score += params?.ntAceWeight || 2.0;
-    if (cards.some(c => c.rank === 'K')) score += 1.2;
-    if (cards.some(c => c.rank === 'Q')) score += 0.8;
-    if (cards.length >= 4) score += (params?.ntSuitLengthBonus || 1.5) * (cards.length - 3);
+    score += cards.length * 0.3;
+    if (cards.some(c => c.rank === 'A')) score += (params?.ntAceWeight ?? 1.5);
+    if (cards.some(c => c.rank === 'K')) score += 1.0;
+    if (cards.some(c => c.rank === 'Q')) score += 0.6;
+    if (cards.length >= 4) score += (params?.ntSuitLengthBonus ?? 1.2) * (cards.length - 3) * 0.5;
   }
-  if (hand.some(c => c.id === '♠A')) score += params?.ntMightyBonus || 3.5;
+
+  // Distribution penalties / bonuses (NT は分布が命)
+  if (minLen === 0) score -= 2.5;
+  else if (minLen === 1) score -= 1.0;
+  if (maxLen >= 6) score -= 1.5;
+  else if (maxLen >= 5 && minLen <= 2) score -= 0.5;
+  if (maxLen <= 4 && minLen >= 2) score += 1.0;
+
+  if (hand.some(c => c.id === '♠A')) score += (params?.ntMightyBonus ?? 2.5);
   return score;
 }
 
@@ -89,7 +106,6 @@ export function soloAdjustedStrength(hand, trump) {
 // ==========================================
 // 3. 立ち判断（便乗ロジック）
 // ==========================================
-// v1.5: export 化（app.js 側で経験キー計算に使うため）
 export function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
   if (!Array.isArray(currentBids)) return base;
@@ -117,7 +133,6 @@ export function adjustStrengthForOpponents(base, mySuit, currentBids, params, my
   return base + adj * (1 + params.opponentInferenceWeight);
 }
 
-// EV計算: 「NAP EV − Ally EV」を返す（立たずに様子見する戦略の優位を打ち消す）
 function computeBidEV(p, num, strength, params) {
   if (!Number.isFinite(p)) p = 0.5;
   const maxHonest = findMaxHonestBid(strength);
@@ -132,13 +147,11 @@ function computeBidEV(p, num, strength, params) {
   const honestBonus = isHonest ? HONEST_BID_FIXED_BONUS : 0;
   const napoleonEV = p * (winBase + sweetBonus) + (1 - p) * (lossBase + bluffPenalty) + honestBonus;
 
-  // 立たなかった場合の期待値（自分が連合軍になる想定）
   const allyEV = p * ALLY_LOSS_PENALTY + (1 - p) * (ALLY_WIN_BONUS + ALLY_BLOCK_BONUS);
 
   return Number.isFinite(napoleonEV - allyEV) ? napoleonEV - allyEV : 0;
 }
 
-// v1.5: experience param 追加。bid の勝率推定を経験でブレンド
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null) {
   if (!Array.isArray(hand) || !hand.length) return null;
   if (!params) params = defaultStrategy();
@@ -156,7 +169,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   for (const suit of SUITS) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
-    // v1.5: 経験キーは「生強度（cs）」を使う。app.js 側の記録と一致させる。
     const strengthKey = quantizeStrength(cs);
     for (let num = targetMin; num <= 20; num++) {
       const baseP = estimatedWinRate(adj, num);
@@ -170,7 +182,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   // NT立ち
   const ntStr = ntHandStrength(hand, params);
   const ntAdj = adjustStrengthForOpponents(ntStr, 'NT', currentBids, params, mySeat, 'nt');
-  // v1.5: NTも生強度（ntStr）で経験ルックアップ
   const ntStrengthKey = quantizeStrength(ntStr);
   for (let num = targetMin; num <= 20; num++) {
     const baseP = estimatedWinRate(ntAdj, num);
@@ -209,7 +220,7 @@ export function chooseDiscard(hand, trump) {
 }
 
 // ==========================================
-// 5. 副官指名（v1.5: experience 対応）
+// 5. 副官指名
 // ==========================================
 export function chooseDeputyCall(hand, discard, trump, level, bid, params, experience = null) {
   const p = params || {
@@ -218,10 +229,8 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
   };
   const used = new Set([...(hand || []), ...(discard || [])].map(c => c.id));
 
-  // 優先1: ♠A（未所持なら確実に味方化）
   if (!used.has('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
 
-  // 優先2: 正J（切札J）を優先、次に裏J
   if (trump !== 'NT') {
     const sc = sameColorSuitOf(trump);
     const hasBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
@@ -235,7 +244,6 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
     }
   }
 
-  // 優先3: A vs 2 スコアリング（v1.5: 経験補正を追加）
   let bestCard = null;
   let bestScore = -Infinity;
 
@@ -254,7 +262,6 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
       if (isShort) score += p.aceShortBonus;
       if (isLong) score -= p.aceLongPenalty;
       if (trump === 'NT') score += 0.3;
-      // v1.5: 経験勝率補正（-1 .. +1 の範囲でスコアに加算）
       const exp = experience?.calls?.[callExperienceKey(suit + 'A', trump)];
       if (exp && exp.samples >= 3) {
         const expRate = exp.wins / exp.samples;
@@ -280,7 +287,6 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
 
   if (bestCard) return bestCard;
 
-  // フォールバック
   const cands = [];
   for (const s of SUITS) for (const r of RANKS) {
     if (!used.has(s + r) && (trump === 'NT' || s !== trump)) cands.push({ suit: s, rank: r, id: s + r });
@@ -353,8 +359,6 @@ function iHoldStrongestTrump(hand, playedCards, trumpSuit) {
   return false;
 }
 
-// ▼ v1.5: 「味方が勝っている時に高札（K・A）を燃やさない」
-// 10→J→Qの順で吐き出し、K以上と役札は温存する
 function pickDumpFace(followCards, contract, currentRank, opts = {}) {
   const { excludeId = null } = opts;
   const currentIdx = RANKS.indexOf(currentRank);
@@ -372,8 +376,6 @@ function pickDumpFace(followCards, contract, currentRank, opts = {}) {
   return dumpable.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
 }
 
-// ▼ v1.5: 経験を使った最弱カード選択（tie-breaker。戦術判断は変えない）
-// sorted[0] と sorted[1] の二択のうち、経験勝率が高い方を選ぶ
 function lowX(ctx, cards) {
   if (!cards || !cards.length) return null;
   const sorted = cards.slice().sort((a, b) =>
@@ -422,7 +424,6 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
-  // strongTrumpLeadAggression を反映（必ず出さず確率で温存）
   const tj = legal.find(c => isTrumpJ(c, contract));
   if (tj && Math.random() < (params.strongTrumpLeadAggression ?? 0.7)) return tj;
   const scj = legal.find(c => isSameColorJ(c, contract));
@@ -447,12 +448,35 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
+  // ▼ 修正: safeAces の条件を厳格化
+  //   - trick 0 は Same-2 無効 → 安全
+  //   - trick 1+ では「2 が場に出ている」「自分が2を持っている」「既知のvoidなし」を要求
+  //   - ♠A は ♥Q が出ている / ♠のvoidなし を要求
+  //   - 以前の「trickNo <= 2」「voidSeats > 0」条件は Same-2/カットのリスクを見落としていた
   const safeAces = legal.filter(c => {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
-    const voidSeats = countVoidSeats(voids, c.suit, seat);
-    const playedInSuit = (playedCards || []).filter(pc => pc.suit === c.suit).length;
-    return voidSeats > 0 || playedInSuit >= 2 || trickNo <= 2;
+
+    // ♠A (mighty): ♥Q shadow のリスク
+    if (c.id === '♠A') {
+      const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
+      if (hqOut) return true;
+      return countVoidSeats(voids, '♠', seat) === 0;
+    }
+
+    // 自分がこのスートの 2 を持っている → 相手に Same-2 されない
+    if (hand.some(hc => hc.suit === c.suit && hc.rank === '2')) return true;
+
+    // 第1トリックは Same-2 無効 → 安全
+    if (trickNo === 0) return true;
+
+    // 2周目以降: このスートの 2 が既に場に出ているか
+    const sameTwoOut = (playedCards || []).some(pc => pc.suit === c.suit && pc.rank === '2');
+    if (!sameTwoOut) return false;
+
+    // 2 が出ていても、誰かがこのスートを void ならカットされる
+    return countVoidSeats(voids, c.suit, seat) === 0;
   });
+
   if (safeAces.length) {
     return safeAces.sort((a, b) => {
       const va = (playedCards || []).filter(pc => pc.suit === a.suit).length;
@@ -481,10 +505,9 @@ function chooseNapoleonLead(ctx) {
   }
 
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
-  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
-// 切迫度ベースの早期取りを追加
 function chooseNapoleonFollow(ctx) {
   const { hand, legal, trick, trickNo, contract, playedCards, voids, seat, params, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
@@ -499,7 +522,6 @@ function chooseNapoleonFollow(ctx) {
   const low = cards => cards.slice().sort((a, b) =>
     cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
 
-  // 切迫度: 残りトリック数に対して何点必要か
   const remainingTricks = Math.max(1, 10 - trickNo - (trick.length >= 4 ? 1 : 0));
   const napPoints = currentNapPoints || 0;
   const needed = Math.max(0, contract.num - napPoints);
@@ -516,7 +538,6 @@ function chooseNapoleonFollow(ctx) {
   }
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
-  // 切迫時は早めに勝ちに行く（trickNo=6 を待たない）
   if (urgency >= 1.2 && winningCards.length) return low(winningCards);
   if (trickNo >= 6 && winningCards.length) return low(winningCards);
 
@@ -573,7 +594,6 @@ export function chooseDeputyCard(ctx) {
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
 
   if (napCard && isAbsoluteWinner(napCard, contract, trick, playedCards)) {
-    // K・Aを燃やさず、10/J/Qの順で吐く
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
       const dump = pickDumpFace(followCards, contract, napCard.rank, { excludeId: call?.id });
@@ -611,9 +631,26 @@ function estimateNapWeakSuit(playedCards, contract) {
 }
 
 function chooseAllianceLead(ctx) {
-  const { hand, legal, trickNo, contract, params, playedCards } = ctx;
+  const { hand, legal, trickNo, contract, params, playedCards, voids, seat } = ctx;
   if (!legal || !legal.length) return null;
   const p = params || {};
+
+  // ▼ 追加: Same-2 攻撃リード
+  //   第2トリック以降、未プレイのスートの2を確率リードし、Same-2 で主導権を奪う
+  //   条件: 2 が手札にあり、そのスートがまだ一度もプレイされておらず、
+  //         誰もそのスートで void を露呈していない（＝全員フォロー見込み）
+  if (trickNo > 0 && trickNo <= (p.allySameTwoWindow ?? 4)) {
+    const freshTwos = legal.filter(c =>
+      c.rank === '2' &&
+      (contract.suit === 'NT' || c.suit !== contract.suit) &&
+      (playedCards || []).filter(pc => pc.suit === c.suit).length === 0 &&
+      countVoidSeats(voids, c.suit, seat) === 0 &&
+      (contract.suit === 'NT' || !voids[contract.nap]?.[c.suit])
+    );
+    if (freshTwos.length && Math.random() < (p.allySameTwoLeadChance ?? 0.55)) {
+      return freshTwos[0];
+    }
+  }
 
   if (contract.suit !== 'NT') {
     const trump = contract.suit;
@@ -621,7 +658,6 @@ function chooseAllianceLead(ctx) {
     const avoidSuits = [trump, sc].filter(Boolean);
 
     const leadable = legal.filter(c => !avoidSuits.includes(c.suit) && !isFace(c) && (trickNo > 0 || c.rank !== '2'));
-    // Math.random() < 1.1 バグを修正済み
     if (leadable.length && Math.random() < Math.min(1.0, p.napWeaknessLeadWeight ?? 0.8)) {
       const bySuitLen = SUITS.filter(s => !avoidSuits.includes(s))
         .map(s => ({ suit: s, cards: leadable.filter(c => c.suit === s) }))
@@ -673,7 +709,6 @@ function chooseAllianceFollow(ctx) {
   );
 
   if (!currentIsEnemy && current.seat !== seat) {
-    // K・Aを燃やさず10/J/Qで吐く
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
       const dump = pickDumpFace(followCards, contract, current.card.rank);
@@ -707,7 +742,6 @@ export function chooseCardToPlay(ctx) {
   if (!contract.solo && contract.revealedCall && seat === contract.deputy) {
     return chooseDeputyCard(ctx);
   }
-  // reveal前でも指名札を保持しているなら副官として振る舞う（潜在副官）
   if (!contract.solo && !contract.revealedCall && contract.call && hand.some(c => c.id === contract.call.id)) {
     return chooseDeputyCard(ctx);
   }
