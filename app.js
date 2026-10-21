@@ -55,6 +55,12 @@ function renderContractInfo(){
     label.className='contract-call-label';
     label.textContent='副官札';
     const parts=[bid,label,contract.call?cardEl(contract.call,'contract-card'):Object.assign(document.createElement('span'),{className:'contract-pending',textContent:'指名前'})];
+    if(contract.solo){
+      const solo=document.createElement('span');
+      solo.className='contract-call-label';
+      solo.textContent='ひとり立ち';
+      parts.push(solo);
+    }
     if(g.allianceKittyPoints>0){
       const kp=document.createElement('span');
       kp.className='contract-call-label';
@@ -251,7 +257,7 @@ function auctionStart(){
   showOpenKitty();
   g.appealInfo='';
   const rule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null;
-  g.auction={active:rule?rule.eligible:[0,1,2,3,4],minBid:rule?.minBid||13,high:{num:12,suit:'',player:-1},version:0,autoApprove:Array(5).fill(false),botBids:Array(5).fill(0),botSeen:Array(5).fill(-1),requiredBidSeat:null};
+  g.auction={active:rule?rule.eligible:[0,1,2,3,4],minBid:rule?.minBid||13,high:{num:12,suit:'',player:-1,solo:false},version:0,autoApprove:Array(5).fill(false),botBids:Array(5).fill(0),botSeen:Array(5).fill(-1),requiredBidSeat:null};
   g.bid=g.auction.minBid;
   g.active=-1;
   if(!rule){enterAuction();return}
@@ -309,7 +315,7 @@ function humanBid(){
   g.bidHistory.push({round:g.round,seat:0,num:g.bid,suit:g.suit});
   addGameLog('あなたが'+g.bid+g.suit+'を宣言');
   if(g.bidHistory.length>50)g.bidHistory.shift();
-  g.auction.high={num:g.bid,suit:g.suit,player:0};
+  g.auction.high={num:g.bid,suit:g.suit,player:0,solo:false};
   if(g.auction.requiredBidSeat===0)g.auction.requiredBidSeat=null;
   g.auction.version++;
   g.active=0;
@@ -327,6 +333,13 @@ function comBid(i,version){
   if(g.auction.botSeen[i]>=version)return;
   if(g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==i)return;
   g.auction.botSeen[i]=version;
+
+  // v1.2: 既に自分が最高宣言者なら再宣言しない（競り上がりの連鎖防止）
+  if(g.auction.high.player===i){
+    if(g.auction.active.length===1)auctionEnd(i);
+    return;
+  }
+
   const h=g.players[i].hand;
   const currentBids=(g.bidHistory||[]).filter(b=>b.round===g.round);
   const aiBid=shouldBid(h,g.auction.high,g.auction.minBid||13,g.aiWeights,currentBids,i,g.aiExperience);
@@ -340,7 +353,7 @@ function comBid(i,version){
   }
   if(b){
     g.bidHistory.push({round:g.round,seat:i,num:b.num,suit:b.suit,solo:b.solo});
-    addGameLog(name(i)+'が'+b.num+b.suit+'を宣言');
+    addGameLog(name(i)+'が'+b.num+b.suit+(b.solo?'（ひとり立ち）':'')+'を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.botBids[i]++;
     g.auction.high={num:b.num,suit:b.suit,player:i,solo:b.solo===true};
@@ -348,7 +361,7 @@ function comBid(i,version){
     g.auction.version++;
     g.active=i;
     if(g.auction.autoApprove[0]&&g.auction.active.includes(0)){humanApprove(true);return}
-    message(name(i)+'が'+b.num+b.suit+'を宣言しました');
+    message(name(i)+'が'+b.num+b.suit+(b.solo?'（ひとり立ち）':'')+'を宣言しました');
     if(b.num===20&&b.suit==='NT'){auctionEnd(i);return}
     drawAuction();drawSeats();scheduleComBids();
     return;
@@ -369,12 +382,14 @@ function auctionEnd(w){
   showKittyBacks();
   $('auction-clock')?.classList.add('hidden');
   if(w<0||g.auction.high.num<13){
-    if(g.round>=10){w=finalAuctionRule(g.matchScores,g.mult).bottomSeat;g.auction.high={num:g.auction.minBid,suit:strongestSuit(g.players[w].hand),player:w}}
+    if(g.round>=10){w=finalAuctionRule(g.matchScores,g.mult).bottomSeat;g.auction.high={num:g.auction.minBid,suit:strongestSuit(g.players[w].hand),player:w,solo:false}}
     else{dialog('流局','宣言がありませんでした。配り直します。',roundStart);return}
   }
   const suit=g.auction.high.suit;
   const strengthAtBid=suit==='NT'?ntHandStrength(g.players[w].hand,g.aiWeights):colorStrength(g.players[w].hand,suit,g.aiWeights);
-  g.contract={nap:w,num:g.auction.high.num,suit,deputy:-1,solo:false,revealTrickNo:null,strengthAtBid};
+  // v1.2: 最高宣言の solo フラグを契約に反映（solo:false 固定バグを修正）
+  const isSoloBid = g.auction.high.solo === true;
+  g.contract={nap:w,num:g.auction.high.num,suit,deputy:-1,solo:isSoloBid,revealTrickNo:null,strengthAtBid};
   if (w === 0 && g.humanRoundLog) {
     g.humanRoundLog.bid = {
       strengthKey: quantizeStrength(strengthAtBid),
@@ -382,10 +397,10 @@ function auctionEnd(w){
       num: g.auction.high.num
     };
   }
-  addDebugLog('contract-set',{nap:w,num:g.contract.num,suit:g.contract.suit,strengthAtBid,highBid:g.auction.high,bidHistory:sanitizeForLog(g.bidHistory)});
-  addGameLog(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言を確定');
+  addDebugLog('contract-set',{nap:w,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,strengthAtBid,highBid:g.auction.high,bidHistory:sanitizeForLog(g.bidHistory)});
+  addGameLog(name(w)+'が'+g.contract.num+g.contract.suit+(g.contract.solo?'（ひとり立ち）':'')+'で宣言を確定');
   phase('浮き札の交換');
-  message(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言。オープンを手札に入れて2枚捨ててください');
+  message(name(w)+'が'+g.contract.num+g.contract.suit+(g.contract.solo?'（ひとり立ち）':'')+'で宣言。オープンを手札に入れて2枚捨ててください');
   kittyStart()
 }
 
@@ -544,9 +559,9 @@ function playStart(){
   g.active=c.nap;
   g.trickNo=0;
   g.trick=[];
-  addGameLog(name(c.nap)+'が先攻');
+  addGameLog(name(c.nap)+'が先攻'+(c.solo?'（ひとり立ち）':''));
   phase('カードプレイ');
-  message(name(c.nap)+'が先攻です');
+  message(name(c.nap)+'が先攻です'+(c.solo?'（ひとり立ち）':''));
   $('call-panel')?.classList.add('hidden');
   $('kitty-view')?.replaceChildren();
   renderHand();
@@ -778,18 +793,18 @@ function finishGame(){
     } catch (e) { console.warn('[learn match-end]', e?.message); }
   }
   phase('結果');
-  addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚（捨て札連合軍'+g.allianceKittyPoints+'pt）');
+  addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚（捨て札連合軍'+g.allianceKittyPoints+'pt）'+(c.solo?' · ひとり立ち':''));
   message(replayAllLast?'プレーオフ':success?'NAP TEAM WINS':'ALLIANCE WINS');
   drawSeats();
   const finalRows=final?g.players.map((_,i)=>{const result=ratings[i],b=result.breakdown,roundStr=(b.rounds||[]).map(r=>(r.role==='nap'?'N':r.role==='dep'?'D':'A')+r.bid+':'+format(r.delta)).join(' ');return'<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · '+roundStr+'</small></strong></div>'}).join(''):'',r=$('result-panel');
   if(!r)return;
   r.classList.remove('hidden');
-  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · SOLO':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
+  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · ひとり立ち':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
   const nr=$('next-round');
   if(nr)nr.onclick=()=>{r.classList.add('hidden');if(final){screen('home-screen');return}g.round++;g.mult=1;g.greenRedraws=0;roundStart()}
 }
 function addTakenCards(seat,cards=[]){const row=document.createElement('div');row.className='taken-cards';const label=document.createElement('span');label.className='taken-label';label.textContent='獲得 '+cards.length;row.append(label);cards.forEach(c=>{const tag=document.createElement('span');tag.className='taken-card '+color(c.suit);tag.textContent=c.suit+c.rank;row.append(tag)});seat.append(row)}
-function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===0?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?(g.contract.revealedCall&&g.contract.solo?'ナポレオン（ひとり立ち）':'ナポレオン'):!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):g.phase==='auction'&&!g.auction.active.includes(i)?'承認済み':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken);box.append(e)})}
+function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===0?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?(g.contract.solo?'ナポレオン（ひとり立ち）':(g.contract.revealedCall?'ナポレオン':'ナポレオン')):!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):g.phase==='auction'&&!g.auction.active.includes(i)?'承認済み':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken);box.append(e)})}
 
 function dialog(title,text,cb){let d=$('message-dialog'),card=$('dialog-card');if(!d||!card)return;card.classList.add('hidden');card.replaceChildren();$('dialog-eyebrow')?.classList.remove('hidden');const de=$('dialog-eyebrow');if(de)de.textContent='Napoleon';const dok=$('dialog-ok');if(dok)dok.textContent='OK';const dt=$('dialog-title'),db=$('dialog-body');if(dt)dt.textContent=title;if(db)db.textContent=text;if(dok)dok.onclick=()=>{d.close();if(cb)cb()};d.showModal()}
 function announceCall(card,onConfirm,online=false){const d=$('message-dialog'),slot=$('dialog-card');if(!d||!slot)return;$('dialog-eyebrow')?.classList.add('hidden');const dt=$('dialog-title');if(dt)dt.textContent='DEPUTY CALL';slot.classList.remove('hidden');slot.replaceChildren(cardEl(card,'announcement-card'));const db=$('dialog-body');if(db)db.textContent=online?'全員が確認すると最初のトリックが始まります。':'確認して、最初のトリックを始めます。';const dok=$('dialog-ok');if(dok)dok.textContent=online?'確認':'最初のトリックへ';if(dok)dok.onclick=()=>{d.close();slot.classList.add('hidden');slot.replaceChildren();$('dialog-eyebrow')?.classList.remove('hidden');const de=$('dialog-eyebrow');if(de)de.textContent='Napoleon';if(dok)dok.textContent='OK';if(onConfirm)onConfirm()};d.showModal()}
