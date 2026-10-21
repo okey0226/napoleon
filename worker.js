@@ -28,7 +28,6 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS player_elo (user_id TEXT PRIMARY KEY, elo INTEGER NOT NULL DEFAULT 1000)",
   "CREATE TABLE IF NOT EXISTS human_win_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, player_id TEXT, rank INTEGER NOT NULL DEFAULT 0, won_as_nap INTEGER NOT NULL DEFAULT 0, won_as_deputy INTEGER NOT NULL DEFAULT 0, won_as_ally INTEGER NOT NULL DEFAULT 0, avg_bid REAL NOT NULL DEFAULT 0, exact_wins INTEGER NOT NULL DEFAULT 0, solo_wins INTEGER NOT NULL DEFAULT 0, match_rating_delta REAL NOT NULL DEFAULT 0, contracts_json TEXT, ai_weights_snapshot TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS human_win_delta ON human_win_patterns(match_rating_delta DESC)",
-  // ▼ v1.5: 経験学習テーブル
   "CREATE TABLE IF NOT EXISTS ai_bid_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, strength_key REAL NOT NULL, trump_type TEXT NOT NULL, num INTEGER NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_bid_exp_key ON ai_bid_experience(strength_key, trump_type, num)",
   "CREATE TABLE IF NOT EXISTS ai_call_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT NOT NULL, trump_suit TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
@@ -52,7 +51,6 @@ async function loadBotStrategy(env) {
   return defaultStrategy();
 }
 
-// ▼ v1.5: 経験マップのキャッシュ（60秒）
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
@@ -144,8 +142,7 @@ export default {
         const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
         await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
         const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
-        const eloRow = await env.DB.prepare("SELECT elo FROM player_elo WHERE user_id=?").bind(userId).first();
-        return response({ ...player, elo: eloRow?.elo ?? ELO_INIT, sessionToken: token });
+        return response({ ...player, sessionToken: token });
       }
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
@@ -155,15 +152,14 @@ export default {
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
         if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
-        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow, eloRow] = await Promise.all([
+        const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
           env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_precision WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,plays FROM player_art_rate WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,successes FROM player_ally_feed WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT attempts,successes FROM player_bold_bid_rate WHERE user_id=?").bind(userId).first(),
           env.DB.prepare("SELECT result,delta,rating_after,created_at FROM match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all(),
-          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first(),
-          env.DB.prepare("SELECT elo FROM player_elo WHERE user_id=?").bind(userId).first()
+          env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5 FROM player_match_stats WHERE user_id=?").bind(userId).first()
         ]);
         const matchStats = matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0 };
         const performance = performanceRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 };
@@ -171,7 +167,6 @@ export default {
         const artRate = artRateRow || { attempts: 0, plays: 0 };
         const allyFeed = allyFeedRow || { attempts: 0, successes: 0 };
         const boldBid = boldBidRow || { attempts: 0, successes: 0 };
-        const elo = eloRow?.elo ?? ELO_INIT;
         const [ratingRank, performanceRankValues] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS ahead FROM players WHERE rating>?").bind(p.rating).first(),
           Promise.all([
@@ -185,42 +180,34 @@ export default {
           ])
         ]);
         const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
-        return response({ ...p, elo, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
+        return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
       }
       if (request.method === "GET" && url.pathname === "/api/rating/top") {
-        const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games, COALESCE(e.elo, 1000) AS elo FROM players p LEFT JOIN player_elo e ON e.user_id = p.user_id ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
+        const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games FROM players p ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
         return response(results);
       }
       if (request.method === "GET" && url.pathname === "/api/ai/weights") { try { const w = await env.DB.prepare("SELECT weights,games FROM ai_weights WHERE id=1").first(); return response(w || { weights: '{}', games: 0 }); } catch (e) { return response({ weights: '{}', games: 0 }); } }
 
-      // ▼ v1.5: /api/ai/experience — 集計済み経験マップを返す
       if (request.method === "GET" && url.pathname === "/api/ai/experience") {
         try { const exp = await loadExperience(env); return response(exp); }
         catch (e) { return response({ bids: {}, calls: {}, plays: {} }); }
       }
 
-      // ▼ v1.5: /api/ai/learn — 1局終了ごとに細かい経験をUPSERT
       if (request.method === "POST" && url.pathname === "/api/ai/learn") {
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         try {
           const stmts = [];
           const wonRound = body.wonRound === true;
-
-          // (A) 宣言経験（自分の宣言勝率）
           if (body.bid && Number.isFinite(Number(body.bid.strengthKey)) && body.bid.trumpType) {
             stmts.push(env.DB.prepare(
               "INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,1) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins, samples=samples+1, updated_at=CURRENT_TIMESTAMP"
             ).bind(Number(body.bid.strengthKey), String(body.bid.trumpType), Number(body.bid.num), wonRound ? 1 : 0));
           }
-
-          // (B) 指名カード経験（指名通り副官/NAP軍が勝ったか）
           if (body.call && body.call.callId && body.call.trumpSuit) {
             stmts.push(env.DB.prepare(
               "INSERT INTO ai_call_experience(call_id,trump_suit,wins,samples) VALUES(?,?,?,1) ON CONFLICT(call_id,trump_suit) DO UPDATE SET wins=wins+excluded.wins, samples=samples+1, updated_at=CURRENT_TIMESTAMP"
             ).bind(String(body.call.callId), String(body.call.trumpSuit), wonRound ? 1 : 0));
           }
-
-          // (C) カードプレイ経験（トリック単位で一括反映）
           if (Array.isArray(body.playDecisions)) {
             for (const d of body.playDecisions) {
               if (!d || !d.role || !d.phase || !d.pointsTier || !d.rankTier) continue;
@@ -229,8 +216,6 @@ export default {
               ).bind(String(d.role), String(d.phase), String(d.pointsTier), String(d.rankTier), d.won ? 1 : 0));
             }
           }
-
-          // 無制限増加を防止：各行200サンプルで減衰リセット
           if (stmts.length) await env.DB.batch(stmts);
           try {
             await env.DB.batch([
@@ -331,7 +316,6 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
 
@@ -408,8 +392,8 @@ function publish(m, room) { const pub = publicState(m); for (let seat = 0; seat 
 function tell(m, room, text) { m.notice = text; publish(m, room); }
 function validBid(m, n, s) { const h = m.auction.high; return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit])); }
 function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat)) return; if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) { if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.round >= 10 && m.auction.high.num < 13) { const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0]; if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.auction.high.player === seat) { if (m.auction.active.length === 1) auctionDone(m, seat, room); else if (forced && !m.auction.autoApprove[seat]) { m.auction.autoApprove[seat] = true; m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。"; publish(m, room); } return; } m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.active = m.auction.active.filter(x => x !== seat); m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。"; if (!m.auction.active.length) { auctionDone(m, -1, room); return; } if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) { const last = m.auction.active[0]; if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; } m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。"; } m.auction.active.forEach(i => { if (m.seats[i].bot) { m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1); m.auction.botAt[i] = Date.now() + 500 + Math.random() * 1300; } }); publish(m, room); }
-function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s, solo }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 400 + Math.random() * 1600; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + (solo ? "（ひとり立ち）" : "") + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
-function appealDetails(hand) { const targets = [['♣J', '♣J'], ['♦J', '♦J'], ['♥J', '♥J'], ['♠J', '♠J'], ['マイティ（♠A）', '♠A']]; return targets.map(([label, id]) => label + '：' + (hand.some(card => card.id === id) ? 'あり' : 'なし')).join(' · '); }
+function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s, solo }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 400 + Math.random() * 1600; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
+function appealDetails(hand) { const held = ['♣J', '♦J', '♥J', '♠J', '♠A'].filter(id => hand.some(card => card.id === id)); return held.length ? held.join(' ') : 'なし'; }
 function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
 function answerAppealOffer(m, seat, appeal, room) { if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return; if (!appeal) { m.appealInfo = '5位はアピールせず競りへ'; enterAuctionAfterAppeal(m, room); return; } m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000; m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room); if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room); }
 function answerAppealResponse(m, seat, choice, room) { if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return; if (choice === 'declare') { const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'の申告：' + appealDetails(m.seats[seat].hand); enterAuctionAfterAppeal(m, room); return; } const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'は申告せず立つことを選択。'; enterAuctionAfterAppeal(m, room, seat); }
@@ -506,16 +490,17 @@ async function finish(m, room, env) {
         for (let seat = 0; seat < m.seats.length; seat++) {
           const player = m.seats[seat], userId = player.player.userId, profile = userId && byId.get(userId);
           if (!profile) continue;
-          const change = ratingChanges[seat], rating = profile.rating + change.delta, outcome = change.outcome;
-          change.rating = rating; const stat = m.matchStats[seat];
+          const change = ratingChanges[seat], outcome = change.outcome;
           const currentElo = eloMap.get(userId) ?? ELO_INIT;
           const oppElos = m.seats.filter((_, i) => i !== seat).map(s => { if (!s.player.userId) return ELO_INIT; return eloMap.get(s.player.userId) ?? ELO_INIT; });
           const eloDelta = computeEloDelta(currentElo, oppElos, outcome);
-          const newElo = Math.max(100, currentElo + eloDelta);
-          change.eloDelta = eloDelta; change.elo = newElo;
+          const combinedDelta = change.delta + eloDelta;
+          const rating = Math.max(100, (Number(profile.rating) || 1000) + combinedDelta);
+          change.rating = rating; change.eloDelta = eloDelta;
+          const stat = m.matchStats[seat];
           statements.push(
             env.DB.prepare("UPDATE players SET rating=?,wins=wins+?,losses=losses+?,games=games+1 WHERE user_id=?").bind(rating, outcome === "win" ? 1 : 0, outcome === "loss" ? 1 : 0, profile.user_id),
-            env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(profile.user_id, profile.username, outcome, change.delta, rating),
+            env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(profile.user_id, profile.username, outcome, combinedDelta, rating),
             env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(profile.user_id),
             env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?").bind(stat.exactWins, stat.boldExactWins, stat.soloWins, stat.dramaticPlays, profile.user_id),
             env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes").bind(profile.user_id, stat.declarerAttempts, stat.declarerSuccesses, stat.deputyAttempts, stat.deputySuccesses),
@@ -524,13 +509,13 @@ async function finish(m, room, env) {
             env.DB.prepare("INSERT INTO player_ally_feed(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.allyFeedAttempts, stat.allyFeedSuccesses),
             env.DB.prepare("INSERT INTO player_bold_bid_rate(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.boldAttempts, stat.boldSuccesses),
             env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0)),
-            env.DB.prepare("INSERT INTO player_elo(user_id, elo) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET elo=excluded.elo").bind(userId, newElo)
+            env.DB.prepare("INSERT INTO player_elo(user_id, elo) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET elo=excluded.elo").bind(userId, rating)
           );
-          updates.push({ connId: player.connId, change, rating, outcome, elo: newElo });
+          updates.push({ connId: player.connId, change, rating, outcome, combinedDelta, eloDelta });
         }
         if (statements.length) await env.DB.batch(statements);
       } catch (error) { console.error("ranked match settlement failed", m.id, error); m.result.rateSaveFailed = true; }
-      if (!m.result.rateSaveFailed) for (const update of updates) { try { sendSafe(conns.get(update.connId), { type: "rating-updated", result: update.outcome, delta: update.change.delta, rating: update.rating, elo: update.elo, eloDelta: update.change.eloDelta, placement: update.change.placement, art: update.change.art, breakdown: update.change.breakdown }); } catch (error) { console.warn("rating notification failed", m.id, error); } }
+      if (!m.result.rateSaveFailed) for (const update of updates) { try { sendSafe(conns.get(update.connId), { type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating, eloDelta: update.eloDelta, placement: update.change.placement, art: update.change.art, breakdown: update.change.breakdown }); } catch (error) { console.warn("rating notification failed", m.id, error); } }
     }
   }
   publish(m, room); matches.delete(m.id);
@@ -554,7 +539,7 @@ function playCard(m, seat, id, room, env) {
       const r = computeTeamMinBid(m.matchScores, m.mult, m.contract.nap, m.contract.deputy);
       if (r !== null) {
         const forcedMin = r.minBid, oldBid = m.contract.num;
-        const caseLabel = { A: '5位=ナポレオン / 4位=副官', B: '4位=ナポレオン / 5位=副官', C: '5位=ナポレオン / 4位=連合軍', D: '4位=ナポレオン / 5位=連合軍' }[r.case];
+        const caseLabel = { A: '組んだら', B: '逆組み', C: '通常', D: '逆立ち' }[r.case];
         if (forcedMin > oldBid) { m.contract.num = forcedMin; raisedNotice = '副官判明（' + caseLabel + '）。立ちを ' + oldBid + '枚 → ' + forcedMin + '枚 に引き上げました。'; }
         else { raisedNotice = '副官判明（' + caseLabel + '）。立ち ' + oldBid + '枚は最低条件を満たしています。'; }
         if (r.incentiveBroken) raisedNotice += ' ⚠ 20枚でも4位が3位を超えられないため、副官に勝つインセンティブがありません。';
@@ -583,7 +568,6 @@ function botAuctionBid(m, seat, room) {
   const h = m.seats[seat].hand;
   const params = m.botStrategy || defaultStrategy();
   const currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
-  // ▼ v1.5: 経験マップを渡す
   const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null);
   if (bid && validBid(m, bid.num, bid.suit)) {
     a.botBids[seat]++;
@@ -608,7 +592,6 @@ function botAction(m, room) {
     const forceSolo = isSoloForcedInMatch(m);
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
     else {
-      // ▼ v1.5: 経験マップを渡す
       const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience);
       if (x) callCard(m, i, x.suit, x.rank, room);
     }
@@ -626,7 +609,7 @@ function botAction(m, room) {
       isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
       isRevealed: m.contract.revealedCall, isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
       lastSeat: m.trick.length === 4, params, call: m.contract.call, currentNapPoints,
-      experience // ▼ v1.5
+      experience
     };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
