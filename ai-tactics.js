@@ -98,7 +98,7 @@ export function soloAdjustedStrength(hand, trump) {
 }
 
 // ==========================================
-// 3. 立ち判断（便乗ロジック）
+// 3. 立ち判断
 // ==========================================
 export function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
@@ -127,6 +127,9 @@ export function adjustStrengthForOpponents(base, mySuit, currentBids, params, my
   return base + adj * (1 + params.opponentInferenceWeight);
 }
 
+// Fix #3: 過剰bluff抑制
+// - bluffペナルティをgapに対して非線形に増大
+// - honestボーナスをpに比例して減衰（低pで「honest」扱いされても報酬を与えない）
 function computeBidEV(p, num, strength, params) {
   if (!Number.isFinite(p)) p = 0.5;
   const maxHonest = findMaxHonestBid(strength);
@@ -137,8 +140,13 @@ function computeBidEV(p, num, strength, params) {
   const winBase = (1 - p) * diff * 8;
   const sweetBonus = sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost;
   const lossBase = -p * diff * 8;
-  const bluffPenalty = bluffGap > 0 ? -bluffGap * params.bluffLossMultiplier * 2 : 0;
-  const honestBonus = isHonest ? HONEST_BID_FIXED_BONUS : 0;
+  const bluffPenalty = bluffGap > 0
+    ? -bluffGap * params.bluffLossMultiplier * 2 * (1 + bluffGap * 0.6)
+    : 0;
+  // Fix #3: honestボーナスはp≥0.50で最大、p<0.30で0
+  const honestBonus = isHonest
+    ? HONEST_BID_FIXED_BONUS * Math.max(0, (p - 0.30) / 0.20)
+    : 0;
   const napoleonEV = p * (winBase + sweetBonus) + (1 - p) * (lossBase + bluffPenalty) + honestBonus;
 
   const allyEV = p * ALLY_LOSS_PENALTY + (1 - p) * (ALLY_WIN_BONUS + ALLY_BLOCK_BONUS);
@@ -159,6 +167,16 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const targetMin = Math.max(minBid, (currentHigh?.num ?? 12) + 1, 13);
   const candidates = [];
 
+  // Fix #3: 高bidの抑制ゲート（pが低い高bidは候補から除外）
+  const isBidViable = (num, p) => {
+    if (num >= 19 && p < 0.62) return false;
+    if (num >= 18 && p < 0.58) return false;
+    if (num >= 17 && p < 0.55) return false;
+    if (num >= 16 && p < 0.52) return false;
+    if (num >= 15 && p < 0.45) return false;
+    return true;
+  };
+
   for (const suit of SUITS) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
@@ -167,6 +185,7 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
       const baseP = estimatedWinRate(adj, num);
       const expEntry = experience?.bids?.[bidExperienceKey(strengthKey, 'color', num)];
       const p = blendWithExperience(baseP, expEntry);
+      if (!isBidViable(num, p)) continue;
       const ev = computeBidEV(p, num, adj, params);
       if (Number.isFinite(ev)) candidates.push({ num, suit, solo: false, ev });
     }
@@ -179,6 +198,7 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     const baseP = estimatedWinRate(ntAdj, num);
     const expEntry = experience?.bids?.[bidExperienceKey(ntStrengthKey, 'NT', num)];
     const p = blendWithExperience(baseP, expEntry);
+    if (!isBidViable(num, p)) continue;
     const boost = num >= params.highBidNtThreshold ? 1.15 : 1.0;
     const ev = computeBidEV(p, num, ntAdj, params) * params.ntPreference * boost;
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
@@ -188,6 +208,7 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     const ss = soloAdjustedStrength(hand, suit);
     for (let num = targetMin; num <= 20; num++) {
       const p = estimatedWinRate(ss, num);
+      if (!isBidViable(num, p)) continue;
       const ev = computeBidEV(p, num, ss, params) * 1.5;
       if (Number.isFinite(ev)) candidates.push({ num, suit, solo: true, ev });
     }
@@ -399,21 +420,38 @@ function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call } = ctx;
   if (!legal || !legal.length) return null;
 
-  // ───────────── NT trick 0: bait ─────────────
-  // NTでは♠A（マイティ）が唯一の「切り札」。オープニングリードで消費しない。
-  // 代わりに低い札でbait（第0墩を意図的に負ける）→後で♠Aでカットインして主導権を奪う。
+  // ───────────── Fix #1: NT trick 0 の安全bait ─────────────
+  // NTでは♠A（マイティ）が唯一の「切り札」。trick0で低札baitして
+  // 後で♠Aで「カットイン」し主導権を奪うのが基本戦略。
+  // ただし「勝ちカード」が足りないと bait で失った得点を回収できないため、
+  // フォローアップの勝ちカード数をチェックし、足りない場合は bait しない。
   if (contract.suit === 'NT' && trickNo === 0) {
-    const nonMighty = legal.filter(c => c.id !== '♠A');
-    const baitPool = nonMighty.filter(c => c.rank !== 'A' && c.rank !== '2');
-    if (baitPool.length) {
-      const bySuitLen = SUITS.map(s => ({ suit: s, cards: baitPool.filter(c => c.suit === s) }))
-        .filter(x => x.cards.length > 0)
-        .sort((a, b) => b.cards.length - a.cards.length);
-      for (const sl of bySuitLen) {
-        const lowest = sl.cards.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
-        if (lowest) return lowest;
+    const played = new Set((playedCards || []).map(c => c.id));
+    let winningCount = 0;
+    if (hand.some(c => c.id === '♠A')) winningCount++;
+    for (const c of hand) {
+      if (c.rank === 'A' && c.suit !== '♠') winningCount++;
+      else if (c.rank === 'K' && !played.has(c.suit + 'A')) winningCount++;
+    }
+    // 失う予定のtrick0で 4pt 献上する可能性を考え、bid 必要枚数 + 1 のバッファを要求
+    const bidRequired = Math.max(0, (contract.num || 15) - 13);
+    const canAffordBait = winningCount >= bidRequired + 1;
+
+    if (canAffordBait) {
+      const nonMighty = legal.filter(c => c.id !== '♠A');
+      const baitPool = nonMighty.filter(c => c.rank !== 'A' && c.rank !== '2');
+      if (baitPool.length) {
+        // 最長スート（相手が2枚目以降で追随する必要があり、得点を浪費しにくい）から最低ランク
+        const bySuitLen = SUITS.map(s => ({ suit: s, cards: baitPool.filter(c => c.suit === s) }))
+          .filter(x => x.cards.length > 0)
+          .sort((a, b) => b.cards.length - a.cards.length);
+        for (const sl of bySuitLen) {
+          const lowest = sl.cards.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+          if (lowest) return lowest;
+        }
       }
     }
+    // 安全にbaitできない場合は safe A ロジックへフォールスルー（非♠Aを先出し）
   }
 
   // ───────────── 非NT: 裏J釣り / トランプ枯渇 ─────────────
@@ -539,6 +577,28 @@ function chooseNapoleonFollow(ctx) {
   }
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
+
+  // ───────────── Fix #7: NTでの♠A浪費防止 ─────────────
+  // NT: ♠Aが唯一の勝ちカードで、ポイント無しトリックの場合、
+  // フォローアップ勝ちカードが無ければ温存する（後でカットインして勝ち続けるため）
+  if (contract.suit === 'NT' && !isNapWinning && pointsInTrick === 0) {
+    const hasMightyInWinning = winningCards.some(c => c.id === '♠A');
+    const nonMightyWinning = winningCards.filter(c => c.id !== '♠A');
+    if (hasMightyInWinning && nonMightyWinning.length === 0) {
+      const played = new Set((playedCards || []).map(c => c.id));
+      const followUps = hand.filter(c =>
+        (c.rank === 'A' && c.suit !== '♠') ||
+        (c.rank === 'K' && !played.has(c.suit + 'A'))
+      );
+      const hasFollowUp = followUps.length >= 1;
+      const isUrgent = trickNo >= 7;
+      if (!hasFollowUp && !isUrgent) {
+        // ♠Aを温存してローカードで流す
+        return lowX(ctx, legal);
+      }
+    }
+  }
+
   if (urgency >= 1.2 && winningCards.length) return low(winningCards);
   if (trickNo >= 6 && winningCards.length) return low(winningCards);
 
