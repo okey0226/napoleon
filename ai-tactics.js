@@ -65,11 +65,6 @@ export function colorStrength(hand, trump, params) {
   return base + trumpPenalty + trumps.length * 0.5 + (params?.trumpBonus || 0.6) * trumps.length * 0.2;
 }
 
-// ▼ 修正: NT手札強度をカラーと同スケールに。バランス型評価に変更。
-//   - 長スートボーナスを半減（(len-3) * 0.5倍）
-//   - 分布ペナルティを追加（void/singleton/6+枚スート）
-//   - 完全バランス（4-3-3-3等）にボーナス
-//   → 6枚切り札集中のハンドはNTで低評価、A/K/Q分散のハンドはNTで高評価
 export function ntHandStrength(hand, params) {
   const lengths = SUITS.map(s => hand.filter(c => c.suit === s).length);
   const maxLen = Math.max(...lengths);
@@ -85,7 +80,6 @@ export function ntHandStrength(hand, params) {
     if (cards.length >= 4) score += (params?.ntSuitLengthBonus ?? 1.2) * (cards.length - 3) * 0.5;
   }
 
-  // Distribution penalties / bonuses (NT は分布が命)
   if (minLen === 0) score -= 2.5;
   else if (minLen === 1) score -= 1.0;
   if (maxLen >= 6) score -= 1.5;
@@ -165,7 +159,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const targetMin = Math.max(minBid, (currentHigh?.num ?? 12) + 1, 13);
   const candidates = [];
 
-  // 色立ち
   for (const suit of SUITS) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
@@ -179,7 +172,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     }
   }
 
-  // NT立ち
   const ntStr = ntHandStrength(hand, params);
   const ntAdj = adjustStrengthForOpponents(ntStr, 'NT', currentBids, params, mySeat, 'nt');
   const ntStrengthKey = quantizeStrength(ntStr);
@@ -192,7 +184,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
   }
 
-  // ひとり立ち
   for (const suit of SUITS) {
     const ss = soloAdjustedStrength(hand, suit);
     for (let num = targetMin; num <= 20; num++) {
@@ -448,32 +439,19 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
-  // ▼ 修正: safeAces の条件を厳格化
-  //   - trick 0 は Same-2 無効 → 安全
-  //   - trick 1+ では「2 が場に出ている」「自分が2を持っている」「既知のvoidなし」を要求
-  //   - ♠A は ♥Q が出ている / ♠のvoidなし を要求
-  //   - 以前の「trickNo <= 2」「voidSeats > 0」条件は Same-2/カットのリスクを見落としていた
   const safeAces = legal.filter(c => {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
 
-    // ♠A (mighty): ♥Q shadow のリスク
     if (c.id === '♠A') {
       const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
       if (hqOut) return true;
       return countVoidSeats(voids, '♠', seat) === 0;
     }
 
-    // 自分がこのスートの 2 を持っている → 相手に Same-2 されない
     if (hand.some(hc => hc.suit === c.suit && hc.rank === '2')) return true;
-
-    // 第1トリックは Same-2 無効 → 安全
     if (trickNo === 0) return true;
-
-    // 2周目以降: このスートの 2 が既に場に出ているか
     const sameTwoOut = (playedCards || []).some(pc => pc.suit === c.suit && pc.rank === '2');
     if (!sameTwoOut) return false;
-
-    // 2 が出ていても、誰かがこのスートを void ならカットされる
     return countVoidSeats(voids, c.suit, seat) === 0;
   });
 
@@ -635,10 +613,6 @@ function chooseAllianceLead(ctx) {
   if (!legal || !legal.length) return null;
   const p = params || {};
 
-  // ▼ 追加: Same-2 攻撃リード
-  //   第2トリック以降、未プレイのスートの2を確率リードし、Same-2 で主導権を奪う
-  //   条件: 2 が手札にあり、そのスートがまだ一度もプレイされておらず、
-  //         誰もそのスートで void を露呈していない（＝全員フォロー見込み）
   if (trickNo > 0 && trickNo <= (p.allySameTwoWindow ?? 4)) {
     const freshTwos = legal.filter(c =>
       c.rank === '2' &&
