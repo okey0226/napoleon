@@ -405,12 +405,15 @@ function auctionEnd(w){
   kittyStart()
 }
 
+// ===== 【修正4】bid solo を尊重（human 側） =====
 function callUi(){
   g.phase='call';
   phase('副官指名');
   showDiscardedKitty();
-  const forceSolo=isSoloForced();
-  message(forceSolo?'⚠ Case A破綻：一人立ちが必須です。自分の手札から指名札を選んでください':'捨て札を決めました。副官に指名するカードを選んでください');
+  // v1.3: bid で solo を宣言していた場合は強制 solo 扱い
+  const bidSolo=g.contract.solo;
+  const forceSolo=isSoloForced()||bidSolo;
+  message(forceSolo?'⚠ 一人立ちが必須です。自分の手札から指名札を選んでください':'捨て札を決めました。副官に指名するカードを選んでください');
   let p=$('call-panel');if(!p)return;
   p.classList.remove('hidden');
   let s='♠',r='A';
@@ -453,6 +456,7 @@ function callUi(){
   update()
 }
 
+// ===== 【修正5】COM 側: bid solo の上書きバグを修正 =====
 function kittyStart(){
   let n=g.contract.nap;
   g.players[n].hand.push(...g.kitty);
@@ -492,6 +496,11 @@ function kittyStart(){
     g.contract.call={suit:chosen.suit,rank:chosen.rank,id:chosen.id};
     g.contract.solo=true;
     addGameLog(name(n)+'が副官指名 '+g.contract.call.id+'（ひとり立ち・強制）');
+  }else if(g.contract.solo){
+    // v1.3: bid で solo を宣言していた場合、solo を維持する（旧: chooseDeputyCall で上書きされていた）
+    const chosen=chooseSoloCall(g.players[n].hand);
+    g.contract.call={suit:chosen.suit,rank:chosen.rank,id:chosen.id};
+    addGameLog(name(n)+'が副官指名 '+g.contract.call.id+'（ひとり立ち・bid維持）');
   }else{
     const call=chooseDeputyCall(g.players[n].hand,g.kitty,g.contract.suit,g.botLevel,g.contract.num,g.aiWeights,g.aiExperience);
     g.contract.call={suit:call.suit,rank:call.rank,id:call.id};
@@ -1065,6 +1074,3 @@ loadAccount();
 loadLeaderboard();
 
 screen('home-screen');
-
-
-
