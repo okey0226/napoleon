@@ -78,6 +78,14 @@ export function ntHandStrength(hand, params) {
     if (cards.some(c => c.rank === 'K')) score += 1.0;
     if (cards.some(c => c.rank === 'Q')) score += 0.6;
     if (cards.length >= 4) score += (params?.ntSuitLengthBonus ?? 1.2) * (cards.length - 3) * 0.5;
+
+    // v1.3: same-2 脆弱性。A持ちで2を持っていないスートは、相手の same-2 に負けるリスク。
+    if (cards.some(c => c.rank === 'A') && !cards.some(c => c.rank === '2')) {
+      const len = cards.length;
+      if (len >= 3) score -= 0.5;
+      else if (len >= 2) score -= 0.3;
+      else score -= 0.15;
+    }
   }
 
   if (minLen === 0) score -= 2.5;
@@ -90,18 +98,23 @@ export function ntHandStrength(hand, params) {
   return score;
 }
 
+// v1.3: solo 用強度。色 bid と同様にトランプペナルティを課す。
 export function soloAdjustedStrength(hand, trump) {
   const base = handStrength(hand);
+  const trumps = hand.filter(c => c.suit === trump);
+  let trumpPenalty = 0;
+  if (trumps.length === 0) trumpPenalty = -5.0;
+  else if (trumps.length === 1) trumpPenalty = -2.0;
   const hasMighty = hand.some(c => c.id === '♠A');
   const hasTrumpJ = trump !== 'NT' && hand.some(c => c.rank === 'J' && c.suit === trump);
-  return base + (hasMighty ? 1.5 : 0) + (hasTrumpJ ? 1.0 : 0);
+  return base + trumpPenalty + trumps.length * 0.5
+       + (hasMighty ? 1.5 : 0) + (hasTrumpJ ? 1.0 : 0);
 }
 
 // ==========================================
 // 3. 立ち判断
 // ==========================================
-// v1.2: 相手の高bid = 強手の証明。指名できれば勝ち周回収に寄与するため加点する。
-// ただし「相手に期待しすぎて互いに競り上がる」連鎖を防ぐため、加点を +2.0 でキャップ。
+// v1.3: 相手の高 bid は「相手が強い手」の証拠。自分は相対的に弱いので減点方向に修正。
 function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, type) {
   let adj = 0;
   if (!Array.isArray(currentBids)) return base;
@@ -112,24 +125,24 @@ function adjustStrengthForOpponents(base, mySuit, currentBids, params, mySeat, t
       adj -= params.suitConflictWeight * Math.max(0, bid.num - 14) * 0.15;
     }
     if (bid.num >= 16) {
-      adj += (params.opponentInferenceWeight ?? 0.4) * 0.6;
-      adj += (params.weakOpponentBoost ?? 0.3) * 0.4;
+      adj -= (params.opponentInferenceWeight ?? 0.4) * 0.6;
+      adj -= (params.weakOpponentBoost ?? 0.3) * 0.4;
     } else if (bid.num >= 14) {
-      adj += (params.weakOpponentBoost ?? 0.3) * 0.25;
+      adj -= (params.weakOpponentBoost ?? 0.3) * 0.25;
     } else if (bid.num >= 13) {
-      adj += (params.weakOpponentBoost ?? 0.3) * 0.1;
+      adj -= (params.weakOpponentBoost ?? 0.3) * 0.1;
     }
   }
 
-  // v1.2: 加点上限で競り上がりの連鎖を抑制
-  const MAX_BONUS = 2.0;
-  if (adj > MAX_BONUS) adj = MAX_BONUS;
+  const MAX_ADJ = 2.0;
+  if (adj > MAX_ADJ) adj = MAX_ADJ;
+  if (adj < -MAX_ADJ) adj = -MAX_ADJ;
 
   if (!Number.isFinite(adj)) adj = 0;
   return base + adj * (1 + (params.opponentInferenceWeight ?? 0.4) * 0.5);
 }
 
-// v1.2: 宣言枚数リスクペナルティを追加（高bidはEVから減点）
+// v1.3: 旧式は p*(1-p)*diff 項が p*(1-p)*(-diff) と打ち消し合い、bid 枚数選択が無効化されていた。
 function computeBidEV(p, num, strength, params) {
   if (!Number.isFinite(p)) p = 0.5;
   const maxHonest = findMaxHonestBid(strength);
@@ -137,18 +150,17 @@ function computeBidEV(p, num, strength, params) {
   const isHonest = bluffGap === 0;
   const diff = Math.max(0, num - 12);
   const highBoost = 1 + 0.5 * Math.max(0, num - 17);
-  const winBase = (1 - p) * diff * 8;
+  const winGain = diff * 8;
+  const lossGain = -diff * 8;
   const sweetBonus = sweetSpotFactor(p) * SWEET_SPOT_BONUS * highBoost;
-  const lossBase = -p * diff * 8;
   const bluffPenalty = bluffGap > 0
     ? -bluffGap * params.bluffLossMultiplier * 2 * (1 + bluffGap * 0.6)
     : 0;
   const honestBonus = isHonest
     ? HONEST_BID_FIXED_BONUS * Math.max(0, (p - 0.30) / 0.20)
     : 0;
-  // v1.2: 高い宣言ほど絶対リスクが増えるため小さな罰則
   const numRiskPenalty = Math.max(0, num - 13) * 0.10;
-  const napoleonEV = p * (winBase + sweetBonus) + (1 - p) * (lossBase + bluffPenalty) + honestBonus - numRiskPenalty;
+  const napoleonEV = p * (winGain + sweetBonus) + (1 - p) * (lossGain + bluffPenalty) + honestBonus - numRiskPenalty;
 
   const allyEV = p * ALLY_LOSS_PENALTY + (1 - p) * (ALLY_WIN_BONUS + ALLY_BLOCK_BONUS);
 
@@ -177,8 +189,11 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     return true;
   };
 
+  // v1.3: スート順序をランダム化して ♣ 偏重を抑制
+  const SUIT_ORDER = SUITS.slice().sort(() => Math.random() - 0.5);
+
   // ---- 通常(color)候補 ----
-  for (const suit of SUITS) {
+  for (const suit of SUIT_ORDER) {
     const cs = colorStrength(hand, suit, params);
     const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
     const strengthKey = quantizeStrength(cs);
@@ -206,12 +221,10 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
   }
 
-  // ---- v1.2: solo候補は厳格ゲート ----
-  // solo は副官なしの超高難度。以下の全条件を満たす手のみ候補化:
-  //   1. soloAdjustedStrength >= 13
-  //   2. num別にp閾値をさらに引き上げ
-  //   3. ブーストは 1.1 倍に抑制
-  for (const suit of SUITS) {
+  // ---- v1.3: solo候補は厳格ゲート（トランプ4枚以上） ----
+  for (const suit of SUIT_ORDER) {
+    const trumps = hand.filter(c => c.suit === suit);
+    if (trumps.length < 4) continue;
     const ss = soloAdjustedStrength(hand, suit);
     if (ss < 13) continue;
     for (let num = targetMin; num <= 20; num++) {
@@ -228,7 +241,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
 
   if (!candidates.length) return null;
 
-  // v1.2: EVが僅差なら低い枚数を優先（競り上がり抑制）
   candidates.sort((a, b) => {
     const evDiff = b.ev - a.ev;
     if (Math.abs(evDiff) < 0.15) return a.num - b.num;
@@ -507,17 +519,21 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
+  // v1.3: NT での same-2 見落としを修正。NT でも same-2 は発動するので、安全A判定を統一。
   const safeAces = legal.filter(c => {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
 
     if (c.id === '♠A') {
-      if (contract.suit === 'NT') return false;
+      if (contract.suit === 'NT') {
+        // NT の ♠A はマイティなので特別扱い（♥Q が出ていなければ安全）
+        const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
+        if (hqOut) return true;
+        return countVoidSeats(voids, '♠', seat) === 0;
+      }
       const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
       if (hqOut) return true;
       return countVoidSeats(voids, '♠', seat) === 0;
     }
-
-    if (contract.suit === 'NT') return true;
 
     if (hand.some(hc => hc.suit === c.suit && hc.rank === '2')) return true;
     if (trickNo === 0) return true;
@@ -636,6 +652,8 @@ export function chooseDeputyCard(ctx) {
     if (secureAces.length) {
       const ace = secureAces[0];
       if (napCanWinSuit(ace.suit)) {
+        // v1.3: 中盤以降は A を早期キャッシュ（相手の trump 準備より先に確定させる）
+        if (trickNo >= 4) return ace;
         const lowCards = legal.filter(c => c.rank !== 'A' && c.suit !== contract.suit);
         if (lowCards.length) return low(lowCards);
       } else {
@@ -778,6 +796,12 @@ function chooseAllianceFollow(ctx) {
       if (dump) return dump;
     }
     return lowX(ctx, legal);
+  }
+
+  // v1.3: 終盤の高得点トリックでは same-2 を優先して確定させる
+  if (trickNo >= 3 && pointsInTrick >= 3) {
+    const sameTwo = winningCards.find(c => c.rank === '2' && c.suit === ledSuit);
+    if (sameTwo) return sameTwo;
   }
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
