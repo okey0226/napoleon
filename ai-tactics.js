@@ -399,6 +399,24 @@ function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call } = ctx;
   if (!legal || !legal.length) return null;
 
+  // ───────────── NT trick 0: bait ─────────────
+  // NTでは♠A（マイティ）が唯一の「切り札」。オープニングリードで消費しない。
+  // 代わりに低い札でbait（第0墩を意図的に負ける）→後で♠Aでカットインして主導権を奪う。
+  if (contract.suit === 'NT' && trickNo === 0) {
+    const nonMighty = legal.filter(c => c.id !== '♠A');
+    const baitPool = nonMighty.filter(c => c.rank !== 'A' && c.rank !== '2');
+    if (baitPool.length) {
+      const bySuitLen = SUITS.map(s => ({ suit: s, cards: baitPool.filter(c => c.suit === s) }))
+        .filter(x => x.cards.length > 0)
+        .sort((a, b) => b.cards.length - a.cards.length);
+      for (const sl of bySuitLen) {
+        const lowest = sl.cards.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+        if (lowest) return lowest;
+      }
+    }
+  }
+
+  // ───────────── 非NT: 裏J釣り / トランプ枯渇 ─────────────
   if (contract.suit !== 'NT' && trickNo <= (params.baitBackJWindow || 3)) {
     const sc = sameColorSuitOf(contract.suit);
     const iHaveBackJ = hand.some(c => c.suit === sc && c.rank === 'J');
@@ -443,10 +461,15 @@ function chooseNapoleonLead(ctx) {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
 
     if (c.id === '♠A') {
+      // NT: ♠Aはリードしない（カットイン用に温存）
+      if (contract.suit === 'NT') return false;
       const hqOut = (playedCards || []).some(pc => pc.id === '♥Q');
       if (hqOut) return true;
       return countVoidSeats(voids, '♠', seat) === 0;
     }
+
+    // NT: 非♠Aは常に安全（♠Aを同時に場に出さない限り♥Q影の心配なし）
+    if (contract.suit === 'NT') return true;
 
     if (hand.some(hc => hc.suit === c.suit && hc.rank === '2')) return true;
     if (trickNo === 0) return true;
