@@ -334,30 +334,33 @@ export function chooseDeputyCall(hand, discard, trump, level, bid, params, exper
 // ==========================================
 // 5b. ソロ指名 —「副官指名として自然な札」を自分の手札から選ぶ
 // ==========================================
-// ひとり立ちを隠すため、通常の副官指名で使われる強い札 (♠A / 正J / 裏J / 非トランプA / 非トランプ2)
-// を自分の手札から優先して指名する。これにより、観測者には「通常の副官指名」と区別がつかない。
 export function chooseSoloCall(hand, trump = 'NT') {
   if (!Array.isArray(hand) || !hand.length) return { suit: "♠", rank: "A", id: "♠A" };
+  
   // 1) ♠A（マイティ）
   if (hand.some(c => c.id === '♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
+  
   // 2) 正J / 裏J
   if (trump !== 'NT') {
     if (hand.some(c => c.id === trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
     const sc = sameColorSuitOf(trump);
     if (sc && hand.some(c => c.id === sc + 'J')) return { suit: sc, rank: 'J', id: sc + 'J' };
   }
+  
   // 3) 非トランプA（弱スート優先 — 自然な副官指名パターン）
   const aces = hand.filter(c => c.rank === 'A' && (trump === 'NT' || c.suit !== trump));
   if (aces.length) {
     aces.sort((a, b) => SV[a.suit] - SV[b.suit]);
     return { suit: aces[0].suit, rank: 'A', id: aces[0].id };
   }
+  
   // 4) 非トランプ2（次点の副官指名）
   const twos = hand.filter(c => c.rank === '2' && (trump === 'NT' || c.suit !== trump));
   if (twos.length) {
     twos.sort((a, b) => SV[a.suit] - SV[b.suit]);
     return { suit: twos[0].suit, rank: '2', id: twos[0].id };
   }
+  
   // 5) フォールバック: 手札で最も弱いランク
   const fallback = hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
   return { suit: fallback.suit, rank: fallback.rank, id: fallback.id };
