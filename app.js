@@ -1,8 +1,5 @@
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
-import {
-  shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
-  winningEntry, strongestSuit, colorStrength, ntHandStrength
-} from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
@@ -19,7 +16,8 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null};let toastTimer;
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null};
+let toastTimer;
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -34,7 +32,7 @@ function openGameLog(){renderGameLog();$('game-log-dialog')?.showModal()}
 
 function addDebugLog(type,data){if(!g.matchDebugLog)g.matchDebugLog=[];const entry={t:Date.now(),type};if(data&&typeof data==='object'){for(const k in data){try{entry[k]=data[k]}catch{}}}g.matchDebugLog.push(entry);if(g.matchDebugLog.length>3000)g.matchDebugLog.shift()}
 function sanitizeForLog(obj,depth=0){if(depth>6)return'[deep]';if(obj===null||obj===undefined)return obj;const t=typeof obj;if(t==='function')return'[fn]';if(t==='string'||t==='number'||t==='boolean')return obj;if(Array.isArray(obj))return obj.map(x=>sanitizeForLog(x,depth+1));if(t==='object'){const out={};for(const k in obj){try{out[k]=sanitizeForLog(obj[k],depth+1)}catch{out[k]='[err]'}}return out}return String(obj)}
-function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating,elo:g.account.elo}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
+function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
 function downloadLog(){try{const payload=buildLogPayload();const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const ts=new Date().toISOString().replace(/[:.]/g,'-');a.href=url;a.download='napoleon-log-'+ts+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);toast('ログをダウンロードしました')}catch(e){console.error('download failed',e);toast('ダウンロードに失敗しました: '+e.message)}}
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards}}
@@ -157,7 +155,7 @@ function startLocal(){
   g.botLevel=3;
   g.round=1;
   g.rate=Number.isFinite(Number(g.account?.rating))?Number(g.account.rating):1000;
-  g.elo=Number.isFinite(Number(g.account?.elo))?Number(g.account.elo):ELO_INIT;
+  g.elo=g.rate;
   g.mult=1;
   g.greenRedraws=0;
   g.playoff=false;
@@ -175,7 +173,7 @@ function startLocal(){
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
   const modeLabel=$('game-mode-label'); if(modeLabel)modeLabel.textContent='COM戦';
-  const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='SIM RATE';
+  const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='RATE';
   const ratLab=$('rating-label'); if(ratLab)ratLab.textContent=g.rate;
   roundStart()
 }
@@ -228,11 +226,10 @@ function announceRound(round,rule){
   const caseB=computeTeamMinBid(scores,m,fourthSeat,bottomSeat);
   const caseC=computeTeamMinBid(scores,m,bottomSeat,bottomSeat);
   const caseD=computeTeamMinBid(scores,m,fourthSeat,fourthSeat);
-  const caseEraw=soloMinimumBid(S4-S5,m);
-  const caseE={minBid:Math.min(20,caseEraw),rawMin:caseEraw};
-  const fmt=r=>{if(!r)return'—';if(r.soloRequired)return r.soloPossible?r.soloMinBid+'枚以上（一人立ち）':'20枚でも不足（一人立ち）';if(r.rawMin>20)return'20枚でも不足（逆転不可）';return Math.min(20,r.rawMin)+'枚以上'};
-  const fmtE=r=>r.rawMin>20?'20枚でも不足（逆転不可）':r.minBid+'枚以上';
-  const body=['現在の得点（全員）',lines.join('\n'),'','■ 5位が4位を逆転するための最低立ち（ケース別）','','【A】5位=ナポレオン / 4位=副官','  勝った時に5位も4位も3位を超える（4位が勝つインセンティブを保証）','  → '+fmt(caseA),(caseA?.soloRequired?'  ⚠ 4位が勝っても3位を超えられないため、5位は【一人立ち】が必須です':''),'','【B】4位=ナポレオン / 5位=副官','  勝った時に4位も5位も3位を超え、負けた時に5位が4位を逆転','  → '+fmt(caseB),'','【C】5位=ナポレオン / 4位=連合軍（副官は別）','  5位が4位を超えるだけでOK（3位超えは不要）','  → '+fmt(caseC),'','【D】4位=ナポレオン / 5位=連合軍','  ナポレオンが負けると5位が4位を逆転','  → '+fmt(caseD),'','【E】5位=ナポレオン（ひとり立ち） / 副官なし（4位以下は全員連合軍）','  → '+fmtE(caseE),'','※ アピールで副官が判明しない場合、ゲーム中に指名札が公開された時点で','   上記の該当ケースに合わせて立ちが変更されます。','   立ちが変わった際は画面上部の宣言・卓上メッセージ・局ログに表示されます。','','プレーオフ条件：5位が勝利して4位と同点なら再戦'].filter(x=>x!=='').join('\n');
+  const soloRaw=soloMinimumBid(S4-S5,m);
+  const fmt=r=>{if(!r)return'—';if(r.rawMin>20)return'不可';return Math.min(20,r.rawMin)+'枚'};
+  const fmtSolo=v=>v>20?'不可':Math.min(20,v)+'枚';
+  const body=[lines.join('\n'),'','逆転立ち:','通常 '+fmt(caseC)+' · 組んだら '+fmt(caseA)+(caseA?.soloRequired?'（ソロ）':'')+' · 逆組み '+fmt(caseB)+' · 逆立ち '+fmt(caseD)+' · ひとり立ち '+fmtSolo(soloRaw)].join('\n');
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
@@ -240,7 +237,7 @@ function prepAuction(){g.phase='prep';announceRound(g.round,finalAuctionRule(g.m
 
 function scheduleHumanAuctionTimeout(){const auction=g.auction;if(!auction)return;clearTimeout(auction.humanTimeout);auction.humanTimeout=setTimeout(()=>{if(g.phase==='auction'&&g.auction===auction)humanApprove(true)},30000)}
 function auctionActivity(){if(g.phase!=='auction'||!g.auction)return;g.auction.autoApprove[0]=false;scheduleHumanAuctionTimeout()}
-function appealDetails(hand){const targets=[['♣J','♣J'],['♦J','♦J'],['♥J','♥J'],['♠J','♠J'],['マイティ（♠A）','♠A']];return targets.map(([label,id])=>label+'：'+(hand.some(c=>c.id===id)?'あり':'なし')).join(' · ')}
+function appealDetails(hand){const held=['♣J','♦J','♥J','♠J','♠A'].filter(id=>hand.some(c=>c.id===id));return held.length?held.join(' '):'なし'}
 
 function enterAuction(){g.phase='auction';phase('競り');message(g.auction.requiredBidSeat===null?'順番なし。宣言するか、承認して競りを降りてください':name(g.auction.requiredBidSeat)+'が申告せず立つ選択。最低枚数以上で宣言してください');$('auction-panel')?.classList.remove('hidden');$('auction-clock')?.classList.add('hidden');scheduleHumanAuctionTimeout();drawAuction();drawSeats();scheduleComBids()}
 
@@ -343,7 +340,7 @@ function comBid(i,version){
   }
   if(b){
     g.bidHistory.push({round:g.round,seat:i,num:b.num,suit:b.suit,solo:b.solo});
-    addGameLog(name(i)+'が'+b.num+b.suit+(b.solo?'（ひとり立ち）':'')+'を宣言');
+    addGameLog(name(i)+'が'+b.num+b.suit+'を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.botBids[i]++;
     g.auction.high={num:b.num,suit:b.suit,player:i,solo:b.solo===true};
@@ -351,7 +348,7 @@ function comBid(i,version){
     g.auction.version++;
     g.active=i;
     if(g.auction.autoApprove[0]&&g.auction.active.includes(0)){humanApprove(true);return}
-    message(name(i)+'が'+b.num+b.suit+(b.solo?'（ひとり立ち）':'')+'を宣言しました');
+    message(name(i)+'が'+b.num+b.suit+'を宣言しました');
     if(b.num===20&&b.suit==='NT'){auctionEnd(i);return}
     drawAuction();drawSeats();scheduleComBids();
     return;
@@ -523,7 +520,6 @@ function renderHand(discard=false){
   });
   const hc=$('hand-count');if(hc)hc.textContent=(g.players[0]?.hand.length||0)+'枚'
 }
-
 function drawLocalPlayControls(){
   const p=$('play-panel');if(!p)return;
   if(g.phase!=='play'||g.active!==0){p.classList.add('hidden');return}
@@ -657,14 +653,29 @@ function play(i,c){
   if(reveal){
     g.contract.revealedCall=true;
     g.contract.revealTrickNo=g.trickNo;
-    addGameLog('指名札公開、副官は'+name(g.contract.deputy));
+    if(g.contract.solo){
+      addGameLog('指名札公開、ひとり立ち');
+    }else{
+      addGameLog('指名札公開、副官は'+name(g.contract.deputy));
+    }
     if(g.round>=10&&!g.contract.solo){
       const r=computeTeamMinBid(g.matchScores,g.mult,g.contract.nap,g.contract.deputy);
       if(r!==null){
-        const oldBid=g.contract.num,forcedMin=r.minBid,caseLabel={A:'5位=ナポレオン / 4位=副官',B:'4位=ナポレオン / 5位=副官',C:'5位=ナポレオン / 4位=連合軍',D:'4位=ナポレオン / 5位=連合軍'}[r.case];
-        if(forcedMin>oldBid){g.contract.num=forcedMin;renderContractInfo();drawSeats();toast('副官判明：最低立ち条件が変わりました。立ちを '+oldBid+'枚 → '+forcedMin+'枚 に引き上げます（'+caseLabel+'）');addGameLog('★副官判明による立ち変更：'+oldBid+'枚 → '+forcedMin+'枚（'+caseLabel+'）');message('副官が判明したため、最低立ち条件に合わせて立ちを '+forcedMin+'枚へ引き上げました')}
-        else{addGameLog('副官判明：現在の立ち '+oldBid+'枚は最低条件 '+forcedMin+'枚を満たしています（'+caseLabel+'）');toast('副官判明：立ち '+oldBid+'枚は最低条件を満たしています（'+caseLabel+'）')}
-        if(r.incentiveBroken){const warnMsg='⚠ 20枚でも4位が3位を超えられません。副官に勝つインセンティブがなく、わざと負ける行動が最適になります';toast(warnMsg);addGameLog('⚠ '+warnMsg+'（'+caseLabel+'）');message(warnMsg)}
+        const oldBid=g.contract.num,forcedMin=r.minBid;
+        const caseLabel={A:'組んだら',B:'逆組み',C:'通常',D:'逆立ち'}[r.case];
+        if(forcedMin>oldBid){
+          g.contract.num=forcedMin;renderContractInfo();drawSeats();
+          toast('副官判明：立ちを '+oldBid+'枚 → '+forcedMin+'枚 に引き上げ（'+caseLabel+'）');
+          addGameLog('★副官判明による立ち変更：'+oldBid+'枚 → '+forcedMin+'枚（'+caseLabel+'）');
+          message('副官判明により立ちを '+forcedMin+'枚へ引き上げました');
+        }else{
+          addGameLog('副官判明：立ち '+oldBid+'枚は最低条件 '+forcedMin+'枚を満たしています（'+caseLabel+'）');
+          toast('副官判明：立ち '+oldBid+'枚は最低条件を満たしています（'+caseLabel+'）');
+        }
+        if(r.incentiveBroken){
+          const warnMsg='⚠ 20枚でも4位が3位を超えられません。副官に勝つインセンティブがありません';
+          toast(warnMsg);addGameLog('⚠ '+warnMsg+'（'+caseLabel+'）');message(warnMsg);
+        }
       }
     }
   }
@@ -734,9 +745,16 @@ function finishGame(){
   if(replayAllLast)g.playoff=true;
   const format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),final=g.round>=10&&!replayAllLast;
   const ratings=final?matchRatingChanges(g.matchScores,g.matchArt,[g.rate,1000,1000,1000,1000],g.matchStats,g.matchContracts):null;
-  let eloDelta=0;
-  if(final&&ratings){const oppElos=[1000,1000,1000,1000];eloDelta=computeEloDelta(g.elo,oppElos,ratings[0].outcome);g.elo=Math.max(100,g.elo+eloDelta)}
-  if(final){g.rate+=ratings[0].delta;const rl=$('rating-label');if(rl)rl.textContent=g.rate}
+  let eloDelta=0,combinedDelta=0;
+  if(final&&ratings){
+    const oppElos=[1000,1000,1000,1000];
+    eloDelta=computeEloDelta(g.rate,oppElos,ratings[0].outcome);
+    combinedDelta=ratings[0].delta+eloDelta;
+    g.rate+=combinedDelta;
+    g.elo=g.rate;
+    const rl=$('rating-label');if(rl)rl.textContent=g.rate;
+    ratings[0].delta=combinedDelta;
+  }
   if (final && ratings) {
     try {
       const rank = 1 + g.matchScores.filter(s => s > g.matchScores[0]).length;
@@ -763,14 +781,13 @@ function finishGame(){
   addGameLog((success?'ナポレオン軍成功':'連合軍成功')+' · 宣言 '+c.num+'枚 / 獲得 '+pts+'枚（捨て札連合軍'+g.allianceKittyPoints+'pt）');
   message(replayAllLast?'プレーオフ':success?'NAP TEAM WINS':'ALLIANCE WINS');
   drawSeats();
-  const finalRows=final?g.players.map((_,i)=>{const result=ratings[i],b=result.breakdown,roundStr=(b.rounds||[]).map(r=>(r.role==='nap'?'N':r.role==='dep'?'D':'A')+r.bid+':'+format(r.delta)).join(' ');return'<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">SIM RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · '+roundStr+'</small></strong></div>'}).join('')+'<div class="round-score-row"><span>ELO</span><strong class="'+(eloDelta<0?'score-down':'score-up')+'">'+format(eloDelta)+'<small>TOTAL '+g.elo+'</small></strong></div>':'',r=$('result-panel');
+  const finalRows=final?g.players.map((_,i)=>{const result=ratings[i],b=result.breakdown,roundStr=(b.rounds||[]).map(r=>(r.role==='nap'?'N':r.role==='dep'?'D':'A')+r.bid+':'+format(r.delta)).join(' ');return'<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · '+roundStr+'</small></strong></div>'}).join(''):'',r=$('result-panel');
   if(!r)return;
   r.classList.remove('hidden');
-  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · SOLO':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · SIM RATE '+g.rate+' · ELO '+g.elo+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
+  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · SOLO':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
   const nr=$('next-round');
   if(nr)nr.onclick=()=>{r.classList.add('hidden');if(final){screen('home-screen');return}g.round++;g.mult=1;g.greenRedraws=0;roundStart()}
 }
-
 function addTakenCards(seat,cards=[]){const row=document.createElement('div');row.className='taken-cards';const label=document.createElement('span');label.className='taken-label';label.textContent='獲得 '+cards.length;row.append(label);cards.forEach(c=>{const tag=document.createElement('span');tag.className='taken-card '+color(c.suit);tag.textContent=c.suit+c.rank;row.append(tag)});seat.append(row)}
 function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===0?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?(g.contract.revealedCall&&g.contract.solo?'ナポレオン（ひとり立ち）':'ナポレオン'):!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):g.phase==='auction'&&!g.auction.active.includes(i)?'承認済み':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken);box.append(e)})}
 
@@ -782,11 +799,11 @@ async function getUser(){try{g.user=await window.websim?.getUser?.()||null}catch
 function renderAccount(){
   if(!g.account)return;
   const po=$('profile-open');if(po)po.textContent='PROFILE';
-  const eloText=g.account.elo?' · Elo '+g.account.elo:'';
   const ac=$('account-chip');
-  if(ac){ac.textContent='ID '+g.account.id+' · '+g.account.rating+eloText;ac.classList.remove('hidden');ac.onclick=records}
+  if(ac){ac.textContent='ID '+g.account.id+' · RATE '+g.account.rating;ac.classList.remove('hidden');ac.onclick=records}
   const pf=$('profile-form');if(pf)pf.classList.add('hidden');
-  const ps=$('profile-summary');if(ps){ps.classList.remove('hidden');ps.innerHTML='<div class="profile-emblem">♠</div><div><div class="eyebrow">PLAYER CARD</div><div class="profile-summary-id">'+g.account.id+'</div><div class="micro-copy">RATE '+g.account.rating+(g.account.elo?' · Elo '+g.account.elo:'')+' · '+g.account.wins+'W · '+g.account.losses+'L</div></div><button type="button" id="open-my-page" class="secondary-button">VIEW PROFILE</button>';const omp=$('open-my-page');if(omp)omp.onclick=records}
+  const ps=$('profile-summary');
+  if(ps){ps.classList.remove('hidden');ps.innerHTML='<div class="profile-emblem">♠</div><div><div class="eyebrow">PLAYER CARD</div><div class="profile-summary-id">'+g.account.id+'</div><div class="micro-copy">RATE '+g.account.rating+' · '+g.account.wins+'W · '+g.account.losses+'L</div></div><button type="button" id="open-my-page" class="secondary-button">VIEW PROFILE</button>';const omp=$('open-my-page');if(omp)omp.onclick=records}
 }
 
 async function account(path){
@@ -799,6 +816,7 @@ async function account(path){
     const { data: d, parseError } = await readResponse(r);
     if(!r.ok || parseError)throw Error((d && d.error) || (parseError && 'JSON parse error') || '処理できませんでした');
     g.account=d;g.sessionToken=d.sessionToken||null;if(d.sessionToken)localStorage.setItem('napoleon_session',d.sessionToken);
+    if(d.rating)g.rate=d.rating;
     renderAccount();toast(path.endsWith('register')?'登録しました':'ログインしました');records()
   }catch(e){toast(sanitizeMessage(e.message)||'処理できませんでした')}
 }
@@ -810,7 +828,7 @@ async function loadAccount(){
     const r=await fetch('/api/account/me',{headers:{'x-session-token':token}});
     const { data } = await readResponse(r);
     if(r.ok && data){
-      g.account=data;g.sessionToken=token;if(data.elo)g.elo=data.elo;renderAccount();renderHomeRating(g.account)
+      g.account=data;g.sessionToken=token;if(data.rating)g.rate=data.rating;renderAccount();renderHomeRating(g.account)
     }else if(r.status===401||r.status===404){
       localStorage.removeItem('napoleon_session');g.sessionToken=null;renderHomeRating({unregistered:true})
     }
@@ -858,7 +876,7 @@ async function records(){
     const response=await fetch('/api/account/me',{headers:{'x-session-token':token}});
     const { data: d, parseError } = await readResponse(response);
     if(!response.ok || parseError || !d)throw Error('UNABLE TO LOAD PLAYER STATS.');
-    g.account=d;renderAccount();
+    g.account=d;if(d.rating)g.rate=d.rating;renderAccount();
     const perf=d.performance||{},prec=d.precision||{},ally=d.allyFeed||{},bold=d.boldBid||{},art=d.artRate||{},ms=d.matchStats||{};
     const napAtt=Number(perf.declarer_attempts)||0,napWins=Number(perf.declarer_successes)||0,napWinRate=napAtt?napWins/napAtt:0;
     const exactAtt=Number(prec.exact_attempts)||0,exactWins=Number(prec.exact_successes)||0,exactRate=exactAtt?exactWins/exactAtt:0;
@@ -875,7 +893,7 @@ async function records(){
     const allScore=totalRanks>0?Math.round((rankScore*0.7+artRate*0.3)*100):null;
     const pct=v=>(v*100).toFixed(1)+'%',scoreText=s=>s===null?'—':String(s),barW=s=>s===null?0:s,scoreUnit=s=>s===null?'':'<small>/100</small>';
     rc.innerHTML=`
-      <div class="mypage-head"><div class="profile-emblem large">♠</div><div class="mypage-identity"><div class="eyebrow">PLAYER CARD</div><h2>${escapeHTML(d.id)}</h2></div><div class="mypage-rating"><span>RATE</span><strong>${d.rating}</strong>${d.elo?'<small>ELO '+d.elo+'</small>':''}</div></div>
+      <div class="mypage-head"><div class="profile-emblem large">♠</div><div class="mypage-identity"><div class="eyebrow">PLAYER CARD</div><h2>${escapeHTML(d.id)}</h2></div><div class="mypage-rating"><span>RATE</span><strong>${d.rating}</strong></div></div>
       <div class="record-stats"><div class="record-stat"><span>MATCHES</span><b>${d.games}</b></div><div class="record-stat"><span>WINS</span><b>${d.wins}</b></div><div class="record-stat"><span>LOSSES</span><b>${d.losses}</b></div></div>
       <section class="performance-section"><h3 class="section-title">パフォーマンス指標</h3><div class="performance-grid">
         <article class="performance-card"><span>平均立ち成功率</span><strong>${napAtt>0?pct(napWinRate):'—'}</strong><small>${napWins} / ${napAtt}</small></article>
@@ -974,7 +992,7 @@ async function online(mode,roomCode,bots,botLevel=3){
     const rc=$('rating-caption');if(rc)rc.textContent='RATE';
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
-    g.room.ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='lobby'){message(m.text)}if(m.type==='matched'){g.online=m;g.mySeat=m.seat;g.players=m.players.map(p=>({name:p.id,hand:[]}));g.active=-1;drawSeats();phase('対戦開始');message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''))}if(m.type==='game-state'){g.onlineState=m.state;g.mySeat=m.you;g.active=m.state.active;g.phase=m.state.phase;g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));renderOnline()}if(m.type==='private-hand'){g.privateHand=m.hand;g.onlineLegal=m.legal;drawOnlineHand();if(g.onlineState)drawOnlineControls(g.onlineState)}if(m.type==='rating-updated'){g.lastRating=m;g.account=Object.assign({},g.account,{rating:m.rating,elo:m.elo});const rl=$('rating-label');if(rl)rl.textContent=m.rating;const eloMsg = m.eloDelta != null ? ' · Elo Δ '+m.eloDelta : '';toast('RATE Δ '+m.delta+eloMsg);if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState)}if(m.type==='room-error')toast(m.message)};
+    g.room.ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='lobby'){message(m.text)}if(m.type==='matched'){g.online=m;g.mySeat=m.seat;g.players=m.players.map(p=>({name:p.id,hand:[]}));g.active=-1;drawSeats();phase('対戦開始');message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''))}if(m.type==='game-state'){g.onlineState=m.state;g.mySeat=m.you;g.active=m.state.active;g.phase=m.state.phase;g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));renderOnline()}if(m.type==='private-hand'){g.privateHand=m.hand;g.onlineLegal=m.legal;drawOnlineHand();if(g.onlineState)drawOnlineControls(g.onlineState)}if(m.type==='rating-updated'){g.lastRating=m;g.account=Object.assign({},g.account,{rating:m.rating});const rl=$('rating-label');if(rl)rl.textContent=m.rating;const combined=(m.delta||0)+(m.eloDelta||0);toast('RATE Δ '+(combined>=0?'+':'')+combined);if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState)}if(m.type==='room-error')toast(m.message)};
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
   }catch(e){toast('対戦に接続できませんでした');screen('home-screen')}
 }
@@ -983,7 +1001,6 @@ async function online(mode,roomCode,bots,botLevel=3){
 // 画面切り替え・初期化
 // ==========================================
 
-// 要素が存在する場合のみイベントを登録（JSエラーで止まらないようにする）
 $('home-start')?.addEventListener('click', () => screen('mode-select-screen'));
 
 $('start-com')?.addEventListener('click', () => startLocal());
@@ -1031,5 +1048,4 @@ $('login-account')?.addEventListener('click', () => account('/api/account/login'
 loadAccount();
 loadLeaderboard();
 
-// 初期表示を確実にヒーロー画面にする
 screen('home-screen');
