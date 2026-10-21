@@ -35,22 +35,24 @@ export const PARAM_BOUNDS = {
   bidThreshold: [2.0, 6.0], riskTolerance: [0.1, 1.0], leadAggression: [0.2, 1.0], followAggression: [0.1, 1.0],
   trumpBonus: [0.2, 1.5], mightyBonus: [1.0, 3.0], safeAceWeight: [0.0, 1.0], roleCardPreservation: [0.0, 1.0], deputyFeedBias: [0.0, 1.0],
   opponentInferenceWeight: [0.0, 1.5], suitConflictWeight: [0.2, 1.0], mightyShadowWeight: [0.0, 1.0], weakOpponentBoost: [0.0, 1.0], bluffLossMultiplier: [0.3, 1.5], cooperationBonus: [0.0, 1.0],
-  ntPreference: [0.5, 1.5], ntSuitLengthBonus: [0.5, 3.0], ntAceWeight: [1.0, 3.0], ntMightyBonus: [2.0, 5.0], highBidNtThreshold: [14, 18],
+  ntPreference: [0.4, 1.3], ntSuitLengthBonus: [0.5, 3.0], ntAceWeight: [1.0, 3.0], ntMightyBonus: [2.0, 5.0], highBidNtThreshold: [16, 19],
   aceWeakSuitBonus: [0.0, 0.5], aceShortBonus: [0.0, 0.3], aceLongPenalty: [0.0, 0.3], sameTwoAceCounter: [0.0, 0.6], sameTwoShortBonus: [0.2, 0.6], sameTwoLongPenalty: [0.0, 0.5], sameTwoHighBidBonus: [0.0, 0.4],
   trumpExhaustionThreshold: [2, 6], baitModeWindow: [1, 4], baitMinTrumps: [3, 6], strongTrumpLeadAggression: [0.3, 1.0], aceCashUrgency: [0.5, 2.0], pointCardSafetyThreshold: [0.3, 0.8], tenHoldThreshold: [0.3, 0.9], nonTrumpAceWaiting: [0.0, 1.0], baitBackJWindow: [1, 4], baitBackJChance: [0.0, 1.0],
   faceCardOnNapWin: [0.0, 1.0], preserveNextStronger: [0.5, 1.0], deputyRevealUrgency: [0.0, 1.0], deputyCoverWeight: [0.0, 1.0], sameTwoDeputyBonus: [0.0, 1.0],
-  allyFaceCardBonus: [0.0, 1.0], napWeaknessLeadWeight: [0.0, 1.5], trumpAvoidWeight: [0.5, 1.0], sameColorSuitAvoid: [0.0, 1.0], spadeLeadPriority: [0.0, 1.0], nonDeclaredSuitWeight: [0.0, 1.0], queenHoardWeight: [0.0, 1.0], sameTwoHoardWeight: [0.0, 1.0], allyYieldBonus: [0.0, 1.0]
+  allyFaceCardBonus: [0.0, 1.0], napWeaknessLeadWeight: [0.0, 1.5], trumpAvoidWeight: [0.5, 1.0], sameColorSuitAvoid: [0.0, 1.0], spadeLeadPriority: [0.0, 1.0], nonDeclaredSuitWeight: [0.0, 1.0], queenHoardWeight: [0.0, 1.0], sameTwoHoardWeight: [0.0, 1.0], allyYieldBonus: [0.0, 1.0],
+  allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [1, 6]
 };
 
 export function defaultStrategy() {
   return {
     bidThreshold: 4.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4, trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6, deputyFeedBias: 0.5,
     opponentInferenceWeight: 0.4, suitConflictWeight: 0.6, mightyShadowWeight: 0.3, weakOpponentBoost: 0.3, bluffLossMultiplier: 0.6, cooperationBonus: 0.5,
-    ntPreference: 1.0, ntSuitLengthBonus: 1.5, ntAceWeight: 2.0, ntMightyBonus: 3.5, highBidNtThreshold: 16,
+    ntPreference: 0.85, ntSuitLengthBonus: 1.2, ntAceWeight: 1.5, ntMightyBonus: 2.5, highBidNtThreshold: 17,
     aceWeakSuitBonus: 0.3, aceShortBonus: 0.15, aceLongPenalty: 0.15, sameTwoAceCounter: 0.3, sameTwoShortBonus: 0.4, sameTwoLongPenalty: 0.25, sameTwoHighBidBonus: 0.2,
     trumpExhaustionThreshold: 3, baitModeWindow: 2, baitMinTrumps: 4, strongTrumpLeadAggression: 0.7, aceCashUrgency: 1.0, pointCardSafetyThreshold: 0.5, tenHoldThreshold: 0.6, nonTrumpAceWaiting: 0.5, baitBackJWindow: 3, baitBackJChance: 0.6,
     faceCardOnNapWin: 0.9, preserveNextStronger: 0.9, deputyRevealUrgency: 0.5, deputyCoverWeight: 0.5, sameTwoDeputyBonus: 0.5,
-    allyFaceCardBonus: 0.9, napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9, sameColorSuitAvoid: 0.8, spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6, sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5
+    allyFaceCardBonus: 0.9, napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9, sameColorSuitAvoid: 0.8, spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6, sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5,
+    allySameTwoLeadChance: 0.55, allySameTwoWindow: 4
   };
 }
 
