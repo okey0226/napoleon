@@ -16,7 +16,7 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false};
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false};
 let toastTimer;
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
@@ -24,7 +24,7 @@ function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)retur
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
 function clearTimers(){g.timer.forEach(clearTimeout);g.timer=[]}
-function closeOnline(){clearTimers();clearTimeout(g.auction?.humanTimeout);g.room?.close?.();g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;const ac=$('auction-clock');if(ac)ac.classList.add('hidden')}
+function closeOnline(){g.intentionalLeave=true;clearTimers();clearTimeout(g.auction?.humanTimeout);clearInterval(g.autoNextTimer);g.room?.close?.();g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;const ac=$('auction-clock');if(ac)ac.classList.add('hidden');setTimeout(()=>{g.intentionalLeave=false},600)}
 function message(t){const el=$('table-message');if(el)el.textContent=t}
 function addGameLog(text){if(!g.localLog)return;g.localLog.push({round:g.round,text});if(g.localLog.length>300)g.localLog.shift();const cnt=$('game-log-count');if(cnt)cnt.textContent=String(g.localLog.length);if($('game-log-dialog')?.open)renderGameLog()}
 function renderGameLog(){const list=$('game-log-list');if(!list)return;list.innerHTML=g.localLog?.length?g.localLog.map(entry=>'<article class="game-log-entry"><small>第'+entry.round+'局</small><span>'+escapeHTML(entry.text)+'</span></article>').join(''):'<p class="game-log-empty">まだログはありません</p>';list.scrollTop=list.scrollHeight}
@@ -198,6 +198,7 @@ function startLocal(){
   g.discardedKitty=[];
   g.allianceKittyPoints=0;
   g.waitingAutoPlay=false;
+  clearInterval(g.autoNextTimer);
   g.matchStats=Array.from({length:5},()=>({declarerAttempts:0,declarerSuccesses:0,exactAttempts:0,exactSuccesses:0,boldAttempts:0,boldSuccesses:0,soloAttempts:0,soloSuccesses:0,deputyAttempts:0,deputySuccesses:0,artAttempts:0,dramaticPlays:0,allyFeedAttempts:0,allyFeedSuccesses:0,bidTotal:0}));
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
@@ -209,6 +210,7 @@ function startLocal(){
 
 function roundStart(){
   clearTimers();clearTimeout(g.auction?.humanTimeout);
+  clearInterval(g.autoNextTimer);
   g.waitingAutoPlay=false;
   g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];
   g.discardedKitty=[];
@@ -859,9 +861,29 @@ function finishGame(){
   const finalRows=final?g.players.map((_,i)=>{const result=ratings[i],b=result.breakdown,roundStr=(b.rounds||[]).map(r=>(r.role==='nap'?'N':r.role==='dep'?'D':'A')+r.bid+':'+format(r.delta)).join(' ');return'<div class="round-score-row"><span>'+name(i)+' · MATCH '+format(g.matchScores[i])+' / ART '+format(g.matchArt[i])+'</span><strong class="'+(result.delta<0?'score-down':'score-up')+'">RATE Δ '+format(result.delta)+'<small>順位 '+b.rank+' · '+roundStr+'</small></strong></div>'}).join(''):'',r=$('result-panel');
   if(!r)return;
   r.classList.remove('hidden');
-  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · ひとり立ち':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(finalTrickWinnerName?'<p class="micro-copy">最終トリック勝者: '+finalTrickWinnerName+'</p>':'')+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button>';
+  r.innerHTML='<div class="eyebrow">'+(g.playoff?'プレーオフ':g.round===9?'ラス前':g.round>=10?'オールラスト':'ROUND '+String(g.round).padStart(2,'0'))+' · RESULT</div><h2>'+(success?'NAP TEAM WINS':'ALLIANCE WINS')+'</h2><p>BID '+c.num+c.suit+' · POINTS '+pts+(c.solo?' · ひとり立ち':'')+'<br>NAP '+name(c.nap)+(c.solo?'':' · DEPUTY '+name(c.deputy))+(g.allianceKittyPoints>0?'<br>捨て札: '+g.allianceKittyPoints+'pt（連合軍共有）':'')+'</p>'+(finalTrickWinnerName?'<p class="micro-copy">最終トリック勝者: '+finalTrickWinnerName+'</p>':'')+(replayAllLast?'<p>5位が4位に並びました。プレーオフを行います。</p>':'')+'<div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>'+rows+'</div>'+(final?'<div class="round-score-list"><div class="micro-copy">MATCH COMPLETE · RATE '+g.rate+'</div>'+finalRows+'</div>':'')+'<button id="next-round" class="primary-button">'+(final?'MENU':replayAllLast?'プレーオフ再戦':'NEXT ROUND')+'</button><div id="auto-next-countdown" class="micro-copy" style="margin-top:8px;min-height:14px;"></div>';
+  clearInterval(g.autoNextTimer);
   const nr=$('next-round');
-  if(nr)nr.onclick=()=>{r.classList.add('hidden');if(final){screen('home-screen');return}g.round++;g.mult=1;g.greenRedraws=0;roundStart()}
+  if(nr)nr.onclick=()=>{
+    clearInterval(g.autoNextTimer);
+    r.classList.add('hidden');
+    if(final){screen('home-screen');return}
+    g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+  };
+  if(!final){
+    let remain=6;
+    const cd=$('auto-next-countdown');
+    if(cd)cd.textContent=remain+'秒後に次の局へ…';
+    g.autoNextTimer=setInterval(()=>{
+      if(r.classList.contains('hidden')){clearInterval(g.autoNextTimer);return;}
+      remain--;
+      if(remain<=0){
+        clearInterval(g.autoNextTimer);
+        r.classList.add('hidden');
+        g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+      } else if(cd){cd.textContent=remain+'秒後に次の局へ…';}
+    },1000);
+  }
 }
 function addTakenCards(seat,cards=[]){const row=document.createElement('div');row.className='taken-cards';const label=document.createElement('span');label.className='taken-label';label.textContent='獲得 '+cards.length;row.append(label);cards.forEach(c=>{const tag=document.createElement('span');tag.className='taken-card '+color(c.suit);tag.textContent=c.suit+c.rank;row.append(tag)});seat.append(row)}
 
@@ -1002,6 +1024,36 @@ async function loadStrategyLab(){
   }catch(e){console.warn('[loadStrategyLab]', e?.message);wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>'}
 }
 
+function genBarChart(generations){
+  if(!generations||generations.length<1) return '';
+  const data=generations.slice(-20);
+  const W=Math.max(300,data.length*30);
+  const H=130;
+  const padX=18,padY=10;
+  const barW=(W-padX*2)/data.length;
+  const innerH=H-padY*2;
+  const bars=data.map((gg,i)=>{
+    const nap=Math.max(0,Math.min(1,Number(gg.nap)||0));
+    const bh=nap*innerH;
+    const x=padX+i*barW;
+    const y=H-padY-bh;
+    return `<rect x="${x+2}" y="${y}" width="${barW-4}" height="${bh}" fill="#f3d48e" rx="2"><title>Gen ${gg.generation}: NAP ${(nap*100).toFixed(1)}%</title></rect>`;
+  }).join('');
+  const labels=data.map((gg,i)=>{
+    const x=padX+i*barW+barW/2;
+    return `<text x="${x}" y="${H-2}" font-size="7" fill="#8fa69a" text-anchor="middle">${gg.generation}</text>`;
+  }).join('');
+  const lineY=padY+innerH*0.5;
+  return `<div style="margin-top:10px;padding:10px;border:1px solid rgba(225,188,112,.2);border-radius:10px;background:rgba(20,42,33,.6);">
+    <div class="micro-copy" style="margin-bottom:6px;">NAP勝率の世代推移（目標50% / 直近${data.length}世代）</div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:140px;display:block;">
+      <line x1="${padX}" y1="${lineY}" x2="${W-padX}" y2="${lineY}" stroke="rgba(163,177,168,.45)" stroke-dasharray="3 3" />
+      <text x="${padX}" y="${lineY-3}" font-size="7" fill="#a3b1a8">50%</text>
+      ${bars}${labels}
+    </svg>
+  </div>`;
+}
+
 function renderStrategyLab({strategies,insights,generations}){
   const wrap=$('strategy-content');if(!wrap)return;
   let cards='';
@@ -1018,7 +1070,7 @@ function renderStrategyLab({strategies,insights,generations}){
   }
   const insightCards=insights.length>0?insights.map(ins=>`<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
   const genRows=generations.length>0?generations.slice(-10).map(gg=>{const delta=Number(gg.best_delta||0);return`<div class="gen-row"><span>Gen ${gg.generation}</span><b>${delta>0?'+':''}${delta.toFixed(2)}pt</b><small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small></div>`}).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
-  wrap.innerHTML=`<div class="strategy-actions"><button id="run-selfplay" class="primary-button">自己対戦を実行（100局）</button><button id="refresh-strategy" class="secondary-button">再読み込み</button><span id="selfplay-status" class="micro-copy"></span></div><section class="strategy-section"><h2>TOP STRATEGIES（レート上昇順）</h2><div class="strategy-list">${cards}</div></section><section class="strategy-section"><h2>最上位戦略のパラメータ</h2><div class="param-table">${paramRows}</div></section><section class="strategy-section"><h2>学習インサイト</h2><div class="insight-list">${insightCards}</div></section><section class="strategy-section"><h2>世代推移</h2><div class="gen-list">${genRows}</div></section>`;
+  wrap.innerHTML=`<div class="strategy-actions"><button id="run-selfplay" class="primary-button">自己対戦を実行（100局）</button><button id="refresh-strategy" class="secondary-button">再読み込み</button><span id="selfplay-status" class="micro-copy"></span></div><section class="strategy-section"><h2>NAP勝率の世代推移</h2>${genBarChart(generations)}</section><section class="strategy-section"><h2>TOP STRATEGIES（レート上昇順）</h2><div class="strategy-list">${cards}</div></section><section class="strategy-section"><h2>最上位戦略のパラメータ</h2><div class="param-table">${paramRows}</div></section><section class="strategy-section"><h2>学習インサイト</h2><div class="insight-list">${insightCards}</div></section><section class="strategy-section"><h2>世代推移（数値）</h2><div class="gen-list">${genRows}</div></section>`;
   const runSelfplay=$('run-selfplay');
   if(runSelfplay)runSelfplay.onclick=async()=>{
     const btn=$('run-selfplay'),status=$('selfplay-status');
@@ -1055,12 +1107,96 @@ function renderStrategyLab({strategies,insights,generations}){
 
 function code(){return Math.random().toString(36).slice(2,7).toUpperCase()}
 
+function bindOnlineWs(ws){
+  ws.onmessage=(e)=>{
+    let m;try{m=JSON.parse(e.data)}catch{return}
+    handleOnlineMessage(m);
+  };
+  ws.onclose=()=>{
+    if(g.intentionalLeave){return;}
+    if(!g.sessionToken){return;}
+    if(g.reconnecting){return;}
+    toast('接続が切れました。再接続中…');
+    setTimeout(()=>onlineReconnect(),1500);
+  };
+}
+
+function handleOnlineMessage(m){
+  if(m.type==='lobby'){message(m.text);return;}
+  if(m.type==='matched'){
+    g.online=m;g.mySeat=m.seat;
+    g.players=m.players.map(p=>({name:p.id,hand:[]}));
+    g.active=-1;drawSeats();
+    phase('対戦開始');
+    message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''));
+    return;
+  }
+  if(m.type==='game-state'){
+    g.onlineState=m.state;g.mySeat=m.you;
+    g.active=m.state.active;g.phase=m.state.phase;
+    g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));
+    renderOnline();
+    return;
+  }
+  if(m.type==='private-hand'){
+    g.privateHand=m.hand;g.onlineLegal=m.legal;
+    drawOnlineHand();
+    if(g.onlineState)drawOnlineControls(g.onlineState);
+    return;
+  }
+  if(m.type==='rating-updated'){
+    g.lastRating=m;
+    g.account=Object.assign({},g.account,{rating:m.rating});
+    const rl=$('rating-label');if(rl)rl.textContent=m.rating;
+    const combined=(m.delta||0)+(m.eloDelta||0);
+    toast('RATE Δ '+(combined>=0?'+':'')+combined);
+    if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState);
+    return;
+  }
+  if(m.type==='room-error'){toast(m.message);return;}
+  if(m.type==='reconnected'){
+    g.reconnecting=false;
+    toast('再接続しました');
+    g.online={matchId:m.matchId,mode:m.mode,seat:m.seat};
+    screen('game-screen');
+    return;
+  }
+  if(m.type==='reconnect-failed'){
+    g.reconnecting=false;
+    toast('復帰できませんでした。新規参加します。');
+    screen('home-screen');
+    return;
+  }
+}
+
+async function onlineReconnect(){
+  if(!g.sessionToken||g.reconnecting)return;
+  g.reconnecting=true;
+  try{
+    const proto=location.protocol==='https:'?'wss:':'ws:';
+    const ws=new WebSocket(proto+'//'+location.host+'/ws');
+    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
+    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
+    bindOnlineWs(ws);
+    ws.send(JSON.stringify({type:'reconnect',sessionToken:g.sessionToken}));
+  }catch(e){
+    g.reconnecting=false;
+    toast('再接続に失敗しました');
+    screen('home-screen');
+  }
+}
+
 async function online(mode,roomCode,bots,botLevel=3){
   $('game-log-open')?.classList.add('hidden');
   if(mode==='ranked'&&!localStorage.getItem('napoleon_session')){toast('先にプレイヤー登録をしてください');screen('profile-screen');return}
+  g.intentionalLeave=false;
+  g.reconnecting=false;
   loadTopStrategy();
   try{
-    g.room=await new Promise((resolve,reject)=>{const proto=location.protocol==='https:'?'wss:':'ws:';const ws=new WebSocket(proto+'//'+location.host+'/ws');ws.onopen=()=>resolve({ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()});ws.onerror=reject});
+    const proto=location.protocol==='https:'?'wss:':'ws:';
+    const ws=new WebSocket(proto+'//'+location.host+'/ws');
+    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
+    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
     g.mySeat=-1;g.privateHand=[];g.onlineState=null;g.onlineDiscard=new Set();g.onlineSelectedCard=null;g.onlineBid=13;g.onlineSuit='♠';g.onlineRank='A';g.announcedCallRound=null;g.announcedRound=null;
     ['auction-panel','call-panel','play-panel','result-panel'].forEach(id=>$('id')?.classList.add('hidden'));
     screen('game-screen');
@@ -1068,7 +1204,7 @@ async function online(mode,roomCode,bots,botLevel=3){
     const rc=$('rating-caption');if(rc)rc.textContent='RATE';
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
-    g.room.ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='lobby'){message(m.text)}if(m.type==='matched'){g.online=m;g.mySeat=m.seat;g.players=m.players.map(p=>({name:p.id,hand:[]}));g.active=-1;drawSeats();phase('対戦開始');message('配札しました。競り開始まで7秒です。'+(m.botCount?' COM '+m.botCount+'人が参加します。':''))}if(m.type==='game-state'){g.onlineState=m.state;g.mySeat=m.you;g.active=m.state.active;g.phase=m.state.phase;g.players=m.state.players.map(p=>({name:p.name,hand:Array(p.handCount).fill(null)}));renderOnline()}if(m.type==='private-hand'){g.privateHand=m.hand;g.onlineLegal=m.legal;drawOnlineHand();if(g.onlineState)drawOnlineControls(g.onlineState)}if(m.type==='rating-updated'){g.lastRating=m;g.account=Object.assign({},g.account,{rating:m.rating});const rl=$('rating-label');if(rl)rl.textContent=m.rating;const combined=(m.delta||0)+(m.eloDelta||0);toast('RATE Δ '+(combined>=0?'+':'')+combined);if(g.onlineState?.phase==='result')showOnlineResult(g.onlineState)}if(m.type==='room-error')toast(m.message)};
+    bindOnlineWs(ws);
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
   }catch(e){toast('対戦に接続できませんでした');screen('home-screen')}
 }
@@ -1111,7 +1247,7 @@ const strategyBtn = $('open-strategy-lab');
 if (strategyBtn) strategyBtn.addEventListener('click', () => screen('strategy-screen'));
 
 document.querySelectorAll('[data-go-home]').forEach(b => b.addEventListener('click', () => screen('home-screen')));
-$('leave-game')?.addEventListener('click', () => { closeOnline(); screen('home-screen'); });
+$('leave-game')?.addEventListener('click', () => { g.intentionalLeave=true; closeOnline(); screen('home-screen'); });
 
 $('register-account')?.addEventListener('click', () => account('/api/account/register'));
 $('login-account')?.addEventListener('click', () => account('/api/account/login'));
