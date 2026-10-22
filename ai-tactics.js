@@ -12,7 +12,6 @@ export function isTrump(contract, c) {
 export function cardPower(contract, trickNo, card, trick, strictAllSame = false) {
   const led = trick.length > 0 ? trick[0].card.suit : card.suit;
   const allSame = trick.every(x => x.card.suit === led);
-  // strictAllSame: 不完全なトリック（プレイ途中）ではセイム2ボーナスを抑制
   const sameTwoEligible = allSame && (!strictAllSame || trick.length >= 5);
   const mighty = trick.some(x => x.card.id === "♠A");
 
@@ -216,7 +215,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
   }
 
-  // ソロ宣言: 副官サポート不在のリスクを考慮し、閾値を高めに設定
   for (const suit of SUIT_ORDER) {
     const trumps = hand.filter(c => c.suit === suit);
     if (trumps.length < 4) continue;
@@ -461,7 +459,7 @@ function lowX(ctx, cards) {
   return best;
 }
 
-// ★ 追加: 2温存ヘルパー
+// ★ 追加: 2温存ヘルパー（捨て札用）
 function lowAvoidTwo(ctx, cards) {
   if (!cards || !cards.length) return null;
   const twos = cards.filter(c => c.rank === '2');
@@ -469,9 +467,6 @@ function lowAvoidTwo(ctx, cards) {
 
   // 2以外のカードがある場合、基本的には2を温存する
   if (others.length > 0) {
-    // 例外1: NTでNAPがこのスートをリード済み ＆ このスートのA未出現
-    // 例外2: 役札が場にあり2が勝てない
-    // → いずれも「2を温存する」方向で処理するため、othersから選ぶ
     return lowX(ctx, others);
   }
   return lowX(ctx, twos);
@@ -484,7 +479,6 @@ function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call, discardedKitty, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
 
-  // 全部取り負け回避: 19点到達かつ宣言<20なら、意図的に負ける
   const allTakeAvoid = contract.num < 20 && (currentNapPoints || 0) >= 19;
   if (allTakeAvoid) {
     const offSuitLow = legal.filter(c =>
@@ -496,7 +490,6 @@ function chooseNapoleonLead(ctx) {
     if (offSuitLow.length) {
       return offSuitLow.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
     }
-    // ★ 修正: 2を温存
     return lowAvoidTwo(ctx, legal);
   }
 
@@ -636,12 +629,10 @@ function chooseNapoleonFollow(ctx) {
 
   const napPoints = currentNapPoints || 0;
 
-  // 全部取り負け回避: 19点到達かつ宣言<20なら、勝ち札を出さない
   const allTakeAvoid = contract.num < 20 && napPoints >= 19;
   if (allTakeAvoid) {
     const nonWinning = legal.filter(c => !winningCards.includes(c));
     const pool = nonWinning.length ? nonWinning : legal;
-    // ★ 修正: 2を温存
     return lowAvoidTwo(ctx, pool);
   }
 
@@ -686,7 +677,6 @@ function chooseNapoleonFollow(ctx) {
     if (trumps.length) return low(trumps);
   }
 
-  // ★ 修正: ボイド経路で2温存
   if (legal[0]?.suit !== trick[0].card.suit) {
     return lowAvoidTwo(ctx, legal);
   }
@@ -740,8 +730,8 @@ export function chooseDeputyCard(ctx) {
   const ledSuit = trick[0].card.suit;
   const napCard = trick.find(e => e.seat === contract.nap)?.card;
 
-  // ★ 追加: 指定2のフォロー (NAPが指定スートをリードしたら、明確な理由がない限り2を出す)
-  if (trick.length === 1 && trick[0].seat === contract.nap && ledSuit === call?.suit && call?.rank === '2') {
+  // ★ 修正: 指定2の強制フォロー（NAPが指定スートをリードしたら、無条件で2を出す）
+  if (ledSuit === call?.suit && call?.rank === '2') {
     const myCalledTwo = legal.find(c => c.id === call.id);
     if (myCalledTwo) return myCalledTwo;
   }
@@ -754,6 +744,7 @@ export function chooseDeputyCard(ctx) {
     if (followCards.length > 0) {
       const dump = pickDumpFace(followCards, contract, napCard.rank, { excludeId: call?.id });
       if (dump) return dump;
+      
       // ★ 追加: 敗着にならないQ/10/Jのダンプ
       const dumpHighCard = followCards.filter(c =>
         (c.rank === 'Q' || c.rank === '10' || (c.rank === 'J' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract))) &&
@@ -765,7 +756,6 @@ export function chooseDeputyCard(ctx) {
         return dumpHighCard[0];
       }
     }
-    // ★ 修正: 2温存
     return lowAvoidTwo(ctx, legal);
   }
 
@@ -780,7 +770,6 @@ export function chooseDeputyCard(ctx) {
     }
   }
 
-  // ★ 修正: ボイドダンプで2を温存
   if (legal[0]?.suit !== ledSuit) {
     return lowAvoidTwo(ctx, legal);
   }
@@ -888,7 +877,6 @@ function chooseAllianceFollow(ctx) {
       const dump = pickDumpFace(followCards, contract, current.card.rank);
       if (dump) return dump;
     }
-    // ★ 修正: 2温存
     if (legal[0]?.suit !== ledSuit) {
       return lowAvoidTwo(ctx, legal);
     }
@@ -909,7 +897,6 @@ function chooseAllianceFollow(ctx) {
     if (trumps.length) return low(trumps);
   }
 
-  // ★ 修正: ボイド経路で2温存
   if (legal[0]?.suit !== ledSuit) {
     return lowAvoidTwo(ctx, legal);
   }
