@@ -16,7 +16,6 @@ function computeBidStrength(hand, suit, params) {
   return colorStrength(hand, suit, params);
 }
 
-// v1.2: computeRoundRating は共通 rateRound に委譲
 function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
   const pts = takenPoints || [0, 0, 0, 0, 0];
   const roundData = {
@@ -117,6 +116,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase,
         playedCards: played, voids, seat, deputy, params: params[seat] || defaultStrategy(),
+        discardedKitty: discard,
         isMySideNap: seat === nap || (revealed && seat === deputy),
         isCurrentNapWinning,
         isRevealed: revealed,
@@ -185,12 +185,21 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     existing = results || [];
   } catch { }
 
+  // ベースライン読み込み: null/undefined は defaultStrategy() の値で補完
+  const sanitizeParams = (raw) => {
+    const base = defaultStrategy();
+    const parsed = safeJsonParse(raw, null);
+    if (!parsed || typeof parsed !== 'object') return base;
+    const clean = { ...base };
+    for (const k of Object.keys(base)) {
+      const v = parsed[k];
+      if (typeof v === 'number' && Number.isFinite(v)) clean[k] = v;
+    }
+    return clean;
+  };
+
   const baseline = existing.length
-    ? existing.map(r => {
-        const parsed = safeJsonParse(r.params, null);
-        if (parsed && typeof parsed === 'object') return parsed;
-        return defaultStrategy();
-      })
+    ? existing.map(r => sanitizeParams(r.params))
     : [defaultStrategy()];
 
   const generation = existing.length ? Math.max(...existing.map(r => Number(r.generation) || 0)) + 1 : 1;
@@ -245,12 +254,10 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         }
       }
 
-      // v1.2: 順位補正を拡大（旧 ±0.5 → ±1.5）
       if (placement[seat] === 1) matchRating += RANK_1_BONUS;
       else if (placement[seat] === 2) matchRating += RANK_2_BONUS;
       else if (placement[seat] === 4) matchRating += RANK_4_PENALTY;
       else if (placement[seat] === 5) matchRating += RANK_5_PENALTY;
-      // v1.2: -0.05 * contracts.length は撤廃（構造的デフレの原因だった）
 
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
