@@ -1274,7 +1274,7 @@ function drawOnlineAuction(s){
   if(minus) minus.onclick=()=>{
     const mv=minViableBidAgainst(high,g.onlineSuit,minBid);
     g.onlineBid=Math.max(minBid,mv,g.onlineBid-1);
-    if(g.onlineBid>20) g.onlineBid=20;
+    if(g.onlineBid>20)g.onlineBid=20;
     drawOnlineAuction(s);
   };
   const ap=$('online-approve'), bd=$('online-bid');
@@ -1577,6 +1577,4 @@ loadAccount();
 loadLeaderboard();
 
 screen('home-screen');
-// ===== [app.js 3/3 終了]// ===== [app.js 2/3 終了] =====
-
-// ===== [app.js 1/3 終了] =====
+// ===== [app.js 3/3 終了] =====
