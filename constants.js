@@ -3,14 +3,14 @@ export const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K
 export const SV = { "♣": 1, "♦": 2, "♥": 3, "♠": 4, NT: 5 };
 
 export const CALIBRATION = {
-  13: 0.55, 14: 0.48, 15: 0.40, 16: 0.32,
-  17: 0.24, 18: 0.16, 19: 0.10, 20: 0.06
+  13: 0.45, 14: 0.38, 15: 0.30, 16: 0.24,
+  17: 0.18, 18: 0.12, 19: 0.08, 20: 0.05
 };
 
 export const SWEET_SPOT_TARGET = 0.50;
 export const SWEET_SPOT_WIDTH = 0.55;
 export const SWEET_SPOT_BONUS = 2.5;
-export const HONEST_THRESHOLD = 0.35;
+export const HONEST_THRESHOLD = 0.45;
 
 export const BID_STRENGTH_TABLE = {
   13: 5.0, 14: 6.5, 15: 8.0, 16: 10.0,
