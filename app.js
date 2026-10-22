@@ -1,3 +1,4 @@
+// ===== [app.js 1/3 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
@@ -97,10 +98,63 @@ function computeTeamMinBid(scores,mult,napSeat,deputySeat){
   const bottomSeat=ranked[0].i,fourthSeat=ranked[1].i;
   const m=Math.max(1,mult);
   const f=(gap,denom)=>Math.floor(Math.max(0,gap)/denom);
-  if(napSeat===bottomSeat&&deputySeat===fourthSeat){const a=13+f(S4-S5,2*m),b=13+f(S3-S4,4*m),raw=Math.max(a,b);const broken=b>20,soloBid=soloMinimumBid(S4-S5,m);return{minBid:broken?Math.min(20,soloBid):Math.min(20,raw),rawMin:broken?soloBid:raw,canOvertake:(broken?soloBid:raw)<=20,incentiveBroken:broken,soloRequired:broken,soloMinBid:Math.min(20,soloBid),soloRawMin:soloBid,soloPossible:soloBid<=20,case:'A',details:{S3,S4,S5,needNapOverDeputy:a,needDeputyOverThird:b,soloNeed:soloBid}}}
-  if(napSeat===fourthSeat&&deputySeat===bottomSeat){const a=13+f(S3-S4,6*m),b=13+f(S3-S5,4*m),c=13+f(S4-S5,2*m),raw=Math.max(a,b,c);return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,incentiveBroken:a>20||b>20,soloRequired:false,case:'B',details:{S3,S4,S5,needNapOverThird:a,needDeputyOverThird:b,needDeputyOverNapOnLoss:c}}}
-  if(napSeat===bottomSeat&&deputySeat!==fourthSeat){const raw=13+f(S4-S5,6*m);return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,incentiveBroken:false,soloRequired:false,case:'C',details:{S3,S4,S5,needNapOverFourth:raw}}}
-  if(napSeat===fourthSeat&&deputySeat!==bottomSeat){const raw=13+f(S4-S5,6*m);return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,incentiveBroken:false,soloRequired:false,case:'D',details:{S3,S4,S5,needNapLoss:raw}}}
+  if(napSeat===bottomSeat&&deputySeat===fourthSeat){
+    // 5位(NAP)が3位を抜く: S5+2U > S3-U → 3U > S3-S5
+    const a=13+f(S3-S5,6*m);
+    // 4位(副官)が3位を抜く: S4+U > S3-U → 2U > S3-S4
+    const b=13+f(S3-S4,4*m);
+    const raw=Math.max(a,b);
+    const achievable=raw<=20;
+    return{
+      minBid:Math.min(20,raw),
+      rawMin:raw,
+      canOvertake:achievable,
+      achievable,
+      incentiveBroken:!achievable,
+      soloRequired:false,
+      case:'A',
+      details:{S3,S4,S5,needNapOverThird:a,needDeputyOverThird:b}
+    };
+  }
+  if(napSeat===fourthSeat&&deputySeat===bottomSeat){
+    const a=13+f(S3-S4,6*m),b=13+f(S3-S5,4*m),c=13+f(S4-S5,2*m),raw=Math.max(a,b,c);
+    return{
+      minBid:Math.min(20,raw),
+      rawMin:raw,
+      canOvertake:raw<=20,
+      achievable:raw<=20,
+      incentiveBroken:a>20||b>20,
+      soloRequired:false,
+      case:'B',
+      details:{S3,S4,S5,needNapOverThird:a,needDeputyOverThird:b,needDeputyOverNapOnLoss:c}
+    };
+  }
+  if(napSeat===bottomSeat&&deputySeat!==fourthSeat){
+    const raw=13+f(S4-S5,6*m);
+    return{
+      minBid:Math.min(20,raw),
+      rawMin:raw,
+      canOvertake:raw<=20,
+      achievable:raw<=20,
+      incentiveBroken:false,
+      soloRequired:false,
+      case:'C',
+      details:{S3,S4,S5,needNapOverFourth:raw}
+    };
+  }
+  if(napSeat===fourthSeat&&deputySeat!==bottomSeat){
+    const raw=13+f(S4-S5,6*m);
+    return{
+      minBid:Math.min(20,raw),
+      rawMin:raw,
+      canOvertake:raw<=20,
+      achievable:raw<=20,
+      incentiveBroken:false,
+      soloRequired:false,
+      case:'D',
+      details:{S3,S4,S5,needNapLoss:raw}
+    };
+  }
   return null;
 }
 
@@ -141,7 +195,7 @@ async function loadTopStrategy(){
     }
   } catch (e) { console.warn('[loadTopStrategy]', e?.message); }
 }
-
+// ===== [app.js 2/3 開始] =====
 async function loadExperience(){
   try {
     const res = await fetch('/api/ai/experience');
@@ -253,16 +307,20 @@ function announceRound(round,rule){
   const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>b.score-a.score||a.seat-b.seat);
   const lines=ranked.map((e,i)=>(i+1)+'位 '+name(e.seat)+'  '+e.score+'点');
   const bottomSeat=ranked[4].seat,fourthSeat=ranked[3].seat;
-  const S5=ranked[4].score,S4=ranked[3].score;
+  const S3=ranked[2].score,S4=ranked[3].score,S5=ranked[4].score;
   const m=Math.max(1,g.mult||1);
   const caseA=computeTeamMinBid(scores,m,bottomSeat,fourthSeat);
   const caseB=computeTeamMinBid(scores,m,fourthSeat,bottomSeat);
   const caseC=computeTeamMinBid(scores,m,bottomSeat,bottomSeat);
   const caseD=computeTeamMinBid(scores,m,fourthSeat,fourthSeat);
-  const soloRaw=soloMinimumBid(S4-S5,m);
-  const fmt=r=>{if(!r)return'—';if(r.rawMin>20)return'不可';return Math.min(20,r.rawMin)+'枚'};
+  const soloRaw=soloMinimumBid(S3-S5,m);
+  const fmt=r=>{
+    if(!r)return'—';
+    if(!r.achievable)return'不可';
+    return Math.min(20,r.rawMin)+'枚';
+  };
   const fmtSolo=v=>v>20?'不可':Math.min(20,v)+'枚';
-  const body=[lines.join('\n'),'','逆転立ち:','通常 '+fmt(caseC)+' · 組んだら '+fmt(caseA)+(caseA?.soloRequired?'（ソロ）':'')+' · 逆組み '+fmt(caseB)+' · 逆立ち '+fmt(caseD)+' · ひとり立ち '+fmtSolo(soloRaw)].join('\n');
+  const body=[lines.join('\n'),'','逆転立ち:','通常 '+fmt(caseC)+' · 組んだら '+fmt(caseA)+' · 逆組み '+fmt(caseB)+' · 逆立ち '+fmt(caseD)+' · ひとり立ち '+fmtSolo(soloRaw)].join('\n');
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
@@ -402,6 +460,7 @@ function comBid(i,version){
 
 function doApprove(i,version){if(!g.auction.active.includes(i))return;if(g.auction.high.player===i){if(g.auction.active.length===1)auctionEnd(i);return}removeBid(i);addGameLog(name(i)+'が承認');message(name(i)+'は承認しました');if(!g.auction.active.length){auctionEnd(-1);return}g.auction.active.filter(j=>j>0).forEach(j=>g.auction.botSeen[j]=g.auction.version-1);drawAuction();drawSeats();scheduleComBids()}
 
+// ===== [app.js 3/3 開始] =====
 function auctionEnd(w){
   clearTimeout(g.auction?.humanTimeout);
   $('auction-panel')?.classList.add('hidden');
@@ -726,20 +785,20 @@ function play(i,c){
     if(g.round>=10&&!g.contract.solo){
       const r=computeTeamMinBid(g.matchScores,g.mult,g.contract.nap,g.contract.deputy);
       if(r!==null){
-        const oldBid=g.contract.num,forcedMin=r.minBid;
+        const oldBid=g.contract.num;
         const caseLabel={A:'組んだら',B:'逆組み',C:'通常',D:'逆立ち'}[r.case];
-        if(forcedMin>oldBid){
-          g.contract.num=forcedMin;renderContractInfo();drawSeats();
-          toast('副官判明：立ちを '+oldBid+'枚 → '+forcedMin+'枚 に引き上げ（'+caseLabel+'）');
-          addGameLog('★副官判明による立ち変更：'+oldBid+'枚 → '+forcedMin+'枚（'+caseLabel+'）');
-          message('副官判明により立ちを '+forcedMin+'枚へ引き上げました');
+        if(!r.achievable){
+          toast('副官判明（'+caseLabel+'）：20枚でも逆転不可能（不可）');
+          addGameLog('★副官判明（'+caseLabel+'）：20枚でも逆転不可能（不可）');
+          message('副官判明：20枚でも逆転不可能');
+        }else if(r.minBid>oldBid){
+          g.contract.num=r.minBid;renderContractInfo();drawSeats();
+          toast('副官判明：立ちを '+oldBid+'枚 → '+r.minBid+'枚 に引き上げ（'+caseLabel+'）');
+          addGameLog('★副官判明による立ち変更：'+oldBid+'枚 → '+r.minBid+'枚（'+caseLabel+'）');
+          message('副官判明により立ちを '+r.minBid+'枚へ引き上げました');
         }else{
-          addGameLog('副官判明：立ち '+oldBid+'枚は最低条件 '+forcedMin+'枚を満たしています（'+caseLabel+'）');
+          addGameLog('副官判明：立ち '+oldBid+'枚は最低条件 '+r.minBid+'枚を満たしています（'+caseLabel+'）');
           toast('副官判明：立ち '+oldBid+'枚は最低条件を満たしています（'+caseLabel+'）');
-        }
-        if(r.incentiveBroken){
-          const warnMsg='⚠ 20枚でも4位が3位を超えられません。副官に勝つインセンティブがありません';
-          toast(warnMsg);addGameLog('⚠ '+warnMsg+'（'+caseLabel+'）');message(warnMsg);
         }
       }
     }
@@ -1256,3 +1315,6 @@ loadAccount();
 loadLeaderboard();
 
 screen('home-screen');
+// ===== [app.js 3/3 終了] =====// ===== [app.js 2/3 終了] =====
+
+// ===== [app.js 1/3 終了] =====
