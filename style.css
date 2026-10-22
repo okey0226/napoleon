@@ -213,6 +213,21 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 #call-panel .call-preview-card{width:70px;height:100px}
 .call-card-preview strong{display:block;margin-top:4px;color:var(--gold);font-size:22px}
 .call-warning{min-height:14px;margin-top:5px;color:#e6be72;font-size:10px}
+/* ▼ 追加: アピール回答時の逆組み/逆立ち 最低枚数表示 */
+.appeal-forecast{
+  display:grid;gap:5px;margin:11px auto;
+  padding:9px 11px;max-width:360px;text-align:left;
+  border:1px solid rgba(225,188,112,.24);
+  border-radius:9px;background:rgba(0,0,0,.24);
+}
+.appeal-forecast>div{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  font-size:11px;color:#b9c7bf;line-height:1.4;
+}
+.appeal-forecast>div>b{
+  flex:none;color:#f3d48e;font-size:13px;font-weight:800;
+  font-variant-numeric:tabular-nums;
+}
 .call-rank-choice{min-width:31px}
 .call-rank-choice.selected{border-color:var(--gold);color:var(--gold)}
 .suit-choice,.small-action{border:1px solid #456256;background:#1a3a30;color:#edf4ee;border-radius:7px;padding:8px 10px;font-weight:700}
@@ -602,6 +617,11 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .panel-row+.panel-row{margin-top:12px !important}
 
   #call-panel{bottom:120px !important;top:auto !important;position:absolute !important;transform:translateX(-50%) !important;max-height:60dvh !important;overflow-y:auto !important;padding:14px 16px !important}
+
+  /* ▼ 追加: アピール回答時の予測表示（モバイル調整） */
+  .appeal-forecast{padding:8px 10px !important;margin:8px auto !important;max-width:100% !important}
+  .appeal-forecast>div{font-size:10px !important}
+  .appeal-forecast>div>b{font-size:12px !important}
 
   .small-action,.suit-choice,.call-rank-choice,.primary-button,.secondary-button,.rank-button{min-height:44px !important;min-width:44px !important;padding:10px 14px !important;font-size:13px !important}
   .suit-choice{min-width:52px !important;min-height:52px !important;font-size:20px !important;padding:8px !important;display:inline-flex !important;align-items:center !important;justify-content:center !important}
