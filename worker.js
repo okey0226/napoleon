@@ -382,9 +382,7 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
   const m = Math.max(1, mult);
   const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom);
   if (napSeat === bottomSeat && deputySeat === fourthSeat) {
-    // 5位(NAP)が3位を抜く: S5+2U > S3-U → 3U > S3-S5
     const a = 13 + f(S3 - S5, 6 * m);
-    // 4位(副官)が3位を抜く: S4+U > S3-U → 2U > S3-S4
     const b = 13 + f(S3 - S4, 4 * m);
     const raw = Math.max(a, b);
     const achievable = raw <= 20;
