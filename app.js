@@ -17,15 +17,15 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:-1,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set()};
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:-1,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),wsReady:false};
 let toastTimer;
-function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
+function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),3200)}
 function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
 function clearTimers(){g.timer.forEach(clearTimeout);g.timer=[]}
-function closeOnline(){g.intentionalLeave=true;clearTimers();clearTimeout(g.auction?.humanTimeout);clearInterval(g.autoNextTimer);g.room?.close?.();g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;const ac=$('auction-clock');if(ac)ac.classList.add('hidden');setTimeout(()=>{g.intentionalLeave=false},600)}
+function closeOnline(){g.intentionalLeave=true;g.wsReady=false;clearTimers();clearTimeout(g.auction?.humanTimeout);clearInterval(g.autoNextTimer);try{g.room?.close?.()}catch{}g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;const ac=$('auction-clock');if(ac)ac.classList.add('hidden');setTimeout(()=>{g.intentionalLeave=false},600)}
 function message(t){const el=$('table-message');if(el)el.textContent=t}
 function addGameLog(text){if(!g.localLog)return;g.localLog.push({round:g.round,text});if(g.localLog.length>300)g.localLog.shift();const cnt=$('game-log-count');if(cnt)cnt.textContent=String(g.localLog.length);if($('game-log-dialog')?.open)renderGameLog()}
 function renderGameLog(){const list=$('game-log-list');if(!list)return;list.innerHTML=g.localLog?.length?g.localLog.map(entry=>'<article class="game-log-entry"><small>第'+entry.round+'局</small><span>'+escapeHTML(entry.text)+'</span></article>').join(''):'<p class="game-log-empty">まだログはありません</p>';list.scrollTop=list.scrollHeight}
@@ -1113,7 +1113,7 @@ function renderStrategyLab({strategies,insights,generations}){
 function code(){return Math.random().toString(36).slice(2,7).toUpperCase()}
 
 // ============================================================
-// ===== ONLINE UI（新規追加）: レート/友人戦 用 =====
+// ===== ONLINE UI =====
 // ============================================================
 function renderOnline(){
   const s=g.onlineState; if(!s) return;
@@ -1383,8 +1383,8 @@ function showOnlineResult(s){
     r.classList.add('hidden');
     if(isFinal){
       g.intentionalLeave=true;
-      g.room?.close?.();
-      g.room=null; g.online=null; g.onlineState=null;
+      try { g.room?.close?.(); } catch {}
+      g.room=null; g.online=null; g.onlineState=null; g.wsReady=false;
       screen('home-screen');
     } else {
       g.room?.send({type:'game',action:{type:'next-round'}});
@@ -1393,15 +1393,21 @@ function showOnlineResult(s){
 }
 // ===== [ONLINE UI ここまで] =====
 
+// ===== WebSocket コネクション =====
 function bindOnlineWs(ws){
   ws.onmessage=(e)=>{
     let m;try{m=JSON.parse(e.data)}catch{return}
     handleOnlineMessage(m);
   };
-  ws.onclose=()=>{
-    if(g.intentionalLeave){return;}
-    if(!g.sessionToken){return;}
-    if(g.reconnecting){return;}
+  ws.onerror=(e)=>{ console.warn('[ws error]', e); };
+  ws.onclose=(e)=>{
+    const wasReady = g.wsReady;
+    g.wsReady = false;
+    console.warn('[ws close]', { code: e.code, reason: e.reason, wasReady });
+    if(g.intentionalLeave) return;
+    if(e.code===1000) return;
+    if(!wasReady) return;              // 初回接続失敗は online() の catch が処理
+    if(g.reconnecting) return;
     toast('接続が切れました。再接続中…');
     setTimeout(()=>onlineReconnect(),1500);
   };
@@ -1409,6 +1415,13 @@ function bindOnlineWs(ws){
 
 function handleOnlineMessage(m){
   if(m.type==='lobby'){message(m.text);return;}
+  if(m.type==='friend-lobby'){
+    const msg = m.host
+      ? '合言葉 '+m.code+' · '+m.count+'/'+m.capacity+'人 · 参加者を待っています'
+      : '合言葉 '+m.code+' · '+m.count+'/'+m.capacity+'人';
+    message(msg);
+    return;
+  }
   if(m.type==='matched'){
     g.online=m;g.mySeat=m.seat;
     g.players=m.players.map(p=>({name:p.id,hand:[],taken:[],roundPoints:0}));
@@ -1461,14 +1474,24 @@ async function onlineReconnect(){
   g.reconnecting=true;
   try{
     const proto=location.protocol==='https:'?'wss:':'ws:';
-    const ws=new WebSocket(proto+'//'+location.host+'/ws');
-    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
-    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
+    const wsUrl=proto+'//'+location.host+'/ws';
+    console.log('[onlineReconnect] connecting:', wsUrl);
+    const ws=new WebSocket(wsUrl);
+    await new Promise((res,rej)=>{
+      const timer=setTimeout(()=>rej(new Error('接続タイムアウト')),6000);
+      ws.onopen=()=>{clearTimeout(timer);res();};
+      ws.onerror=()=>{clearTimeout(timer);rej(new Error('WebSocket 接続失敗'));};
+      ws.onclose=(e)=>{clearTimeout(timer);rej(new Error('WebSocket 切断 code='+e.code));};
+    });
+    g.wsReady=true;
+    g.room={send:m=>{try{ws.send(JSON.stringify(m));}catch(err){console.warn('[ws send]',err);}},close:()=>{try{ws.close(1000);}catch{}}};
     bindOnlineWs(ws);
     ws.send(JSON.stringify({type:'reconnect',sessionToken:g.sessionToken}));
   }catch(e){
     g.reconnecting=false;
-    toast('再接続に失敗しました');
+    g.wsReady=false;
+    console.warn('[onlineReconnect] failed', e);
+    toast('再接続に失敗しました: '+(e?.message||'network'));
     screen('home-screen');
   }
 }
@@ -1478,12 +1501,22 @@ async function online(mode,roomCode,bots,botLevel=3){
   if(mode==='ranked'&&!localStorage.getItem('napoleon_session')){toast('先にプレイヤー登録をしてください');screen('profile-screen');return}
   g.intentionalLeave=false;
   g.reconnecting=false;
+  g.wsReady=false;
   loadTopStrategy();
+  let ws;
   try{
     const proto=location.protocol==='https:'?'wss:':'ws:';
-    const ws=new WebSocket(proto+'//'+location.host+'/ws');
-    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
-    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
+    const wsUrl=proto+'//'+location.host+'/ws';
+    console.log('[online] connecting:', wsUrl);
+    ws=new WebSocket(wsUrl);
+    await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(new Error('接続タイムアウト（6秒）')),6000);
+      ws.onopen=()=>{clearTimeout(timer);resolve();};
+      ws.onerror=()=>{clearTimeout(timer);reject(new Error('WebSocket 接続失敗（/ws が worker に横取りされている可能性）'));};
+      ws.onclose=(e)=>{clearTimeout(timer);if(e.code!==1000)reject(new Error('WebSocket 切断 code='+e.code+' '+(e.reason||'')));};
+    });
+    g.wsReady=true;
+    g.room={send:m=>{try{ws.send(JSON.stringify(m));}catch(err){console.warn('[ws send]',err);}},close:()=>{try{ws.close(1000);}catch{}}};
     g.mySeat=-1;g.privateHand=[];g.onlineState=null;g.onlineDiscard=new Set();g.onlineSelectedCard=null;g.onlineBid=13;g.onlineSuit='♠';g.onlineRank='A';g.announcedCallRound=null;g.announcedRound=null;
     g.auction=null; g.contract=null; g.matchScores=[0,0,0,0,0];
     ['auction-panel','call-panel','play-panel','result-panel'].forEach(id=>{const el=$(id);if(el)el.classList.add('hidden')});
@@ -1494,7 +1527,13 @@ async function online(mode,roomCode,bots,botLevel=3){
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
     bindOnlineWs(ws);
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
-  }catch(e){toast('対戦に接続できませんでした');screen('home-screen')}
+  }catch(e){
+    console.error('[online] failed', e);
+    g.wsReady=false;
+    try{ ws?.close(); }catch{}
+    toast('接続できませんでした: '+(e?.message||'network error'));
+    screen('home-screen');
+  }
 }
 
 $('home-start')?.addEventListener('click', () => screen('mode-select-screen'));
