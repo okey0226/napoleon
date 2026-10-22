@@ -91,6 +91,13 @@ function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
 function soloMinimumBid(gap,mult){return 13+Math.floor(Math.max(0,gap)/(10*Math.max(1,mult)))}
+// ▼ 変更: 最低枚数フォーマッタを追加（announceRound / drawAppealResponse で共通利用）
+function fmtMinBid(r){
+  if(!r)return'—';
+  if(!r.achievable)return'不可';
+  return Math.min(20,r.rawMin)+'枚';
+}
+function fmtSoloMinBid(v){return v>20?'不可':Math.min(20,v)+'枚'}
 
 function computeTeamMinBid(scores,mult,napSeat,deputySeat){
   const ranked=scores.map((s,i)=>({s,i})).sort((a,b)=>a.s-b.s||a.i-b.i);
@@ -99,9 +106,7 @@ function computeTeamMinBid(scores,mult,napSeat,deputySeat){
   const m=Math.max(1,mult);
   const f=(gap,denom)=>Math.floor(Math.max(0,gap)/denom);
   if(napSeat===bottomSeat&&deputySeat===fourthSeat){
-    // 5位(NAP)が3位を抜く: S5+2U > S3-U → 3U > S3-S5
     const a=13+f(S3-S5,6*m);
-    // 4位(副官)が3位を抜く: S4+U > S3-U → 2U > S3-S4
     const b=13+f(S3-S4,4*m);
     const raw=Math.max(a,b);
     const achievable=raw<=20;
@@ -299,13 +304,25 @@ function greenRedraw(n){
 
 function finalAuctionRule(scores,mult=1){const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>a.score-b.score||a.seat-b.seat),cutoff=ranked[1]?.score??0,gap=Math.max(0,(ranked[1]?.score??0)-(ranked[0]?.score??0)),rawMin=13+Math.floor(gap/(6*Math.max(1,mult)));return{eligible:ranked.filter(x=>x.score<=cutoff).map(x=>x.seat),bottomSeat:ranked[0]?.seat,fourthSeat:ranked[1]?.seat,thirdSeat:ranked[2]?.seat,thirdScore:ranked[2]?.score,minBid:Math.min(20,rawMin),canOvertake:rawMin<=20}}
 
+// ▼ 変更: ラス前でも点数表を表示 / オールラストは縦並びで見やすく
 function announceRound(round,rule){
   if(g.announcedRound===round||round<9)return;
   g.announcedRound=round;
-  if(round===9){dialog('ラス前','第9局です。次はいよいよオールラストです。');return}
+
   const scores=g.matchScores||Array(5).fill(0);
   const ranked=scores.map((score,seat)=>({score,seat})).sort((a,b)=>b.score-a.score||a.seat-b.seat);
-  const lines=ranked.map((e,i)=>(i+1)+'位 '+name(e.seat)+'  '+e.score+'点');
+  const lines=ranked.map((e,i)=>(i+1)+'位　'+name(e.seat)+'　'+e.score+'点');
+
+  if(round===9){
+    dialog('ラス前',[
+      '第9局です。次はいよいよオールラストです。',
+      '',
+      '【現在の順位】',
+      ...lines
+    ].join('\n'));
+    return
+  }
+
   const bottomSeat=ranked[4].seat,fourthSeat=ranked[3].seat;
   const S3=ranked[2].score,S4=ranked[3].score,S5=ranked[4].score;
   const m=Math.max(1,g.mult||1);
@@ -314,13 +331,19 @@ function announceRound(round,rule){
   const caseC=computeTeamMinBid(scores,m,bottomSeat,bottomSeat);
   const caseD=computeTeamMinBid(scores,m,fourthSeat,fourthSeat);
   const soloRaw=soloMinimumBid(S3-S5,m);
-  const fmt=r=>{
-    if(!r)return'—';
-    if(!r.achievable)return'不可';
-    return Math.min(20,r.rawMin)+'枚';
-  };
-  const fmtSolo=v=>v>20?'不可':Math.min(20,v)+'枚';
-  const body=[lines.join('\n'),'','逆転立ち:','通常 '+fmt(caseC)+' · 組んだら '+fmt(caseA)+' · 逆組み '+fmt(caseB)+' · 逆立ち '+fmt(caseD)+' · ひとり立ち '+fmtSolo(soloRaw)].join('\n');
+
+  const body=[
+    '【現在の順位】',
+    ...lines,
+    '',
+    '【逆転立ちの最低枚数】',
+    '　通常　　　： '+fmtMinBid(caseC),
+    '　組んだら　： '+fmtMinBid(caseA),
+    '　逆組み　　： '+fmtMinBid(caseB),
+    '　逆立ち　　： '+fmtMinBid(caseD),
+    '　ひとり立ち： '+fmtSoloMinBid(soloRaw)
+  ].join('\n');
+
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
@@ -333,7 +356,31 @@ function appealDetails(hand){const held=['♣J','♦J','♥J','♠J','♠A'].fil
 function enterAuction(){g.phase='auction';phase('競り');message(g.auction.requiredBidSeat===null?'順番なし。宣言するか、承認して競りを降りてください':name(g.auction.requiredBidSeat)+'が申告せず立つ選択。最低枚数以上で宣言してください');$('auction-panel')?.classList.remove('hidden');$('auction-clock')?.classList.add('hidden');scheduleHumanAuctionTimeout();drawAuction();drawSeats();scheduleComBids()}
 
 function drawAppealOffer(){const p=$('auction-panel');if(!p)return;p.classList.remove('hidden');p.innerHTML='<div class="panel-title">オーラス・アピール</div><div class="micro-copy">4位にJ・マイティの所持を尋ねますか？</div><div class="panel-row"><button class="small-action" id="appeal-yes">アピールする</button><button class="small-action pass" id="appeal-no">競りへ進む</button></div>';p.querySelector('#appeal-yes').onclick=()=>answerLocalAppeal('appeal');p.querySelector('#appeal-no').onclick=()=>answerLocalAppeal('skip')}
-function drawAppealResponse(){const p=$('auction-panel');if(!p)return;p.classList.remove('hidden');p.innerHTML='<div class="panel-title">5位からアピール</div><div class="micro-copy">所持するJ・マイティを申告するか、申告せず立つか選んでください。</div><div class="panel-row"><button class="small-action" id="appeal-disclose">札を申告する</button><button class="small-action pass" id="appeal-stand">申告せず立つ</button></div>';p.querySelector('#appeal-disclose').onclick=()=>answerLocalAppeal('disclose');p.querySelector('#appeal-stand').onclick=()=>answerLocalAppeal('stand')}
+
+// ▼ 変更: 4位（あなた）がアピール回答時に、逆組み/逆立ちの最低枚数を併記
+function drawAppealResponse(){
+  const p=$('auction-panel');if(!p)return;
+  p.classList.remove('hidden');
+  const rule=finalAuctionRule(g.matchScores,g.mult);
+  const fourth=rule.fourthSeat,bottom=rule.bottomSeat;
+  // 逆組み（B）: あなた(4位)=NAP / 5位=副官
+  const caseB=computeTeamMinBid(g.matchScores,g.mult,fourth,bottom);
+  // 逆立ち（D）: あなた(4位)=NAP / 5位が副官でない
+  const caseD=computeTeamMinBid(g.matchScores,g.mult,fourth,fourth);
+  p.innerHTML=
+    '<div class="panel-title">5位からアピール</div>'+
+    '<div class="micro-copy">所持するJ・マイティを申告するか、申告せず立つか選んでください。</div>'+
+    '<div class="appeal-forecast">'+
+      '<div><span>逆組み（あなた=NAP・5位=副官）</span><b>'+fmtMinBid(caseB)+'</b></div>'+
+      '<div><span>逆立ち（あなた=NAP・5位が副官でない）</span><b>'+fmtMinBid(caseD)+'</b></div>'+
+    '</div>'+
+    '<div class="panel-row">'+
+      '<button class="small-action" id="appeal-disclose">札を申告する</button>'+
+      '<button class="small-action pass" id="appeal-stand">申告せず立つ</button>'+
+    '</div>';
+  p.querySelector('#appeal-disclose').onclick=()=>answerLocalAppeal('disclose');
+  p.querySelector('#appeal-stand').onclick=()=>answerLocalAppeal('stand');
+}
 function answerLocalAppeal(choice){const rule=finalAuctionRule(g.matchScores,g.mult),fourth=rule.fourthSeat;if(choice==='skip'){g.appealInfo='5位はアピールせず競りへ';enterAuction();return}if(choice==='appeal'){if(fourth===0){g.phase='appeal-response';phase('アピール回答');message('4位は所持するJ・マイティを申告するか、申告せず立ちます');drawAppealResponse();return}g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);enterAuction();return}if(choice==='stand'){g.auction.requiredBidSeat=fourth;g.appealInfo='4位は申告せず立つことを選択';enterAuction();return}g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);enterAuction()}
 
 function auctionStart(){
@@ -626,11 +673,12 @@ function renderHand(discard=false){
   });
   const hc=$('hand-count');if(hc)hc.textContent=(g.players[0]?.hand.length||0)+'枚'
 }
+// ▼ 変更: カード未選択時はパネル自体を出さない（獲得札を隠さない）
 function drawLocalPlayControls(){
   const p=$('play-panel');if(!p)return;
   if(g.phase!=='play'||g.active!==0||g.waitingAutoPlay){p.classList.add('hidden');return}
   const card=g.players[0].hand.find(c=>c.id===g.selectedCard&&legal(0).some(x=>x.id===c.id));
-  if(!card){g.selectedCard=null;p.classList.remove('hidden');p.innerHTML='<div class="panel-title">出すカードを手札から選んでください</div>';return}
+  if(!card){g.selectedCard=null;p.classList.add('hidden');p.replaceChildren();return}
   p.classList.remove('hidden');
   p.innerHTML='<div class="panel-title">このカードを出しますか？</div><div class="play-confirm-preview"><div id="local-play-card"></div><span class="micro-copy">選択中</span></div><div class="play-confirm-actions"><button id="cancel-local-play" class="small-action">選び直す</button><button id="confirm-local-play" class="primary-button">出す</button></div>';
   const lpc=$('local-play-card');if(lpc)lpc.replaceChildren(cardEl(card,'play-confirm-card'));
@@ -944,7 +992,24 @@ function finishGame(){
     },1000);
   }
 }
-function addTakenCards(seat,cards=[]){const row=document.createElement('div');row.className='taken-cards';const label=document.createElement('span');label.className='taken-label';label.textContent='獲得 '+cards.length;row.append(label);cards.forEach(c=>{const tag=document.createElement('span');tag.className='taken-card '+color(c.suit);tag.textContent=c.suit+c.rank;row.append(tag)});seat.append(row)}
+// ▼ 変更: 獲得札をスート→ランクの順でソート
+function addTakenCards(seat,cards=[]){
+  const row=document.createElement('div');
+  row.className='taken-cards';
+  const label=document.createElement('span');
+  label.className='taken-label';
+  label.textContent='獲得 '+cards.length;
+  row.append(label);
+  cards.slice()
+    .sort((a,b)=>SV[a.suit]-SV[b.suit]||RANKS.indexOf(a.rank)-RANKS.indexOf(b.rank))
+    .forEach(c=>{
+      const tag=document.createElement('span');
+      tag.className='taken-card '+color(c.suit);
+      tag.textContent=c.suit+c.rank;
+      row.append(tag)
+    });
+  seat.append(row)
+}
 
 function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===0?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?'ナポレオン':!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):g.phase==='auction'&&!g.auction.active.includes(i)?'承認済み':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken);box.append(e)})}
 
@@ -1315,6 +1380,6 @@ loadAccount();
 loadLeaderboard();
 
 screen('home-screen');
-// ===== [app.js 3/3 終了] =====// ===== [app.js 2/3 終了] =====
+// ===== [app.js 3/3 終了]// ===== [app.js 2/3 終了] =====
 
 // ===== [app.js 1/3 終了] =====
