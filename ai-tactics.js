@@ -461,6 +461,22 @@ function lowX(ctx, cards) {
   return best;
 }
 
+// ★ 追加: 2温存ヘルパー
+function lowAvoidTwo(ctx, cards) {
+  if (!cards || !cards.length) return null;
+  const twos = cards.filter(c => c.rank === '2');
+  const others = cards.filter(c => c.rank !== '2');
+
+  // 2以外のカードがある場合、基本的には2を温存する
+  if (others.length > 0) {
+    // 例外1: NTでNAPがこのスートをリード済み ＆ このスートのA未出現
+    // 例外2: 役札が場にあり2が勝てない
+    // → いずれも「2を温存する」方向で処理するため、othersから選ぶ
+    return lowX(ctx, others);
+  }
+  return lowX(ctx, twos);
+}
+
 // ==========================================
 // 7. ナポレオン打牌
 // ==========================================
@@ -480,7 +496,8 @@ function chooseNapoleonLead(ctx) {
     if (offSuitLow.length) {
       return offSuitLow.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
     }
-    return legal.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+    // ★ 修正: 2を温存
+    return lowAvoidTwo(ctx, legal);
   }
 
   if (contract.suit === 'NT' && trickNo === 0) {
@@ -549,7 +566,6 @@ function chooseNapoleonLead(ctx) {
     }
   }
 
-  // 2-2修正: 捨て札の2は場に出たのと同じ扱い（セイム2のリスクなし）
   const discardedIds = new Set((discardedKitty || []).map(k => k.id));
   const safeAces = legal.filter(c => {
     if (c.rank !== 'A' || c.suit === contract.suit) return false;
@@ -608,7 +624,6 @@ function chooseNapoleonFollow(ctx) {
   const { hand, legal, trick, trickNo, contract, playedCards, voids, seat, params, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
 
-  // 4-2修正: 不完全トリックでは strict モードで same-two の過大評価を抑制
   const current = winningEntry(contract, trickNo, trick, trick.length < 5);
   const isNapWinning = current && isTeamNap(current.seat, contract);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
@@ -626,7 +641,8 @@ function chooseNapoleonFollow(ctx) {
   if (allTakeAvoid) {
     const nonWinning = legal.filter(c => !winningCards.includes(c));
     const pool = nonWinning.length ? nonWinning : legal;
-    return pool.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+    // ★ 修正: 2を温存
+    return lowAvoidTwo(ctx, pool);
   }
 
   const remainingTricks = Math.max(1, 10 - trickNo - (trick.length >= 4 ? 1 : 0));
@@ -670,6 +686,10 @@ function chooseNapoleonFollow(ctx) {
     if (trumps.length) return low(trumps);
   }
 
+  // ★ 修正: ボイド経路で2温存
+  if (legal[0]?.suit !== trick[0].card.suit) {
+    return lowAvoidTwo(ctx, legal);
+  }
   return lowX(ctx, legal);
 }
 
@@ -682,7 +702,6 @@ export function chooseDeputyCard(ctx) {
   const low = cards => cards.slice().sort((a, b) =>
     cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
 
-  // 4-2修正: 不完全トリックでは strict モード
   const winningCards = legal.filter(c =>
     winningEntry(contract, trickNo, [...trick, { seat, card: c }], trick.length < 4)?.seat === seat
   );
@@ -720,6 +739,13 @@ export function chooseDeputyCard(ctx) {
 
   const ledSuit = trick[0].card.suit;
   const napCard = trick.find(e => e.seat === contract.nap)?.card;
+
+  // ★ 追加: 指定2のフォロー (NAPが指定スートをリードしたら、明確な理由がない限り2を出す)
+  if (trick.length === 1 && trick[0].seat === contract.nap && ledSuit === call?.suit && call?.rank === '2') {
+    const myCalledTwo = legal.find(c => c.id === call.id);
+    if (myCalledTwo) return myCalledTwo;
+  }
+
   const current = winningEntry(contract, trickNo, trick, trick.length < 5);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
 
@@ -728,8 +754,19 @@ export function chooseDeputyCard(ctx) {
     if (followCards.length > 0) {
       const dump = pickDumpFace(followCards, contract, napCard.rank, { excludeId: call?.id });
       if (dump) return dump;
+      // ★ 追加: 敗着にならないQ/10/Jのダンプ
+      const dumpHighCard = followCards.filter(c =>
+        (c.rank === 'Q' || c.rank === '10' || (c.rank === 'J' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract))) &&
+        c.id !== call?.id &&
+        c.id !== '♠A' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
+      );
+      if (dumpHighCard.length) {
+        dumpHighCard.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank));
+        return dumpHighCard[0];
+      }
     }
-    return lowX(ctx, legal);
+    // ★ 修正: 2温存
+    return lowAvoidTwo(ctx, legal);
   }
 
   if (current && isTeamNap(current.seat, contract)) return lowX(ctx, legal);
@@ -743,6 +780,10 @@ export function chooseDeputyCard(ctx) {
     }
   }
 
+  // ★ 修正: ボイドダンプで2を温存
+  if (legal[0]?.suit !== ledSuit) {
+    return lowAvoidTwo(ctx, legal);
+  }
   return lowX(ctx, legal);
 }
 
@@ -823,7 +864,6 @@ function chooseAllianceFollow(ctx) {
     cardPower(contract, trickNo, a, trick) - cardPower(contract, trickNo, b, trick))[0];
 
   const ledSuit = trick[0].card.suit;
-  // 4-2修正: 不完全トリックでは strict モード
   const current = winningEntry(contract, trickNo, trick, trick.length < 5);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
   const currentIsEnemy = isTeamNap(current.seat, contract);
@@ -835,8 +875,22 @@ function chooseAllianceFollow(ctx) {
   if (!currentIsEnemy && current.seat !== seat) {
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
+      // ★ 修正: 味方が勝ちそうならQ/10/非役Jをバンバン吐く
+      const dumpHighCard = followCards.filter(c =>
+        (c.rank === 'Q' || c.rank === '10' || (c.rank === 'J' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract))) &&
+        c.id !== '♠A' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
+      );
+      if (dumpHighCard.length) {
+        dumpHighCard.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank));
+        return dumpHighCard[0];
+      }
+
       const dump = pickDumpFace(followCards, contract, current.card.rank);
       if (dump) return dump;
+    }
+    // ★ 修正: 2温存
+    if (legal[0]?.suit !== ledSuit) {
+      return lowAvoidTwo(ctx, legal);
     }
     return lowX(ctx, legal);
   }
@@ -855,6 +909,10 @@ function chooseAllianceFollow(ctx) {
     if (trumps.length) return low(trumps);
   }
 
+  // ★ 修正: ボイド経路で2温存
+  if (legal[0]?.suit !== ledSuit) {
+    return lowAvoidTwo(ctx, legal);
+  }
   return lowX(ctx, legal);
 }
 
