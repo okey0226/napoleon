@@ -329,7 +329,7 @@ async function beginMatch(kind, roomCode, group, room, env) {
     playoff: false, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), botExperience: null,
     matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })),
     roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0),
-    phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], trick: [], trickNo: 0, active: -1,
+    phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
     auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0,
     notice: "配札しました。競り開始まで7秒です。",
     playedCards: [], voids: [{}, {}, {}, {}, {}], allianceKittyPoints: 0
@@ -347,6 +347,7 @@ function deal(m) {
   const d = shuffledDeck();
   m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
   m.kitty = d.splice(0, 2);
+  m.discardedKitty = [];
   m.trick = []; m.trickNo = 0; m.earlyFinish = false;
   m.roundArt = Array(5).fill(0); m.roundDrama = Array(5).fill(0); m.roundFeed = Array(5).fill(0);
   m.result = null; m.contract = null; m.auction = null; m.active = -1; m.phase = "prep";
@@ -364,7 +365,7 @@ function finalAuctionRule(scores, mult = 1) { const ranked = scores.map((score, 
 function soloMinimumBid(gap, mult) { return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult))); }
 function computeTeamMinBid(scores, mult, napSeat, deputySeat) { const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s; const bottomSeat = ranked[0].i, fourthSeat = ranked[1].i; const m = Math.max(1, mult); const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom); if (napSeat === bottomSeat && deputySeat === fourthSeat) { const a = 13 + f(S4 - S5, 2 * m), b = 13 + f(S3 - S4, 4 * m), raw = Math.max(a, b); const broken = b > 20, soloBid = soloMinimumBid(S4 - S5, m); return { minBid: broken ? Math.min(20, soloBid) : Math.min(20, raw), rawMin: broken ? soloBid : raw, canOvertake: (broken ? soloBid : raw) <= 20, incentiveBroken: broken, soloRequired: broken, soloMinBid: Math.min(20, soloBid), soloRawMin: soloBid, soloPossible: soloBid <= 20, case: 'A', details: { S3, S4, S5, needNapOverDeputy: a, needDeputyOverThird: b, soloNeed: soloBid } }; } if (napSeat === fourthSeat && deputySeat === bottomSeat) { const a = 13 + f(S3 - S4, 6 * m), b = 13 + f(S3 - S5, 4 * m), c = 13 + f(S4 - S5, 2 * m), raw = Math.max(a, b, c); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: a > 20 || b > 20, soloRequired: false, case: 'B', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c } }; } if (napSeat === bottomSeat && deputySeat !== fourthSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } }; } if (napSeat === fourthSeat && deputySeat !== bottomSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'D', details: { S3, S4, S5, needNapLoss: raw } }; } return null; }
 function isSoloForcedInMatch(m) { if (m.round < 10 || !m.contract) return false; const ranked = m.matchScores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const bottomSeat = ranked[0].i; if (m.contract.nap !== bottomSeat) return false; const fourthSeat = ranked[1].i; const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat); return r?.soloRequired === true; }
-function isSafeToCashAceInMatch(m, suit, seat) { if (!m.contract) return false; if (suit === '♠') return true; if (m.trickNo > 0) { const twoPlayed = m.playedCards.some(c => c.id === suit + '2'); if (!twoPlayed) { const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]); if (!anyVoid) return false; } } if (m.contract.suit !== 'NT' && m.contract.suit !== suit) { for (let s = 0; s < 5; s++) { if (s === seat) continue; if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; } else { if (s === m.contract.nap) continue; } if (m.voids[s] && m.voids[s][suit]) return false; } } return true; }
+function isSafeToCashAceInMatch(m, suit, seat) { if (!m.contract) return false; if (suit === '♠') return true; if (m.trickNo > 0) { const twoPlayed = m.playedCards.some(c => c.id === suit + '2') || (m.discardedKitty || []).some(c => c.id === suit + '2'); if (!twoPlayed) { const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]); if (!anyVoid) return false; } } if (m.contract.suit !== 'NT' && m.contract.suit !== suit) { for (let s = 0; s < 5; s++) { if (s === seat) continue; if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; } else { if (s === m.contract.nap) continue; } if (m.voids[s] && m.voids[s][suit]) return false; } } return true; }
 function publicState(m) {
   return {
     matchId: m.id, mode: m.kind, code: m.code, botLevel: m.botLevel, phase: m.phase, round: m.round, mult: m.mult,
@@ -421,7 +422,9 @@ function discardCards(m, seat, ids, room) {
   m.seats[seat].hand = h.filter(c => !ids.includes(c.id));
   const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
   m.allianceKittyPoints = (m.allianceKittyPoints || 0) + kittyPoints.length;
-  m.kitty = removed; sortHand(m.seats[seat].hand);
+  m.kitty = removed;
+  m.discardedKitty = removed.slice();
+  sortHand(m.seats[seat].hand);
   m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000;
   m.notice = "捨て札を決めました。副官に指名するカードを選んでください。";
   publish(m, room);
@@ -562,13 +565,11 @@ function playCard(m, seat, id, room, env) {
   m.phase = "trick-end"; m.deadline = m.earlyFinish ? Date.now() : Date.now() + 1250; publish(m, room);
 }
 
-// ===== 【修正】自己競り上げガード追加 =====
 function botAuctionBid(m, seat, room) {
   m.botLevel = 3; const a = m.auction, version = a.version;
   if (a.botSeen[seat] >= version || !a.active.includes(seat)) return;
   a.botSeen[seat] = version;
 
-  // v1.2: 既に自分が最高宣言者なら再宣言しない（競り上がりの連鎖防止）
   if (a.high.player === seat) {
     if (a.active.length === 1) auctionDone(m, seat, room);
     return;
@@ -614,6 +615,7 @@ function botAction(m, room) {
     const ctx = {
       hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
       playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
+      discardedKitty: m.discardedKitty || [],
       isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy),
       isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
       isRevealed: m.contract.revealedCall, isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
