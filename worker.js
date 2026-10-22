@@ -1,3 +1,4 @@
+// ===== [worker.js 1/2 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
 import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
@@ -316,6 +317,8 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
+
+// ===== [worker.js 2/2 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
 
@@ -372,7 +375,71 @@ function deal(m) {
 }
 function finalAuctionRule(scores, mult = 1) { const ranked = scores.map((score, seat) => ({ score, seat })).sort((a, b) => a.score - b.score || a.seat - b.seat), cutoff = ranked[1]?.score ?? 0, gap = Math.max(0, (ranked[1]?.score ?? 0) - (ranked[0]?.score ?? 0)), rawMin = 13 + Math.floor(gap / (6 * Math.max(1, mult))); return { eligible: ranked.filter(x => x.score <= cutoff).map(x => x.seat), bottomSeat: ranked[0]?.seat, fourthSeat: ranked[1]?.seat, thirdSeat: ranked[2]?.seat, thirdScore: ranked[2]?.score, minBid: Math.min(20, rawMin), canOvertake: rawMin <= 20 }; }
 function soloMinimumBid(gap, mult) { return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult))); }
-function computeTeamMinBid(scores, mult, napSeat, deputySeat) { const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s; const bottomSeat = ranked[0].i, fourthSeat = ranked[1].i; const m = Math.max(1, mult); const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom); if (napSeat === bottomSeat && deputySeat === fourthSeat) { const a = 13 + f(S4 - S5, 2 * m), b = 13 + f(S3 - S4, 4 * m), raw = Math.max(a, b); const broken = b > 20, soloBid = soloMinimumBid(S4 - S5, m); return { minBid: broken ? Math.min(20, soloBid) : Math.min(20, raw), rawMin: broken ? soloBid : raw, canOvertake: (broken ? soloBid : raw) <= 20, incentiveBroken: broken, soloRequired: broken, soloMinBid: Math.min(20, soloBid), soloRawMin: soloBid, soloPossible: soloBid <= 20, case: 'A', details: { S3, S4, S5, needNapOverDeputy: a, needDeputyOverThird: b, soloNeed: soloBid } }; } if (napSeat === fourthSeat && deputySeat === bottomSeat) { const a = 13 + f(S3 - S4, 6 * m), b = 13 + f(S3 - S5, 4 * m), c = 13 + f(S4 - S5, 2 * m), raw = Math.max(a, b, c); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: a > 20 || b > 20, soloRequired: false, case: 'B', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c } }; } if (napSeat === bottomSeat && deputySeat !== fourthSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } }; } if (napSeat === fourthSeat && deputySeat !== bottomSeat) { const raw = 13 + f(S4 - S5, 6 * m); return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'D', details: { S3, S4, S5, needNapLoss: raw } }; } return null; }
+function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
+  const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i);
+  const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s;
+  const bottomSeat = ranked[0].i, fourthSeat = ranked[1].i;
+  const m = Math.max(1, mult);
+  const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom);
+  if (napSeat === bottomSeat && deputySeat === fourthSeat) {
+    // 5位(NAP)が3位を抜く: S5+2U > S3-U → 3U > S3-S5
+    const a = 13 + f(S3 - S5, 6 * m);
+    // 4位(副官)が3位を抜く: S4+U > S3-U → 2U > S3-S4
+    const b = 13 + f(S3 - S4, 4 * m);
+    const raw = Math.max(a, b);
+    const achievable = raw <= 20;
+    return {
+      minBid: Math.min(20, raw),
+      rawMin: raw,
+      canOvertake: achievable,
+      achievable,
+      incentiveBroken: !achievable,
+      soloRequired: false,
+      case: 'A',
+      details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b }
+    };
+  }
+  if (napSeat === fourthSeat && deputySeat === bottomSeat) {
+    const a = 13 + f(S3 - S4, 6 * m), b = 13 + f(S3 - S5, 4 * m), c = 13 + f(S4 - S5, 2 * m), raw = Math.max(a, b, c);
+    return {
+      minBid: Math.min(20, raw),
+      rawMin: raw,
+      canOvertake: raw <= 20,
+      achievable: raw <= 20,
+      incentiveBroken: a > 20 || b > 20,
+      soloRequired: false,
+      case: 'B',
+      details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c }
+    };
+  }
+  if (napSeat === bottomSeat && deputySeat !== fourthSeat) {
+    const raw = 13 + f(S4 - S5, 6 * m);
+    return {
+      minBid: Math.min(20, raw),
+      rawMin: raw,
+      canOvertake: raw <= 20,
+      achievable: raw <= 20,
+      incentiveBroken: false,
+      soloRequired: false,
+      case: 'C',
+      details: { S3, S4, S5, needNapOverFourth: raw }
+    };
+  }
+  if (napSeat === fourthSeat && deputySeat !== bottomSeat) {
+    const raw = 13 + f(S4 - S5, 6 * m);
+    return {
+      minBid: Math.min(20, raw),
+      rawMin: raw,
+      canOvertake: raw <= 20,
+      achievable: raw <= 20,
+      incentiveBroken: false,
+      soloRequired: false,
+      case: 'D',
+      details: { S3, S4, S5, needNapLoss: raw }
+    };
+  }
+  return null;
+}
 function isSoloForcedInMatch(m) { if (m.round < 10 || !m.contract) return false; const ranked = m.matchScores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const bottomSeat = ranked[0].i; if (m.contract.nap !== bottomSeat) return false; const fourthSeat = ranked[1].i; const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat); return r?.soloRequired === true; }
 function isSafeToCashAceInMatch(m, suit, seat) { if (!m.contract) return false; if (suit === '♠') return true; if (m.trickNo > 0) { const twoPlayed = m.playedCards.some(c => c.id === suit + '2') || (m.discardedKitty || []).some(c => c.id === suit + '2'); if (!twoPlayed) { const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]); if (!anyVoid) return false; } } if (m.contract.suit !== 'NT' && m.contract.suit !== suit) { for (let s = 0; s < 5; s++) { if (s === seat) continue; if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; } else { if (s === m.contract.nap) continue; } if (m.voids[s] && m.voids[s][suit]) return false; } } return true; }
 function publicState(m) {
@@ -554,11 +621,16 @@ function playCard(m, seat, id, room, env) {
     if (m.round >= 10 && !m.contract.solo) {
       const r = computeTeamMinBid(m.matchScores, m.mult, m.contract.nap, m.contract.deputy);
       if (r !== null) {
-        const forcedMin = r.minBid, oldBid = m.contract.num;
+        const oldBid = m.contract.num;
         const caseLabel = { A: '組んだら', B: '逆組み', C: '通常', D: '逆立ち' }[r.case];
-        if (forcedMin > oldBid) { m.contract.num = forcedMin; raisedNotice = '副官判明（' + caseLabel + '）。立ちを ' + oldBid + '枚 → ' + forcedMin + '枚 に引き上げました。'; }
-        else { raisedNotice = '副官判明（' + caseLabel + '）。立ち ' + oldBid + '枚は最低条件を満たしています。'; }
-        if (r.incentiveBroken) raisedNotice += ' ⚠ 20枚でも4位が3位を超えられないため、副官に勝つインセンティブがありません。';
+        if (!r.achievable) {
+          raisedNotice = '副官判明（' + caseLabel + '）。20枚でも逆転不可能（不可）です。';
+        } else if (r.minBid > oldBid) {
+          m.contract.num = r.minBid;
+          raisedNotice = '副官判明（' + caseLabel + '）。立ちを ' + oldBid + '枚 → ' + r.minBid + '枚 に引き上げました。';
+        } else {
+          raisedNotice = '副官判明（' + caseLabel + '）。立ち ' + oldBid + '枚は最低条件を満たしています。';
+        }
       }
     }
   }
@@ -800,3 +872,6 @@ export const room = {
     room.broadcast(presence);
   }
 };
+// ===== [worker.js 2/2 終了] =====
+
+// ===== [worker.js 1/2 終了] =====
