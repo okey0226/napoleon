@@ -417,9 +417,9 @@ function iHoldStrongestTrump(hand, playedCards, trumpSuit) {
   return false;
 }
 
+// ★ 修正3: 味方が勝っているなら Q/10/J はすべてダンプ対象にする
 function pickDumpFace(followCards, contract, currentRank, opts = {}) {
   const { excludeId = null } = opts;
-  const currentIdx = RANKS.indexOf(currentRank);
   const dumpable = followCards.filter(c => {
     if (excludeId && c.id === excludeId) return false;
     if (!isFace(c)) return false;
@@ -428,7 +428,7 @@ function pickDumpFace(followCards, contract, currentRank, opts = {}) {
     if (isSameColorJ(c, contract)) return false;
     if (c.rank === 'A') return false;
     if (c.rank === 'K') return false;
-    return RANKS.indexOf(c.rank) <= currentIdx;
+    return true; // 味方が勝っているなら、Q/10/Jはすべてダンプ
   });
   if (!dumpable.length) return null;
   return dumpable.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
@@ -699,6 +699,12 @@ function chooseNapoleonFollow(ctx) {
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
 
+  // ★ 追加2: 相手が切り札で切っており、自分がオーバートランプできる場合
+  if (current && !isTeamNap(current.seat, contract) && pointsInTrick > 0) {
+    const overTrumps = winningCards.filter(c => isTrump(contract, c));
+    if (overTrumps.length) return low(overTrumps);
+  }
+
   if (contract.suit === 'NT' && !isNapWinning && pointsInTrick === 0) {
     const hasMightyInWinning = winningCards.some(c => c.id === '♠A');
     const nonMightyWinning = winningCards.filter(c => c.id !== '♠A');
@@ -924,7 +930,8 @@ function chooseAllianceFollow(ctx) {
     return lowX(ctx, legal);
   }
 
-  if (trickNo >= 3 && pointsInTrick >= 3) {
+  // ★ 修正1: セイム2の使用条件を緩和（1点以上入っていれば2周目以降は使う）
+  if (trickNo >= 1 && pointsInTrick >= 1) {
     const sameTwo = winningCards.find(c => c.rank === '2' && c.suit === ledSuit);
     if (sameTwo) return sameTwo;
   }
