@@ -444,9 +444,16 @@ function keepValue(c, ctx) {
   if (contract.suit !== 'NT' && c.rank === 'J' && c.suit !== contract.suit && isSameColorSuit(c.suit, contract.suit)) return 1800; // 裏J
   if (c.id === '♥Q') return 1700; // 影Q
 
-  // 2の扱い（9トリック目以降は捨てる）
+  // 2の扱い
   if (c.rank === '2') {
     if (trickNo >= 8) return 0; // 9トリック目以降は真っ先に捨てる
+    
+    // そのスートの絵札が全て切られている場合も価値なし
+    const faceRanks = ['10', 'J', 'Q', 'K', 'A'];
+    const playedIds = new Set((playedCards || []).map(pc => pc.id));
+    const allFacePlayed = faceRanks.every(r => playedIds.has(c.suit + r));
+    if (allFacePlayed) return 0;
+
     return 50; // それまではセイム2用に少し残す
   }
 
@@ -489,6 +496,9 @@ function lowX(ctx, cards) {
     return cardPower(ctx.contract, ctx.trickNo, a, ctx.trick) - cardPower(ctx.contract, ctx.trickNo, b, ctx.trick);
   });
   
+  // 温存価値が0のカードがあれば、経験学習のノイズを排除して無条件でそれを捨てる
+  if (keepValue(sorted[0], ctx) === 0) return sorted[0];
+
   if (!ctx.experience || sorted.length < 2) return sorted[0];
 
   const role = ctx.seat === ctx.contract.nap
@@ -823,13 +833,18 @@ function chooseAllianceLead(ctx) {
   const p = params || {};
 
   if (trickNo > 0 && trickNo <= (p.allySameTwoWindow ?? 4)) {
-    const freshTwos = legal.filter(c =>
-      c.rank === '2' &&
-      (contract.suit === 'NT' || c.suit !== contract.suit) &&
-      (playedCards || []).filter(pc => pc.suit === c.suit).length === 0 &&
-      countVoidSeats(voids, c.suit, seat) === 0 &&
-      (contract.suit === 'NT' || !voids[contract.nap]?.[c.suit])
-    );
+    const faceRanks = ['10', 'J', 'Q', 'K', 'A'];
+    const playedIds = new Set((playedCards || []).map(pc => pc.id));
+    
+    const freshTwos = legal.filter(c => {
+      if (c.rank !== '2') return false;
+      if (contract.suit !== 'NT' && c.suit === contract.suit) return false;
+      if ((playedCards || []).some(pc => pc.suit === c.suit)) return false;
+      if (countVoidSeats(voids, c.suit, seat) > 0) return false;
+      if (contract.suit !== 'NT' && voids[contract.nap]?.[c.suit]) return false;
+      if (faceRanks.every(r => playedIds.has(c.suit + r))) return false;
+      return true;
+    });
     if (freshTwos.length && Math.random() < (p.allySameTwoLeadChance ?? 0.55)) {
       return freshTwos[0];
     }
