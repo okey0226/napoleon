@@ -41,7 +41,18 @@ function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-dec
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards,discardedKitty:g.discardedKitty||[]}}
 
 function phase(t){const roundTag=g.playoff?'プレーオフ · ':g.round===9?'ラス前 · ':g.round>=10?'オールラスト · ':'';const pl=$('phase-label');if(pl)pl.textContent=roundTag+t;const gs=$('game-screen');if(gs)gs.classList.toggle('auctioning',g.phase==='auction');renderContractInfo()}
-function name(i){return i===g.mySeat?'あなた':g.players[i]?.name||'COM '+i}
+function name(i){
+  if(i === g.mySeat) return 'あなた';
+  const p = g.players[i];
+  if(!p) return 'COM ' + i;
+  
+  // ★修正: 登録済みのIDを優先して表示。未登録（ゲスト）の場合は席番号を付与
+  let n = p.username || p.name || ('COM ' + i);
+  if(n === 'ゲスト' || n === 'プレイヤー' || n === 'player' || n === 'COM' || !n) {
+    n = 'ゲスト(席' + i + ')';
+  }
+  return n;
+}
 function color(s){return s==='♥'||s==='♦'?'red':''}
 function cardEl(c,extra){const e=document.createElement('div');e.className='card '+(c?color(c.suit):'')+' '+(extra||'');if(c)e.innerHTML='<span class="rank">'+c.rank+'</span><span class="suit">'+c.suit+'</span>';return e}
 
@@ -82,8 +93,8 @@ function showOpenKitty(){const label=document.createElement('span');label.classN
 function showDiscardedKitty(){
   const label=document.createElement('span');
   label.className='open-label';
-  label.textContent='捨て札';
-  const cards=(g.kitty||[]).map(c=>cardEl(c));
+  label.textContent='捨て札(絵札)';
+  const cards=(g.kitty||[]).filter(c=>FACE.includes(c.rank)).map(c=>cardEl(c));
   const el=$('kitty-view');
   if(!el)return;
   if(cards.length)el.replaceChildren(label,...cards);
@@ -219,7 +230,7 @@ function startLocal(){
   g.waitingAutoPlay=false;
   clearInterval(g.autoNextTimer);
   g.matchStats=Array.from({length:5},()=>({declarerAttempts:0,declarerSuccesses:0,exactAttempts:0,exactSuccesses:0,boldAttempts:0,boldSuccesses:0,soloAttempts:0,soloSuccesses:0,deputyAttempts:0,deputySuccesses:0,artAttempts:0,dramaticPlays:0,allyFeedAttempts:0,allyFeedSuccesses:0,bidTotal:0}));
-  g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
+  g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',username:i?'COM '+i:'あなた',bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
   const modeLabel=$('game-mode-label'); if(modeLabel)modeLabel.textContent='COM戦';
   const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='RATE';
@@ -518,7 +529,7 @@ function callUi(){
   else {
     const label=document.createElement('span');
     label.className='open-label';
-    label.textContent='捨て札';
+    label.textContent='捨て札(絵札)';
     const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
     const el=$('kitty-view');
     if(el){
@@ -1022,7 +1033,6 @@ function finishGame(){
   }
 }
 
-// ★修正: 友人戦用のリザルト画面表示関数
 function showOnlineResult() {
   const r = $('result-panel');
   if (!r || !g.onlineState || !g.onlineState.result) return;
@@ -1067,7 +1077,7 @@ function showOnlineResult() {
   
   if (!final) {
     clearTimeout(g.onlineResultTimer);
-    let remain = 8; // サーバー側の待機時間に合わせる
+    let remain = 8;
     const cd = r.querySelector('.online-countdown');
     if (!cd) {
        const div = document.createElement('div');
@@ -1450,7 +1460,8 @@ function handleOnlineMessage(m){
   if(m.type==='matched'){
     document.getElementById('friend-lobby-overlay')?.remove();
     g.online=m;g.mySeat=m.seat;
-    g.players=m.players.map(p=>({name:p.id,hand:[],taken:[],roundPoints:0}));
+    // ★修正: p.username を優先してセット
+    g.players=m.players.map(p=>({name:p.username || p.id, username:p.username, hand:[], taken:[], roundPoints:0}));
     g.active=-1;
     g.auction=null;
     g.contract=null;
@@ -1535,7 +1546,7 @@ function handleOnlineMessage(m){
         }
       }
       if (g.phase === 'call-reveal') {
-        g.confirmedCall = false; // 新しい確認フェーズ開始時にリセット
+        g.confirmedCall = false; 
       }
       if (g.phase === 'discard') {
         g.discard = new Set();
@@ -1598,7 +1609,7 @@ function drawOnlineKitty(){
   } else if(g.phase==='discard' || g.phase==='call' || g.phase==='call-reveal' || g.phase==='play' || g.phase==='trick-end'){
     const label=document.createElement('span');
     label.className='open-label';
-    label.textContent='捨て札';
+    label.textContent='捨て札(絵札)';
     const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
     if(cards.length) el.replaceChildren(label, ...cards);
     else el.replaceChildren();
@@ -1692,7 +1703,9 @@ async function online(mode,roomCode,bots,botLevel=3){
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
     bindOnlineWs(roomInstance);
-    g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
+    // ★修正: 登録済みならIDを、未登録ならnullを送信
+    const pId = g.account?.id || null;
+    g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:pId})
   }catch(e){
     console.warn('[online] connect failed:', e?.message);
     toast('対戦に接続できませんでした（サーバー起動待ちの可能性があります。少し待って再試行してください）');
