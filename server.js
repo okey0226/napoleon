@@ -120,7 +120,6 @@ function publicState(m) {
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    // ★修正: 捨て札は絵札（得点札）のみを公開
     revealedKitty: (m.phase !== "auction" && m.discardedKitty) ? m.discardedKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
@@ -406,7 +405,7 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room);
   if (a.type === "next-round") {
     if (m.phase === "round-result") {
-      m.deadline = Math.min(m.deadline, Date.now() + 1000); // 1秒後に短縮
+      m.deadline = Math.min(m.deadline, Date.now() + 1000); 
     }
     return;
   }
@@ -504,11 +503,16 @@ wss.on('connection', (ws) => {
       let player;
       try { player = await getProfile(env, conn); } catch (e) { sendSafe(conn, { type: "room-error", message: "エラー" }); return; }
       
-      // ★修正: 名前を正しく反映
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
-      if (msg.playerId) {
-        entry.player.username = String(msg.playerId);
-        entry.player.playerId = String(msg.playerId);
+      
+      // ★修正: msg.playerId があれば登録済みIDとして優先
+      if (msg.playerId && String(msg.playerId).trim() !== '' && String(msg.playerId) !== 'null') {
+        const pid = String(msg.playerId).trim();
+        entry.player.username = pid;
+        entry.player.playerId = pid;
+      } else {
+        entry.player.username = "ゲスト";
+        entry.player.playerId = "ゲスト";
       }
       
       if (mode === "ranked") {
