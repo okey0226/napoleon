@@ -61,25 +61,50 @@ function renderContractInfo(){
   const contract=g.contract;
   if(contract){
     box.classList.remove('hidden');
+    const parts=[];
+    
     const bid=document.createElement('strong');
     bid.className='contract-bid';
     bid.textContent='宣言 '+contract.num+contract.suit;
+    parts.push(bid);
+
     const label=document.createElement('span');
     label.className='contract-call-label';
     label.textContent='副官札';
-    const parts=[bid,label,contract.call?cardEl(contract.call,'contract-card'):Object.assign(document.createElement('span'),{className:'contract-pending',textContent:'指名前'})];
+    parts.push(label);
+
+    if(contract.call) {
+        parts.push(cardEl(contract.call,'contract-card'));
+    } else {
+        const pending = document.createElement('span');
+        pending.className = 'contract-pending';
+        pending.textContent = '指名前';
+        parts.push(pending);
+    }
+
+    // ★追加: 捨て札の絵札を上部に小さく表示
+    const revealedKitty = (g.discardedKitty || []).filter(c => FACE.includes(c.rank));
+    if (g.phase !== 'auction' && g.phase !== 'prep' && g.phase !== 'appeal-offer' && g.phase !== 'appeal-response' && g.phase !== 'redeal') {
+        if (revealedKitty.length > 0) {
+            const kittyLabel = document.createElement('span');
+            kittyLabel.className = 'contract-call-label';
+            kittyLabel.textContent = '捨て札';
+            parts.push(kittyLabel);
+            
+            const kittyWrap = document.createElement('div');
+            kittyWrap.className = 'contract-kitty-cards';
+            revealedKitty.forEach(c => kittyWrap.append(cardEl(c, 'contract-kitty-card')));
+            parts.push(kittyWrap);
+        }
+    }
+    
     if(contract.solo && contract.revealedCall){
       const solo=document.createElement('span');
       solo.className='contract-call-label';
       solo.textContent='ひとり立ち';
       parts.push(solo);
     }
-    if(g.allianceKittyPoints>0){
-      const kp=document.createElement('span');
-      kp.className='contract-call-label';
-      kp.textContent='捨て札 '+g.allianceKittyPoints+'pt(連合軍)';
-      parts.push(kp);
-    }
+    
     box.replaceChildren(...parts);
     return
   }
@@ -87,18 +112,26 @@ function renderContractInfo(){
   box.replaceChildren()
 }
 
-function showKittyBacks(){const el=$('kitty-view');if(el)el.replaceChildren(cardEl(null,'card-back'),cardEl(null,'card-back'))}
-function showOpenKitty(){const label=document.createElement('span');label.className='open-label';label.textContent='オープン';const el=$('kitty-view');if(el)el.replaceChildren(label,...g.kitty.map(c=>cardEl(c)))}
-function showDiscardedKitty(){
+// 中央のオープン表示（捨て札フェーズ以降は非表示にする）
+function showOpenKitty(){
   const label=document.createElement('span');
   label.className='open-label';
-  label.textContent='捨て札(絵札)';
-  const cards=(g.kitty||[]).filter(c=>FACE.includes(c.rank)).map(c=>cardEl(c));
+  label.textContent='オープン';
   const el=$('kitty-view');
-  if(!el)return;
-  if(cards.length)el.replaceChildren(label,...cards);
-  else el.replaceChildren();
+  if(el) {
+    el.classList.remove('hidden');
+    el.replaceChildren(label,...g.kitty.map(c=>cardEl(c)));
+  }
 }
+
+function showDiscardedKitty(){
+  const el=$('kitty-view');
+  if(el) {
+    el.classList.add('hidden'); // ★非表示にする
+    el.replaceChildren();
+  }
+}
+
 function deck(){let d=[];SUITS.forEach(s=>RANKS.forEach(r=>d.push({suit:s,rank:r,id:s+r})));for(let i=d.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]]}return d}
 function sort(h){h.sort((a,b)=>SV[b.suit]-SV[a.suit]||RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))}
 
@@ -1489,6 +1522,7 @@ function handleOnlineMessage(m){
   }
   if(m.type==='game-state'){
     const prevPhase = g.phase;
+    const prevTrick = g.onlineState?.trick || []; // ★ 前の状態を保持
     g.onlineState=m.state;g.mySeat=m.you;
     g.active=m.state.active;g.phase=m.state.phase;
     g.round = m.state.round;
@@ -1518,6 +1552,29 @@ function handleOnlineMessage(m){
     if(tc){
       tc.replaceChildren();
       g.trick.forEach(x => tc.append(cardEl(x.card,'trick-card played-seat-'+x.player)));
+    }
+
+    // ★ 新しいカードが出たかチェックしてログに追加
+    if (m.state.trick) {
+      if (m.state.trick.length > prevTrick.length) {
+        const newCards = m.state.trick.slice(prevTrick.length);
+        for (const nc of newCards) {
+          const cardId = nc.card.suit + nc.card.rank;
+          addGameLog(name(nc.seat) + 'が' + cardId + 'を出した');
+        }
+      } else if (m.state.trick.length === 0 && prevTrick.length > 0) {
+        if (m.state.lastTrickWinner != null) {
+          addGameLog(name(m.state.lastTrickWinner) + 'がトリックを獲得');
+        }
+      }
+    }
+
+    // ★ 通知メッセージもログに追加
+    if(m.state.notice) {
+      if (!g.localLog) g.localLog = [];
+      if (g.localLog[g.localLog.length - 1]?.text !== m.state.notice) {
+        addGameLog(m.state.notice);
+      }
     }
 
     if (prevPhase !== g.phase) {
@@ -1604,17 +1661,13 @@ function handleOnlineMessage(m){
 function drawOnlineKitty(){
   const el=$('kitty-view'); if(!el) return;
   if(g.phase==='auction' && g.kitty && g.kitty.length){
+    el.classList.remove('hidden');
     el.replaceChildren(...g.kitty.map(c=>cardEl(c)));
-  } else if(g.phase==='discard' || g.phase==='call' || g.phase==='call-reveal' || g.phase==='play' || g.phase==='trick-end'){
-    const label=document.createElement('span');
-    label.className='open-label';
-    label.textContent='捨て札(絵札)';
-    const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
-    if(cards.length) el.replaceChildren(label, ...cards);
-    else el.replaceChildren();
   } else if(g.phase==='auction'){
+    el.classList.remove('hidden');
     el.replaceChildren(cardEl(null,'card-back'),cardEl(null,'card-back'));
   } else {
+    el.classList.add('hidden'); // ★オークション以外は非表示
     el.replaceChildren();
   }
 }
