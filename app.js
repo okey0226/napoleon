@@ -498,7 +498,6 @@ function callUi(){
   phase('副官指名');
   if(!g.onlineState) showDiscardedKitty();
   else {
-    // オンラインの場合、既に捨て札はサーバー側で処理されているので、表示を合わせる
     showDiscardedKitty();
   }
   const bidSolo=g.contract.solo;
@@ -546,6 +545,24 @@ function callUi(){
     announceCall(g.contract.call,playStart)
   };
   update()
+}
+
+// ★修正: オンラインでも指名確認を待つ
+function drawOnlineCallReveal(){
+  const p=$('call-panel');if(!p)return;
+  p.classList.remove('hidden');
+  const call=g.contract?.call;
+  p.innerHTML='<div class="panel-title">副官指名</div>'+
+    (call?'<div class="call-card-preview"><div id="online-reveal-preview"></div></div>':'')+
+    '<div class="micro-copy">全員が確認すると最初のトリックが始まります。</div>'+
+    '<div class="panel-row"><button class="small-action" id="online-confirm-call">確認しました</button></div>';
+  const rp=$('online-reveal-preview'); if(rp&&call) rp.replaceChildren(cardEl(call,'announcement-card'));
+  const ok=$('online-confirm-call');
+  if(ok) ok.onclick=()=>{ 
+    g.room?.send({type:'game',action:{type:'confirm-call'}}); 
+    ok.disabled = true; 
+    ok.textContent = '確認待ち...';
+  };
 }
 
 function kittyStart(){
@@ -624,7 +641,7 @@ function renderHand(discard=false){
   box.classList.toggle('discard-mode',discard);
   $('game-screen')?.classList.toggle('discarding',discard);
   box.replaceChildren();
-  const handCards = g.onlineState ? (g.players[g.mySeat]?.hand||[]) : (g.players[0]?.hand||[]);
+  const handCards = g.onlineState ? (g.privateHand || g.players[g.mySeat]?.hand || []) : (g.players[0]?.hand || []);
   handCards.forEach(c=>{
     let e=cardEl(c,discard?'playable':'');
     if(discard){
@@ -943,7 +960,11 @@ function finishGame(){
     clearInterval(g.autoNextTimer);
     r.classList.add('hidden');
     if(final){screen('home-screen');return}
-    g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+    if(g.onlineState) {
+      g.room?.send({type:'game',action:{type:'next-round'}});
+    } else {
+      g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+    }
   };
   if(!final){
     let remain=6;
@@ -955,7 +976,11 @@ function finishGame(){
       if(remain<=0){
         clearInterval(g.autoNextTimer);
         r.classList.add('hidden');
-        g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+        if(g.onlineState) {
+          g.room?.send({type:'game',action:{type:'next-round'}});
+        } else {
+          g.round++;g.mult=1;g.greenRedraws=0;roundStart();
+        }
       } else if(cd){cd.textContent=remain+'秒後に次の局へ…';}
     },1000);
   }
@@ -1373,7 +1398,6 @@ function handleOnlineMessage(m){
 
     // 各画面の描画更新
     if (prevPhase !== g.phase && g.phase === 'prep') {
-      // 新しい局に入ったらログなどをリセット
       const roundLab=$('round-label'); if(roundLab)roundLab.textContent=g.round;
       g.discard = new Set();
       $('game-screen')?.classList.remove('discarding');
@@ -1403,7 +1427,6 @@ function handleOnlineMessage(m){
       g.players[g.mySeat].hand = m.hand;
       g.active = m.state.active;
       if(g.active === g.mySeat) {
-        // 自分のターンになった時
         drawLocalPlayControls();
       }
     }
@@ -1478,15 +1501,14 @@ function drawOnlineControls(){
     return;
   }
   if (g.phase === 'call-reveal') {
-    // 指名確認は自動で進むので何もしない
+    // ★修正: 指名確認ボタンを表示する
+    drawOnlineCallReveal();
     return;
   }
   if (g.phase === 'play' && g.active === g.mySeat) {
-    // 打牌パネルはクリック時に出るのでここでは何もしない
     return;
   }
   
-  // それ以外はパネルを隠す
   ['auction-panel','call-panel','play-panel','result-panel'].forEach(id=>{
     const el=$(id); if(el) el.classList.add('hidden');
   });
