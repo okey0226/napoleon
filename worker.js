@@ -340,7 +340,7 @@ async function beginMatch(kind, roomCode, group, room, env) {
     playoff: false, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), botExperience: null,
     matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })),
     roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0),
-    phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
+    phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], openKitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
     auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, botThinkAt: 0, humanAutoPlayAt: null,
     notice: "配札しました。競り開始まで7秒です。",
     playedCards: [], voids: [{}, {}, {}, {}, {}], allianceKittyPoints: 0
@@ -360,6 +360,7 @@ function deal(m) {
   const d = shuffledDeck();
   m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
   m.kitty = d.splice(0, 2);
+  m.openKitty = m.kitty.slice(); // 公開用に退避
   m.discardedKitty = [];
   m.trick = []; m.trickNo = 0; m.earlyFinish = false;
   m.roundArt = Array(5).fill(0); m.roundDrama = Array(5).fill(0); m.roundFeed = Array(5).fill(0);
@@ -456,7 +457,7 @@ function publicState(m) {
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    revealedKitty: (m.phase !== "auction" && m.kitty) ? m.kitty : [],
+    revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
@@ -488,8 +489,9 @@ function auctionDone(m, seat, room) {
   beginDiscard(m, seat, room);
 }
 function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
-function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
+function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
+// ★修正: 指名後に確認待ちを挟む
 function callCard(m, seat, suit, rank, room) { 
   if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; 
   const card = { suit, rank, id: suit + rank }; 
@@ -501,7 +503,7 @@ function callCard(m, seat, suit, rank, room) {
   m.contract.call = card; 
   m.contract.solo = isOwn || m.contract.solo; 
   m.contract.revealedCall = false; 
-  m.contract.ready = m.seats.map(p => p.bot); // COMは準備完了
+  m.contract.ready = m.seats.map(p => p.bot); 
   m.phase = "call-reveal"; 
   m.active = seat; 
   m.deadline = Date.now() + 15000; 
@@ -518,6 +520,7 @@ function discardCards(m, seat, ids, room) {
   const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
   m.allianceKittyPoints = (m.allianceKittyPoints || 0) + kittyPoints.length;
   m.kitty = removed;
+  m.openKitty = removed.slice(); // 捨て札を公開用にも保持
   m.discardedKitty = removed.slice();
   sortHand(m.seats[seat].hand);
   m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000;
@@ -916,7 +919,6 @@ export const room = {
         for (const seat of m.auction.active.slice()) { if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true); if (m.phase !== "auction") break; }
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) { if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room); }
       } else if (m.phase === "call-reveal") { 
-        // ★追加: 指名確認のタイムアウト（15秒で自動開始）
         if (now >= m.deadline) startPlay(m, room); 
       }
       else if (m.phase === "call" || m.phase === "discard") {
