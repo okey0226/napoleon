@@ -360,7 +360,7 @@ function deal(m) {
   const d = shuffledDeck();
   m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
   m.kitty = d.splice(0, 2);
-  m.openKitty = m.kitty.slice(); // 公開用に退避
+  m.openKitty = m.kitty.slice();
   m.discardedKitty = [];
   m.trick = []; m.trickNo = 0; m.earlyFinish = false;
   m.roundArt = Array(5).fill(0); m.roundDrama = Array(5).fill(0); m.roundFeed = Array(5).fill(0);
@@ -458,7 +458,7 @@ function publicState(m) {
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
     revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty : [],
-    auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null } : null,
+    auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
     trickNo: m.trickNo, deadline: m.deadline, result: m.result || null
@@ -491,7 +491,6 @@ function auctionDone(m, seat, room) {
 function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
 function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
-// ★修正: 指名後に確認待ちを挟む
 function callCard(m, seat, suit, rank, room) { 
   if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; 
   const card = { suit, rank, id: suit + rank }; 
@@ -520,7 +519,7 @@ function discardCards(m, seat, ids, room) {
   const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
   m.allianceKittyPoints = (m.allianceKittyPoints || 0) + kittyPoints.length;
   m.kitty = removed;
-  m.openKitty = removed.slice(); // 捨て札を公開用にも保持
+  m.openKitty = removed.slice();
   m.discardedKitty = removed.slice();
   sortHand(m.seats[seat].hand);
   m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000;
@@ -845,6 +844,10 @@ export const room = {
       if (!conns.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
       
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
+      if (msg.playerId) {
+        entry.player.username = String(msg.playerId);
+        entry.player.playerId = String(msg.playerId);
+      }
       
       if (mode === "ranked") { queues.ranked.push(entry); queues.ranked.sort((a, b) => a.joined - b.joined); sendSafe(conn, { type: "lobby", text: "対戦相手を検索中 · " + queues.ranked.length + "/5人" }); if (queues.ranked.length >= 5) beginMatch("ranked", "", queues.ranked.splice(0, 5), room, env); return; }
       
