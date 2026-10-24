@@ -403,7 +403,12 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room);
   if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room);
   if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room);
-  if (a.type === "next-round") return nextRound(m, room);
+  if (a.type === "next-round") {
+    if (m.phase === "round-result") {
+      m.deadline = Math.min(m.deadline, Date.now() + 1000); // 1秒後に短縮
+    }
+    return;
+  }
   if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
   if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
   if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room);
@@ -451,26 +456,21 @@ wss.on('connection', (ws) => {
     const env = {}; 
     let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-    // ★修正: 再接続処理の追加
     if (msg.type === "reconnect") {
       if (!msg.sessionToken) { sendSafe(conn, { type: "reconnect-failed" }); return; }
-      // Render環境ではDBがないため、sessionTokenからのユーザー特定は行わず、
-      // 切断されたCOM席の中で元のプレイヤー名と一致するものを探す（簡易実装）
-      // 本来はDB等でセッションを管理すべきだが、ここでは名前ベースで復帰を試みる
       let foundMatch = null, foundSeat = -1;
-      // ※簡易的に実装。実際はuserIdで探す必要がある
-      for (const m of matches.values()) {
-        if (m.phase === "result") continue;
-        for (let i = 0; i < m.seats.length; i++) {
-          const s = m.seats[i];
-          if (s.bot === true && s.connId === null) {
-             // 名前が一致するか確認（またはトークンを確認）
-             // ここでは仮に、切断された席のいずれかに復帰させる（不完全な実装）
-             // ユーザーが明示的に再接続を押した場合、参加中のマッチがあれば戻す
-             foundMatch = m; foundSeat = i; break;
+      const playerId = msg.playerId;
+      if (playerId) {
+        for (const m of matches.values()) {
+          if (m.phase === "result") continue;
+          for (let i = 0; i < m.seats.length; i++) {
+            const s = m.seats[i];
+            if (s.bot === true && s.connId === null && s.originalPlayerId === playerId) {
+              foundMatch = m; foundSeat = i; break;
+            }
           }
+          if (foundMatch) break;
         }
-        if (foundMatch) break;
       }
       if (!foundMatch) { sendSafe(conn, { type: "reconnect-failed" }); return; }
       
