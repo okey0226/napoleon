@@ -457,7 +457,8 @@ function publicState(m) {
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty : [],
+    // ★修正: 捨て札は絵札（得点札）のみを公開
+    revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
@@ -756,7 +757,6 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "next-round") return nextRound(m, room); 
   if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; } 
   
-  // ★追加: 指名の確認
   if (a.type === "confirm-call") { 
     if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; 
     m.contract.ready[seat] = true; 
