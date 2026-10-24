@@ -649,6 +649,7 @@ function kittyStart(){
       cp.classList.add('hidden');
       callUi()
     };
+    g.lastDiscardPhase = true; // ★追加: 表示済みフラグ
     return
   }
   
@@ -1032,7 +1033,6 @@ function finishGame(){
   }
 }
 
-// ★修正: 名前表示を name() 関数に統一
 function showOnlineResult() {
   const r = $('result-panel');
   if (!r || !g.onlineState || !g.onlineState.result) return;
@@ -1548,6 +1548,7 @@ function handleOnlineMessage(m){
       }
       if (g.phase === 'discard') {
         g.discard = new Set();
+        g.lastDiscardPhase = false; // ★修正: discardフェーズ突入時に必ずリセット
       }
       if (g.phase === 'prep' && g.round >= 9) {
         announceRound(g.round, finalAuctionRule(g.matchScores, g.mult));
@@ -1647,9 +1648,10 @@ function drawOnlineControls(){
     return;
   }
   if (g.phase === 'discard' && g.active === g.mySeat) {
-    if (!g.lastDiscardPhase) {
+    const cp = $('call-panel');
+    // ★修正: フラグが立っていても、画面が非表示なら再表示する
+    if (!g.lastDiscardPhase || !cp || cp.classList.contains('hidden')) {
       kittyStart();
-      g.lastDiscardPhase = true;
     }
     return;
   }
