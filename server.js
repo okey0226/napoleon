@@ -304,7 +304,6 @@ async function finish(m, room, env) {
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
   
-  // ※Render無料版ではDB保存はスキップ
   publish(m, room); matches.delete(m.id);
   for (const seat of m.seats) { if (seat.connId) connMatch.delete(seat.connId); const userId = seat.player.userId; if (userId && rankedUsers.get(userId) === seat.originalConnId) rankedUsers.delete(userId); }
 }
@@ -428,9 +427,6 @@ function timeoutAction(m, room) {
   }
 }
 
-// ==========================================
-// WebSocket サーバーの起動
-// ==========================================
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('OK'); return; }
   res.writeHead(404); res.end();
@@ -455,10 +451,22 @@ wss.on('connection', (ws) => {
 
     if (msg.type === "join") {
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
+      
+      // ★修正: await する前に同期的に部屋を確保し、同時入室時のバッティングを防ぐ
+      let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
+      if (mode === "friend") {
+        if (!entryCode) entryCode = makeCode();
+        let l = friendRooms.get(entryCode);
+        if (!l) {
+          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; // タイムアウトを5分に延長
+          friendRooms.set(entryCode, l);
+        }
+      }
+
       let player;
       try { player = await getProfile(env, conn); } catch (e) { sendSafe(conn, { type: "room-error", message: "エラー" }); return; }
       
-      const entry = { id: conn.id, player, conn, joined: Date.now(), code: String(msg.code || "").toUpperCase().slice(0, 8), bots: 0, botLevel: 3 };
+      const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
       
       if (mode === "ranked") {
         queues.ranked.push(entry);
@@ -467,20 +475,18 @@ wss.on('connection', (ws) => {
         return;
       }
       
-      // 友達対戦（待機部屋）
-      if (!entry.code) entry.code = makeCode();
+      // 友達対戦
       let l = friendRooms.get(entry.code);
-      if (!l) {
-        l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 60000 }; // 60秒タイムアウト
-        friendRooms.set(entry.code, l);
-      }
+      if (!l) l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
       
+      if (l.players.some(x => x.id === conn.id || player.userId && x.player.userId === player.userId)) { sendSafe(conn, { type: "room-error", message: "このプレイヤーはすでに部屋にいます" }); return; }
       if (l.players.length >= 5) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
       
       l.players.push(entry);
       
       // ロビー状態の更新を全員に送る
       l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
+      sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
       
       // 5人揃ったら即開始
       if (l.players.length >= 5) {
