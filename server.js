@@ -222,6 +222,14 @@ function auctionDone(m, seat, room) {
 
 function startPlay(m, room) {
   const c = m.contract;
+  if (!c) return;
+  // ★修正: 捨て札が未完了（手札12枚）の場合はdiscardフェーズに戻す
+  if (m.seats[c.nap].hand.length > 10) {
+    m.phase = "discard"; m.active = c.nap; m.deadline = Date.now() + 30000;
+    m.notice = "捨て札が完了していません。2枚捨ててください。";
+    publish(m, room);
+    return;
+  }
   if (c.solo) c.deputy = c.nap;
   else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; }
   m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
@@ -230,6 +238,7 @@ function startPlay(m, room) {
 }
 
 function beginDiscard(m, seat, room) {
+  if (m.phase === "discard" && m.active === seat) return; // ★修正: 二重呼び出し防止
   m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand);
   m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room);
@@ -505,7 +514,6 @@ wss.on('connection', (ws) => {
       
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
       
-      // ★修正: msg.playerId があれば登録済みIDとして優先
       if (msg.playerId && String(msg.playerId).trim() !== '' && String(msg.playerId) !== 'null') {
         const pid = String(msg.playerId).trim();
         entry.player.username = pid;
