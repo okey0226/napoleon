@@ -780,17 +780,54 @@ export const room = {
       let player; try { player = await getProfile(env, conn); } catch (error) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
       if (!conns.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: String(msg.code || "").toUpperCase().slice(0, 8), bots: Math.max(1, Math.min(4, Number(msg.bots) || 4)), botLevel: Math.max(1, Math.min(3, Math.floor(Number(msg.botLevel) || 2))) };
+      
       if (mode === "ranked") { queues.ranked.push(entry); queues.ranked.sort((a, b) => a.joined - b.joined); sendSafe(conn, { type: "lobby", text: "対戦相手を検索中 · " + queues.ranked.length + "/5人" }); if (queues.ranked.length >= 5) beginMatch("ranked", "", queues.ranked.splice(0, 5), room, env); return; }
+      
+      // ★修正: 友達対戦（待機部屋）
       if (!entry.code) entry.code = makeCode();
       let l = friendRooms.get(entry.code);
-      if (!l) { l = { code: entry.code, host: conn.id, bots: entry.bots, botLevel: entry.botLevel, players: [], created: Date.now() }; friendRooms.set(entry.code, l); }
+      if (!l) { 
+        l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 60000 }; // 60秒タイムアウト
+        friendRooms.set(entry.code, l); 
+      }
       if (l.players.some(x => x.id === conn.id || player.userId && x.player.userId === player.userId)) { sendSafe(conn, { type: "room-error", message: "このプレイヤーはすでに部屋にいます" }); return; }
-      const cap = Math.max(1, 5 - l.bots);
-      if (l.players.length >= cap) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
+      if (l.players.length >= 5) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
+      
       l.players.push(entry);
-      l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, capacity: cap, bots: l.bots, host: x.id === l.host }));
-      sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/" + cap + "人" });
-      if (l.players.length >= cap) { friendRooms.delete(l.code); beginMatch("friend", l.code, l.players, room, env); }
+      
+      // ロビー状態の更新を全員に送る
+      l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
+      sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
+      
+      // 5人揃ったら即開始
+      if (l.players.length >= 5) {
+        friendRooms.delete(l.code);
+        beginMatch("friend", l.code, l.players, room, env);
+      }
+      return;
+    }
+
+    // ★追加: 今すぐ開始
+    if (msg.type === "start-now") {
+      let roomCode = null;
+      for (const [code, l] of friendRooms) {
+        if (l.host === conn.id) { roomCode = code; break; }
+      }
+      if (roomCode) {
+        const l = friendRooms.get(roomCode);
+        friendRooms.delete(roomCode);
+        beginMatch("friend", l.code, l.players, room, env);
+      }
+      return;
+    }
+
+    // ★追加: 部屋から退出
+    if (msg.type === "leave-room") {
+      for (const [c, l] of friendRooms) {
+        l.players = l.players.filter(x => x.id !== conn.id);
+        if (!l.players.length) friendRooms.delete(c);
+        else l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
+      }
       return;
     }
 
@@ -799,6 +836,17 @@ export const room = {
   },
   async onTick(room, env) {
     const now = Date.now(), rankedQueue = queues.ranked;
+    
+    // ★追加: 待機部屋のタイムアウト処理
+    for (const [code, l] of friendRooms) {
+      if (now >= l.timeoutAt) {
+        friendRooms.delete(code);
+        if (l.players.length > 0) {
+          beginMatch("friend", l.code, l.players, room, env); // 足りない席はCOMで埋まる
+        }
+      }
+    }
+
     if (rankedQueue.length && now - rankedQueue[rankedQueue.length - 1].joined >= 90000) { const group = rankedQueue.splice(0, Math.min(4, rankedQueue.length)); beginMatch("ranked", "", group, room, env); }
     for (const [c, l] of friendRooms) if (now - l.created > 900000) friendRooms.delete(c);
     for (const m of matches.values()) {
@@ -871,5 +919,4 @@ export const room = {
   }
 };
 // ===== [worker.js 2/2 終了] =====
-
 // ===== [worker.js 1/2 終了] =====
