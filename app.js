@@ -1,4 +1,4 @@
-// ===== [app.js 完全版] =====
+// ===== [app.js 完全版 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
@@ -1419,8 +1419,23 @@ function showOnlineResult(s){
 // ===== [ONLINE UI ここまで] =====
 
 // ===== [追加] 対戦用ルーム接続ヘルパー =====
-// WebsimSocket.joinRoom() を優先。無ければ生 WebSocket にフォールバック（ローカル開発用）
 async function joinGameRoom() {
+  const WS_URL = window.NAPOLEON_WS_URL || null;
+  if (WS_URL) {
+    const ws = new WebSocket(WS_URL);
+    await new Promise((res, rej) => {
+      ws.onopen = res;
+      ws.onerror = () => rej(new Error('ws error'));
+      setTimeout(() => rej(new Error('timeout')), 10000);
+    });
+    return {
+      roomInstance: ws,
+      send: (m) => ws.send(typeof m === 'string' ? m : JSON.stringify(m)),
+      close: () => ws.close()
+    };
+  }
+  
+  // フォールバック（Websim用 / ローカル用）
   if (window.WebsimSocket?.joinRoom) {
     const roomInstance = await window.WebsimSocket.joinRoom();
     return {
@@ -1531,7 +1546,6 @@ async function online(mode,roomCode,bots,botLevel=3){
   g.reconnecting=false;
   loadTopStrategy();
   try{
-    // ▼ 修正: presence を閉じてからゲーム用ルームに接続（同時接続を1本に）
     await stopPresence();
     const { roomInstance, send, close } = await joinGameRoom();
     g.room = { ws: roomInstance, send, close };
