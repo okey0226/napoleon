@@ -1652,14 +1652,14 @@ $('create-friend')?.addEventListener('click', () => {
   let c = code();
   const fc = $('friend-code');
   if (fc) fc.value = c;
-  online('friend', c, 0, 3); // ★4から0に変更（COM数はサーバー側で制御）
+  online('friend', c, 0, 3); // 常に 0 を送信（COMの数はサーバーで制御）
 });
 $('join-friend')?.addEventListener('click', () => {
   const fc = $('friend-code');
   if (!fc) return;
   let c = fc.value.trim().toUpperCase();
   if (!c) { toast('合言葉を入力してください'); return; }
-  online('friend', c, 0, 3);
+  online('friend', c, 0, 3); // 常に 0 を送信（COMの数はサーバーで制御）
 });
 
 $('start-ranked')?.addEventListener('click', () => online('ranked', '', 0));
