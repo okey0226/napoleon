@@ -563,6 +563,7 @@ async function finish(m, room, env) {
   if (replayAllLast) m.playoff = true;
   m.result = {
     round: m.round, made, points, bid: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, stake: unit,
+    nap: m.contract.nap, deputy: m.contract.deputy, // ★ 追加: 役割を明示
     allianceKittyPoints: allianceKitty,
     lastTrickWinner: m.lastTrickWinner ?? null,
     lastTrickWinnerName: m.lastTrickWinner != null ? (m.seats[m.lastTrickWinner]?.bot ? m.seats[m.lastTrickWinner].player.username : (m.seats[m.lastTrickWinner]?.player.playerId || m.seats[m.lastTrickWinner]?.player.username)) : null,
