@@ -46,7 +46,6 @@ function name(i){
   const p = g.players[i];
   if(!p) return 'COM ' + i;
   
-  // ★修正: 登録済みのIDを優先して表示。未登録（ゲスト）の場合は席番号を付与
   let n = p.username || p.name || ('COM ' + i);
   if(n === 'ゲスト' || n === 'プレイヤー' || n === 'player' || n === 'COM' || !n) {
     n = 'ゲスト(席' + i + ')';
@@ -1033,6 +1032,7 @@ function finishGame(){
   }
 }
 
+// ★修正: 名前表示を name() 関数に統一
 function showOnlineResult() {
   const r = $('result-panel');
   if (!r || !g.onlineState || !g.onlineState.result) return;
@@ -1042,8 +1042,7 @@ function showOnlineResult() {
   const role = i => i === res.nap ? 'NAP' : (!res.solo && i === res.deputy ? 'DEPUTY' : 'ALLY');
   
   const rows = res.scoreChanges.map(sc => {
-    const pName = g.players[sc.seat]?.name || 'COM';
-    return `<div class="round-score-row"><span>${escapeHTML(pName)} · ${role(sc.seat)}</span><strong class="${sc.delta < 0 ? 'score-down' : 'score-up'}">ROUND Δ ${format(sc.delta)}<small>TOTAL ${format(res.matchScores[sc.seat])}</small></strong></div>`;
+    return `<div class="round-score-row"><span>${escapeHTML(name(sc.seat))} · ${role(sc.seat)}</span><strong class="${sc.delta < 0 ? 'score-down' : 'score-up'}">ROUND Δ ${format(sc.delta)}<small>TOTAL ${format(res.matchScores[sc.seat])}</small></strong></div>`;
   }).join('');
 
   const final = g.onlineState.phase === 'result';
@@ -1053,9 +1052,9 @@ function showOnlineResult() {
     <div class="eyebrow">${final ? 'MATCH COMPLETE' : 'ROUND ' + res.round} · RESULT</div>
     <h2>${success ? 'NAP TEAM WINS' : 'ALLIANCE WINS'}</h2>
     <p>BID ${res.bid}${res.suit} · POINTS ${res.points}${res.solo ? ' · ひとり立ち' : ''}<br>
-    NAP ${escapeHTML(g.players[res.nap]?.name || 'COM')}${res.solo ? '' : ` · DEPUTY ${escapeHTML(g.players[res.deputy]?.name || 'COM')}`}
+    NAP ${escapeHTML(name(res.nap))}${res.solo ? '' : ` · DEPUTY ${escapeHTML(name(res.deputy))}`}
     ${res.allianceKittyPoints > 0 ? `<br>捨て札: ${res.allianceKittyPoints}pt（連合軍共有）` : ''}</p>
-    ${res.lastTrickWinnerName ? `<p class="micro-copy">最終トリック勝者: ${escapeHTML(res.lastTrickWinnerName)}</p>` : ''}
+    ${res.lastTrickWinner != null ? `<p class="micro-copy">最終トリック勝者: ${escapeHTML(name(res.lastTrickWinner))}</p>` : ''}
     ${res.allLastReplay ? '<p>5位が4位に並びました。プレーオフを行います。</p>' : ''}
     <div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>${rows}</div>
     <button id="next-online-round" class="primary-button">${final ? 'MENU' : res.allLastReplay ? 'プレーオフ再戦' : 'NEXT ROUND'}</button>
@@ -1460,7 +1459,6 @@ function handleOnlineMessage(m){
   if(m.type==='matched'){
     document.getElementById('friend-lobby-overlay')?.remove();
     g.online=m;g.mySeat=m.seat;
-    // ★修正: p.username を優先してセット
     g.players=m.players.map(p=>({name:p.username || p.id, username:p.username, hand:[], taken:[], roundPoints:0}));
     g.active=-1;
     g.auction=null;
@@ -1703,7 +1701,6 @@ async function online(mode,roomCode,bots,botLevel=3){
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
     bindOnlineWs(roomInstance);
-    // ★修正: 登録済みならIDを、未登録ならnullを送信
     const pId = g.account?.id || null;
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:pId})
   }catch(e){
