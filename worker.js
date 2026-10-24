@@ -774,22 +774,33 @@ export const room = {
     if (msg.type === "join") {
       if (msg.sessionToken) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(msg.sessionToken, Date.now()).first(); if (sess) conn.authUserId = sess.user_id; }
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
+      
+      // ★修正: await する前に同期的に部屋を確保し、同時入室時のバッティングを防ぐ
+      let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
+      if (mode === "friend") {
+        if (!entryCode) entryCode = makeCode();
+        let l = friendRooms.get(entryCode);
+        if (!l) {
+          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; // タイムアウトを5分に延長
+          friendRooms.set(entryCode, l);
+        }
+      }
+
       if (mode === "ranked" && conn.authUserId && rankedUsers.has(conn.authUserId)) { sendSafe(conn, { type: "room-error", message: "このアカウントはすでに待機中または対戦中です" }); return; }
       if (mode === "ranked" && conn.authUserId) rankedUsers.set(conn.authUserId, conn.id);
       if (connMatch.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
+      
       let player; try { player = await getProfile(env, conn); } catch (error) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
       if (!conns.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
-      const entry = { id: conn.id, player, conn, joined: Date.now(), code: String(msg.code || "").toUpperCase().slice(0, 8), bots: Math.max(1, Math.min(4, Number(msg.bots) || 4)), botLevel: Math.max(1, Math.min(3, Math.floor(Number(msg.botLevel) || 2))) };
+      
+      const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
       
       if (mode === "ranked") { queues.ranked.push(entry); queues.ranked.sort((a, b) => a.joined - b.joined); sendSafe(conn, { type: "lobby", text: "対戦相手を検索中 · " + queues.ranked.length + "/5人" }); if (queues.ranked.length >= 5) beginMatch("ranked", "", queues.ranked.splice(0, 5), room, env); return; }
       
-      // ★修正: 友達対戦（待機部屋）
-      if (!entry.code) entry.code = makeCode();
+      // 友達対戦
       let l = friendRooms.get(entry.code);
-      if (!l) { 
-        l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 60000 }; // 60秒タイムアウト
-        friendRooms.set(entry.code, l); 
-      }
+      if (!l) l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
+      
       if (l.players.some(x => x.id === conn.id || player.userId && x.player.userId === player.userId)) { sendSafe(conn, { type: "room-error", message: "このプレイヤーはすでに部屋にいます" }); return; }
       if (l.players.length >= 5) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
       
