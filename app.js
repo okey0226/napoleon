@@ -1421,12 +1421,23 @@ function showOnlineResult(s){
 // ===== [追加] 対戦用ルーム接続ヘルパー =====
 async function joinGameRoom() {
   const WS_URL = window.NAPOLEON_WS_URL || null;
-  if (WS_URL) {
-    const ws = new WebSocket(WS_URL);
+  if (!WS_URL) {
+    // フォールバック（Websim用 / ローカル用）
+    if (window.WebsimSocket?.joinRoom) {
+      const roomInstance = await window.WebsimSocket.joinRoom();
+      return {
+        roomInstance,
+        send: (m) => roomInstance.send(typeof m === 'string' ? m : JSON.stringify(m)),
+        close: () => { try { roomInstance.close?.(); } catch {} }
+      };
+    }
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/ws';
+    const ws = new WebSocket(url);
     await new Promise((res, rej) => {
-      ws.onopen = res;
-      ws.onerror = () => rej(new Error('ws error'));
-      setTimeout(() => rej(new Error('timeout')), 10000);
+      const timer = setTimeout(() => rej(new Error('timeout')), 30000);
+      ws.onopen = () => { clearTimeout(timer); res(); };
+      ws.onerror = () => { clearTimeout(timer); rej(new Error('ws error')); };
     });
     return {
       roomInstance: ws,
@@ -1434,28 +1445,38 @@ async function joinGameRoom() {
       close: () => ws.close()
     };
   }
-  
-  // フォールバック（Websim用 / ローカル用）
-  if (window.WebsimSocket?.joinRoom) {
-    const roomInstance = await window.WebsimSocket.joinRoom();
-    return {
-      roomInstance,
-      send: (m) => roomInstance.send(typeof m === 'string' ? m : JSON.stringify(m)),
-      close: () => { try { roomInstance.close?.(); } catch {} }
-    };
+
+  // ① 事前にサーバーを起こす（Render無料プランのスリープ対策）
+  const healthUrl = WS_URL
+    .replace(/^wss:/, 'https:')
+    .replace(/^ws:/, 'http:')
+    .replace(/\/ws$/, '/healthz');
+  try {
+    await fetch(healthUrl, { mode: 'no-cors', cache: 'no-store' });
+  } catch { /* 起きてなくても後続で再挑戦する */ }
+
+  // ② WebSocket接続を最大3回まで試す（60秒待ち）
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const ws = new WebSocket(WS_URL);
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timeout')), 60000);
+        ws.onopen = () => { clearTimeout(timer); resolve(); };
+        ws.onerror = () => { clearTimeout(timer); reject(new Error('ws error')); };
+      });
+      return {
+        roomInstance: ws,
+        send: (m) => ws.send(typeof m === 'string' ? m : JSON.stringify(m)),
+        close: () => ws.close()
+      };
+    } catch (e) {
+      lastErr = e;
+      console.warn('[joinGameRoom] attempt', attempt, 'failed:', e.message);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
+    }
   }
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
-  await new Promise((res, rej) => {
-    ws.onopen = res;
-    ws.onerror = () => rej(new Error('ws error'));
-    setTimeout(() => rej(new Error('timeout')), 5000);
-  });
-  return {
-    roomInstance: ws,
-    send: (m) => ws.send(typeof m === 'string' ? m : JSON.stringify(m)),
-    close: () => ws.close()
-  };
+  throw lastErr;
 }
 // ===== [追加ここまで] =====
 
@@ -1559,7 +1580,11 @@ async function online(mode,roomCode,bots,botLevel=3){
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
     bindOnlineWs(roomInstance);
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
-  }catch(e){console.warn('[online] connect failed:', e?.message);toast('対戦に接続できませんでした');screen('home-screen')}
+  }catch(e){
+    console.warn('[online] connect failed:', e?.message);
+    toast('対戦に接続できませんでした（サーバー起動待ちの可能性があります。少し待って再試行してください）');
+    screen('home-screen');
+  }
 }
 
 $('home-start')?.addEventListener('click', () => screen('mode-select-screen'));
