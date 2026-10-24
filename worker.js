@@ -489,7 +489,27 @@ function auctionDone(m, seat, room) {
 }
 function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
 function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
-function callCard(m, seat, suit, rank, room) { if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; const card = { suit, rank, id: suit + rank }; if (m.kitty.some(x => x.id === card.id)) return; const isOwn = m.seats[seat].hand.some(c => c.id === card.id); const forceSolo = isSoloForcedInMatch(m); if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false; m.contract.ready = m.seats.map(p => p.bot); m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = []; m.notice = suit + rank + "が指名されました。全員の確認後に開始します。"; publish(m, room); }
+
+function callCard(m, seat, suit, rank, room) { 
+  if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; 
+  const card = { suit, rank, id: suit + rank }; 
+  if (m.kitty.some(x => x.id === card.id)) return; 
+  const isOwn = m.seats[seat].hand.some(c => c.id === card.id); 
+  const forceSolo = isSoloForcedInMatch(m); 
+  if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } 
+  
+  m.contract.call = card; 
+  m.contract.solo = isOwn || m.contract.solo; 
+  m.contract.revealedCall = false; 
+  m.contract.ready = m.seats.map(p => p.bot); // COMは準備完了
+  m.phase = "call-reveal"; 
+  m.active = seat; 
+  m.deadline = Date.now() + 15000; 
+  m.kitty = []; 
+  m.notice = suit + rank + "が指名されました。全員の確認後に開始します。"; 
+  publish(m, room); 
+}
+
 function discardCards(m, seat, ids, room) {
   if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return;
   const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return;
@@ -723,7 +743,32 @@ function botAction(m, room) {
   }
 }
 function nextRound(m, room) { if (m.phase !== "round-result") return; m.round++; m.mult = 1; m.redraws = 0; deal(m); publish(m, room); }
-async function processAction(conn, msg, room, env) { const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return; const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return; const a = msg.action || {}; if (a.type === "appeal") return answerAppealOffer(m, seat, true, room); if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room); if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room); if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room); if (a.type === "next-round") return nextRound(m, room); if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; } if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; } if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room); else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true); else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room); else if (a.type === "discard") discardCards(m, seat, a.cards, room); else if (a.type === "play") playCard(m, seat, a.card, room, env); }
+async function processAction(conn, msg, room, env) { 
+  const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return; 
+  const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return; 
+  const a = msg.action || {}; 
+  if (a.type === "appeal") return answerAppealOffer(m, seat, true, room); 
+  if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room); 
+  if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room); 
+  if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room); 
+  if (a.type === "next-round") return nextRound(m, room); 
+  if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; } 
+  
+  // ★追加: 指名の確認
+  if (a.type === "confirm-call") { 
+    if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; 
+    m.contract.ready[seat] = true; 
+    if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); 
+    else { m.notice = "指名カードの確認中です。"; publish(m, room); } 
+    return; 
+  } 
+  
+  if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room); 
+  else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true); 
+  else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room); 
+  else if (a.type === "discard") discardCards(m, seat, a.cards, room); 
+  else if (a.type === "play") playCard(m, seat, a.card, room, env); 
+}
 async function saveEnd(m, room, env) { await finish(m, room, env); }
 function timeoutAction(m, room) { const i = m.active, p = m.seats[i]; const params = m.botStrategy || defaultStrategy(); const experience = m.botExperience || null; if (m.phase === "call") { if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; } const forceSolo = isSoloForcedInMatch(m); if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); } else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); } } else if (m.phase === "discard") { const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id); discardCards(m, i, ids, room); } else if (m.phase === "play") { const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (c) playCard(m, i, c.id, room, null); } }
 
@@ -779,13 +824,12 @@ export const room = {
       if (msg.sessionToken) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(msg.sessionToken, Date.now()).first(); if (sess) conn.authUserId = sess.user_id; }
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
       
-      // ★修正: await する前に同期的に部屋を確保し、同時入室時のバッティングを防ぐ
       let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
       if (mode === "friend") {
         if (!entryCode) entryCode = makeCode();
         let l = friendRooms.get(entryCode);
         if (!l) {
-          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; // タイムアウトを5分に延長
+          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; 
           friendRooms.set(entryCode, l);
         }
       }
@@ -801,7 +845,6 @@ export const room = {
       
       if (mode === "ranked") { queues.ranked.push(entry); queues.ranked.sort((a, b) => a.joined - b.joined); sendSafe(conn, { type: "lobby", text: "対戦相手を検索中 · " + queues.ranked.length + "/5人" }); if (queues.ranked.length >= 5) beginMatch("ranked", "", queues.ranked.splice(0, 5), room, env); return; }
       
-      // 友達対戦
       let l = friendRooms.get(entry.code);
       if (!l) l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
       
@@ -810,11 +853,9 @@ export const room = {
       
       l.players.push(entry);
       
-      // ロビー状態の更新を全員に送る
       l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
       
-      // 5人揃ったら即開始
       if (l.players.length >= 5) {
         friendRooms.delete(l.code);
         beginMatch("friend", l.code, l.players, room, env);
@@ -822,7 +863,6 @@ export const room = {
       return;
     }
 
-    // ★追加: 今すぐ開始
     if (msg.type === "start-now") {
       let roomCode = null;
       for (const [code, l] of friendRooms) {
@@ -836,7 +876,6 @@ export const room = {
       return;
     }
 
-    // ★追加: 部屋から退出
     if (msg.type === "leave-room") {
       for (const [c, l] of friendRooms) {
         l.players = l.players.filter(x => x.id !== conn.id);
@@ -852,12 +891,11 @@ export const room = {
   async onTick(room, env) {
     const now = Date.now(), rankedQueue = queues.ranked;
     
-    // ★追加: 待機部屋のタイムアウト処理
     for (const [code, l] of friendRooms) {
       if (now >= l.timeoutAt) {
         friendRooms.delete(code);
         if (l.players.length > 0) {
-          beginMatch("friend", l.code, l.players, room, env); // 足りない席はCOMで埋まる
+          beginMatch("friend", l.code, l.players, room, env);
         }
       }
     }
@@ -877,17 +915,20 @@ export const room = {
       else if (m.phase === "auction") {
         for (const seat of m.auction.active.slice()) { if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true); if (m.phase !== "auction") break; }
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) { if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room); }
-      } else if (m.phase === "call-reveal") { if (now >= m.deadline) startPlay(m, room); }
+      } else if (m.phase === "call-reveal") { 
+        // ★追加: 指名確認のタイムアウト（15秒で自動開始）
+        if (now >= m.deadline) startPlay(m, room); 
+      }
       else if (m.phase === "call" || m.phase === "discard") {
         if (m.seats[m.active]?.bot) {
-          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; // 1〜2.5秒思考
+          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; 
           if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
         }
         else if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
       } else if (m.phase === "play") {
         const activeSeat = m.active;
         if (m.seats[activeSeat]?.bot) {
-          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; // 1〜2.5秒思考
+          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; 
           if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
         }
         else {
