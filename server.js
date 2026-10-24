@@ -35,7 +35,7 @@ function beginMatch(kind, roomCode, group, room, env) {
     matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })),
     roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0),
     phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
-    auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, humanAutoPlayAt: null,
+    auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, botThinkAt: 0, humanAutoPlayAt: null,
     notice: "配札しました。競り開始まで7秒です。", playedCards: [], voids: [{}, {}, {}, {}, {}], allianceKittyPoints: 0
   };
   matches.set(id, m);
@@ -47,7 +47,7 @@ function beginMatch(kind, roomCode, group, room, env) {
 }
 
 function deal(m) {
-  m.lastTrickWinner = null; m.humanAutoPlayAt = null;
+  m.lastTrickWinner = null; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   const d = shuffledDeck();
   m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
   m.kitty = d.splice(0, 2);
@@ -225,14 +225,14 @@ function startPlay(m, room) {
   const c = m.contract;
   if (c.solo) c.deputy = c.nap;
   else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; }
-  m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null;
+  m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = "カードを出してください。マストフォローです。"; publish(m, room);
   if (m.seats[m.active].bot) botAction(m, room);
 }
 
 function beginDiscard(m, seat, room) {
   m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand);
-  m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null;
+  m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room);
   if (m.seats[seat].bot) botAction(m, room);
 }
@@ -301,7 +301,7 @@ async function finish(m, room, env) {
     allLastReplay: replayAllLast, playoff: !!m.playoff
   };
 
-  m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000; m.humanAutoPlayAt = null;
+  m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
   
@@ -324,6 +324,7 @@ function playCard(m, seat, id, room, env) {
   if (reveal) { m.contract.revealedCall = true; m.contract.revealTrickNo = m.trickNo; }
 
   m.humanAutoPlayAt = null;
+  m.botThinkAt = 0; // ★追加: 次の思考タイマーをリセット
   if (m.trick.length < 5) { m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000; m.notice = "カードを出してください。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
 
   const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat;
@@ -361,6 +362,7 @@ function botAction(m, room) {
   m.botLevel = 3; const i = m.active, p = m.seats[i];
   if (!p?.bot) return;
   m.lastBot = Date.now();
+  m.botThinkAt = 0; // ★追加: 思考タイマーをリセット
   const params = m.botStrategy || defaultStrategy();
   
   if (m.phase === "auction") { botAuctionBid(m, i, room); return; }
@@ -566,12 +568,17 @@ setInterval(async () => {
       for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) { if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, null); }
     } else if (m.phase === "call-reveal") { if (now >= m.deadline) startPlay(m, null); }
     else if (m.phase === "call" || m.phase === "discard") {
-      if (m.seats[m.active]?.bot && now - m.lastBot > 850) botAction(m, null);
+      if (m.seats[m.active]?.bot) {
+        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000; // ★修正: 2〜4秒待機
+        else if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, null); }
+      }
       else if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, null); }
     } else if (m.phase === "play") {
       const activeSeat = m.active;
-      if (m.seats[activeSeat]?.bot) { if (now - m.lastBot > 850) botAction(m, null); }
-      else {
+      if (m.seats[activeSeat]?.bot) {
+        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000; // ★修正: 2〜4秒待機
+        else if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, null); }
+      } else {
         const legal = legalCards(m, activeSeat);
         if (legal.length === 1) {
           if (!m.humanAutoPlayAt) m.humanAutoPlayAt = now + 1500;
@@ -586,7 +593,7 @@ setInterval(async () => {
       if (m.earlyFinish) { await finish(m, null, {}); continue; }
       m.trickNo++;
       if (m.trickNo >= 10) await finish(m, null, {});
-      else { m.trick = []; m.phase = "play"; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.notice = "次の勝負です。"; publish(m, null); if (m.seats[m.active].bot) botAction(m, null); }
+      else { m.trick = []; m.phase = "play"; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0; m.notice = "次の勝負です。"; publish(m, null); if (m.seats[m.active].bot) botAction(m, null); }
     } else if (m.phase === "redeal" && now >= m.deadline) { deal(m); publish(m, null); }
   }
 }, 500);
