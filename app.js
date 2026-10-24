@@ -1,4 +1,4 @@
-// ===== [app.js 1/3 開始] =====
+// ===== [app.js 完全版] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
@@ -159,7 +159,6 @@ async function loadTopStrategy(){
     }
   } catch (e) { console.warn('[loadTopStrategy]', e?.message); }
 }
-// ===== [app.js 2/3 開始] =====
 async function loadExperience(){
   try {
     const res = await fetch('/api/ai/experience');
@@ -333,7 +332,6 @@ function auctionStart(){
 
 function bidHistoryHTML(history,getName){const entries=(history||[]).slice(-50).reverse();return'<div class="bid-history"><div class="bid-history-title">この対局の立ち履歴</div>'+(entries.length?'<div class="bid-history-list">'+entries.map(entry=>'<div class="bid-history-row player-color-'+entry.seat+'"><small>第'+entry.round+'局</small><span class="bid-player">'+escapeHTML(getName(entry.seat))+'</span><strong>'+entry.num+entry.suit+'</strong></div>').join('')+'</div>':'<div class="bid-history-empty">まだありません</div>')+'</div>'}
 
-// ▼▼▼ 追加: 競り高値に対する「勝てる最小 num」を返すヘルパー ▼▼▼
 function minViableBidAgainst(high, suit, minBid){
   const minB = Math.max(13, Number(minBid) || 13);
   if (!high || !Number.isFinite(high.num) || high.num < minB) return minB;
@@ -342,12 +340,10 @@ function minViableBidAgainst(high, suit, minBid){
   if (curSuit && SV[suit] > SV[curSuit]) return Math.max(minB, high.num);
   return Math.min(20, high.num + 1);
 }
-// ▲▲▲ 追加ここまで ▲▲▲
 
 function drawAuction(){
   renderContractInfo();
   const p=$('auction-panel');if(!p)return;
-  // ▼ 追加: 現在の高値に対して g.bid を自動追従（+ 連打不要）
   if(g.auction){
     const minV=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid);
     if(g.bid<minV) g.bid=minV;
@@ -362,7 +358,6 @@ function drawAuction(){
   document.querySelectorAll('[data-suit]').forEach(b=>b.onclick=()=>{auctionActivity();g.suit=b.dataset.suit;drawAuction()});
   const minus=$('bid-minus'),plus=$('bid-plus'),approve=$('bid-approve'),submit=$('bid-submit');
   if(plus)plus.onclick=()=>{auctionActivity();g.bid=Math.min(20,g.bid+1);drawAuction()};
-  // ▼ 修正: − の下限を「勝てる最小値」に
   if(minus)minus.onclick=()=>{
     auctionActivity();
     const mv=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid);
@@ -453,7 +448,6 @@ function comBid(i,version){
 
 function doApprove(i,version){if(!g.auction.active.includes(i))return;if(g.auction.high.player===i){if(g.auction.active.length===1)auctionEnd(i);return}removeBid(i);addGameLog(name(i)+'が承認');message(name(i)+'は承認しました');if(!g.auction.active.length){auctionEnd(-1);return}g.auction.active.filter(j=>j>0).forEach(j=>g.auction.botSeen[j]=g.auction.version-1);drawAuction();drawSeats();scheduleComBids()}
 
-// ===== [app.js 3/3 開始] =====
 function auctionEnd(w){
   clearTimeout(g.auction?.humanTimeout);
   $('auction-panel')?.classList.add('hidden');
@@ -1248,7 +1242,6 @@ function drawOnlineAuction(s){
   const high=s.auction?.high;
   const minBid=s.auction?.minBid||13;
   if(!g.onlineSuit) g.onlineSuit='♠';
-  // ▼ 追加: 高値に応じて g.onlineBid を自動追従
   const minV=minViableBidAgainst(high,g.onlineSuit,minBid);
   if(!g.onlineBid || g.onlineBid<minV) g.onlineBid=minV;
   if(g.onlineBid>20) g.onlineBid=20;
@@ -1270,7 +1263,6 @@ function drawOnlineAuction(s){
   p.querySelectorAll('[data-osuit]').forEach(b=>b.onclick=()=>{ g.onlineSuit=b.dataset.osuit; g.room?.send({type:'game',action:{type:'auction-activity'}}); drawOnlineAuction(s); });
   const plus=$('online-plus'), minus=$('online-minus');
   if(plus) plus.onclick=()=>{ g.onlineBid=Math.min(20,g.onlineBid+1); drawOnlineAuction(s); };
-  // ▼ 修正: − の下限を「勝てる最小値」に
   if(minus) minus.onclick=()=>{
     const mv=minViableBidAgainst(high,g.onlineSuit,minBid);
     g.onlineBid=Math.max(minBid,mv,g.onlineBid-1);
@@ -1426,6 +1418,32 @@ function showOnlineResult(s){
 }
 // ===== [ONLINE UI ここまで] =====
 
+// ===== [追加] 対戦用ルーム接続ヘルパー =====
+// WebsimSocket.joinRoom() を優先。無ければ生 WebSocket にフォールバック（ローカル開発用）
+async function joinGameRoom() {
+  if (window.WebsimSocket?.joinRoom) {
+    const roomInstance = await window.WebsimSocket.joinRoom();
+    return {
+      roomInstance,
+      send: (m) => roomInstance.send(typeof m === 'string' ? m : JSON.stringify(m)),
+      close: () => { try { roomInstance.close?.(); } catch {} }
+    };
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  await new Promise((res, rej) => {
+    ws.onopen = res;
+    ws.onerror = () => rej(new Error('ws error'));
+    setTimeout(() => rej(new Error('timeout')), 5000);
+  });
+  return {
+    roomInstance: ws,
+    send: (m) => ws.send(typeof m === 'string' ? m : JSON.stringify(m)),
+    close: () => ws.close()
+  };
+}
+// ===== [追加ここまで] =====
+
 function bindOnlineWs(ws){
   ws.onmessage=(e)=>{
     let m;try{m=JSON.parse(e.data)}catch{return}
@@ -1493,13 +1511,13 @@ async function onlineReconnect(){
   if(!g.sessionToken||g.reconnecting)return;
   g.reconnecting=true;
   try{
-    const proto=location.protocol==='https:'?'wss:':'ws:';
-    const ws=new WebSocket(proto+'//'+location.host+'/ws');
-    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
-    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
-    bindOnlineWs(ws);
-    ws.send(JSON.stringify({type:'reconnect',sessionToken:g.sessionToken}));
+    await stopPresence();
+    const { roomInstance, send, close } = await joinGameRoom();
+    g.room = { ws: roomInstance, send, close };
+    bindOnlineWs(roomInstance);
+    g.room.send({type:'reconnect',sessionToken:g.sessionToken});
   }catch(e){
+    console.warn('[onlineReconnect]', e?.message);
     g.reconnecting=false;
     toast('再接続に失敗しました');
     screen('home-screen');
@@ -1513,10 +1531,10 @@ async function online(mode,roomCode,bots,botLevel=3){
   g.reconnecting=false;
   loadTopStrategy();
   try{
-    const proto=location.protocol==='https:'?'wss:':'ws:';
-    const ws=new WebSocket(proto+'//'+location.host+'/ws');
-    await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;setTimeout(()=>rej(new Error('timeout')),5000)});
-    g.room={ws,send:m=>ws.send(JSON.stringify(m)),close:()=>ws.close()};
+    // ▼ 修正: presence を閉じてからゲーム用ルームに接続（同時接続を1本に）
+    await stopPresence();
+    const { roomInstance, send, close } = await joinGameRoom();
+    g.room = { ws: roomInstance, send, close };
     g.mySeat=-1;g.privateHand=[];g.onlineState=null;g.onlineDiscard=new Set();g.onlineSelectedCard=null;g.onlineBid=13;g.onlineSuit='♠';g.onlineRank='A';g.announcedCallRound=null;g.announcedRound=null;
     g.auction=null; g.contract=null; g.matchScores=[0,0,0,0,0];
     ['auction-panel','call-panel','play-panel','result-panel'].forEach(id=>{const el=$(id);if(el)el.classList.add('hidden')});
@@ -1525,9 +1543,9 @@ async function online(mode,roomCode,bots,botLevel=3){
     const rc=$('rating-caption');if(rc)rc.textContent='RATE';
     phase(mode==='ranked'?'対戦相手を検索':'部屋を準備中');
     message(mode==='ranked'?'最後の入室から90秒経過するとCOMが参加します':'合言葉 '+roomCode+' で参加を待っています');
-    bindOnlineWs(ws);
+    bindOnlineWs(roomInstance);
     g.room.send({type:'join',mode:mode,code:roomCode,bots:bots,botLevel:Number(botLevel)||3,sessionToken:localStorage.getItem('napoleon_session'),playerId:g.account?.id||'プレイヤー'})
-  }catch(e){toast('対戦に接続できませんでした');screen('home-screen')}
+  }catch(e){console.warn('[online] connect failed:', e?.message);toast('対戦に接続できませんでした');screen('home-screen')}
 }
 
 $('home-start')?.addEventListener('click', () => screen('mode-select-screen'));
@@ -1577,4 +1595,4 @@ loadAccount();
 loadLeaderboard();
 
 screen('home-screen');
-// ===== [app.js 3/3 終了] =====
+// ===== [app.js 完全版 終わり] =====
