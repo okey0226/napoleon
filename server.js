@@ -121,7 +121,6 @@ function publicState(m) {
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
     revealedKitty: (m.phase !== "auction" && m.kitty) ? m.kitty : [],
-    // ★修正: autoApprove をクライアントに送信するように追加
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
@@ -324,7 +323,7 @@ function playCard(m, seat, id, room, env) {
   if (reveal) { m.contract.revealedCall = true; m.contract.revealTrickNo = m.trickNo; }
 
   m.humanAutoPlayAt = null;
-  m.botThinkAt = 0; // ★追加: 次の思考タイマーをリセット
+  m.botThinkAt = 0;
   if (m.trick.length < 5) { m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000; m.notice = "カードを出してください。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
 
   const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat;
@@ -362,7 +361,7 @@ function botAction(m, room) {
   m.botLevel = 3; const i = m.active, p = m.seats[i];
   if (!p?.bot) return;
   m.lastBot = Date.now();
-  m.botThinkAt = 0; // ★追加: 思考タイマーをリセット
+  m.botThinkAt = 0;
   const params = m.botStrategy || defaultStrategy();
   
   if (m.phase === "auction") { botAuctionBid(m, i, room); return; }
@@ -449,19 +448,18 @@ wss.on('connection', (ws) => {
   sendSafe(conn, { type: "presence", count: conns.size });
 
   ws.on('message', async (raw) => {
-    const env = {}; // DBなしのダミー環境
+    const env = {}; 
     let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     if (msg.type === "join") {
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
       
-      // ★修正: await する前に同期的に部屋を確保し、同時入室時のバッティングを防ぐ
       let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
       if (mode === "friend") {
         if (!entryCode) entryCode = makeCode();
         let l = friendRooms.get(entryCode);
         if (!l) {
-          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; // タイムアウトを5分に延長
+          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
           friendRooms.set(entryCode, l);
         }
       }
@@ -478,7 +476,6 @@ wss.on('connection', (ws) => {
         return;
       }
       
-      // 友達対戦
       let l = friendRooms.get(entry.code);
       if (!l) l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
       
@@ -487,11 +484,9 @@ wss.on('connection', (ws) => {
       
       l.players.push(entry);
       
-      // ロビー状態の更新を全員に送る
       l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
       
-      // 5人揃ったら即開始
       if (l.players.length >= 5) {
         friendRooms.delete(l.code);
         beginMatch("friend", l.code, l.players, null, env);
@@ -541,12 +536,11 @@ wss.on('connection', (ws) => {
 setInterval(async () => {
   const now = Date.now();
   
-  // ★待機部屋のタイムアウト処理
   for (const [code, l] of friendRooms) {
     if (now >= l.timeoutAt) {
       friendRooms.delete(code);
       if (l.players.length > 0) {
-        beginMatch("friend", l.code, l.players, null, {}); // 足りない席はCOMで埋まる
+        beginMatch("friend", l.code, l.players, null, {}); 
       }
     }
   }
@@ -569,14 +563,14 @@ setInterval(async () => {
     } else if (m.phase === "call-reveal") { if (now >= m.deadline) startPlay(m, null); }
     else if (m.phase === "call" || m.phase === "discard") {
       if (m.seats[m.active]?.bot) {
-        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000; // ★修正: 2〜4秒待機
+        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000;
         else if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, null); }
       }
       else if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, null); }
     } else if (m.phase === "play") {
       const activeSeat = m.active;
       if (m.seats[activeSeat]?.bot) {
-        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000; // ★修正: 2〜4秒待機
+        if (!m.botThinkAt) m.botThinkAt = now + 2000 + Math.random() * 2000;
         else if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, null); }
       } else {
         const legal = legalCards(m, activeSeat);
