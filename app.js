@@ -358,7 +358,7 @@ function minViableBidAgainst(high, suit, minBid){
 function drawAuction(){
   renderContractInfo();
   const p=$('auction-panel');if(!p)return;
-  if (!g.auction) return; // ★追加
+  if (!g.auction) return;
   if(g.auction){
     const minV=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid);
     if(g.bid<minV) g.bid=minV;
