@@ -182,16 +182,16 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
 .center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
 .trick-cards{position:absolute;inset:0;z-index:2;display:block;min-height:0;pointer-events:none}
-.trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px}
+.trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px;z-index:20} /* ★ z-index追加 */
 .trick-card.played-seat-0{left:50%;top:70%}
 .trick-card.played-seat-1{left:76%;top:62%}
 .trick-card.played-seat-2{left:76%;top:39%}
 .trick-card.played-seat-3{left:24%;top:39%}
 .trick-card.played-seat-4{left:24%;top:62%}
 .table-message{position:relative;z-index:12;flex:none;width:min(760px,100%);min-height:28px;margin:3px auto 5px;padding:5px 14px;border:1px solid rgba(225,188,112,.18);border-radius:999px;background:rgba(5,22,18,.76);color:#e8d7a9;font-size:12px;line-height:1.35;text-align:center;overflow-wrap:anywhere;display:flex;align-items:center;justify-content:center}
-.kitty-view{order:-1;display:flex;align-items:center;gap:8px;min-height:92px}
-.kitty-view .card{width:64px;height:92px}
-.open-label{align-self:center;color:var(--gold);font-size:10px;font-weight:700;margin-right:3px}
+.kitty-view{order:-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:80px;margin-top:20px;margin-bottom:10px;z-index:20;position:relative}
+.kitty-view .card{width:48px;height:68px}
+.open-label{font-size:11px;font-weight:700;color:var(--gold);margin-right:4px}
 .auction-clock{font-weight:800;font-size:12px;color:var(--gold);padding:3px 9px;border:1px solid rgba(225,188,112,.38);border-radius:99px}
 .player-color-0{--player-color:#79dfb7}.player-color-1{--player-color:#ff9e82}.player-color-2{--player-color:#83bdff}.player-color-3{--player-color:#c9a4ff}.player-color-4{--player-color:#f0ce70}
 .player-seat .seat-name{color:var(--player-color,#f2f5ef)}
@@ -586,7 +586,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .game-screen.auctioning .center-table{position:relative !important;top:auto !important;left:auto !important;transform:none !important;width:100% !important;height:auto !important;margin:0 !important;display:flex !important;flex-direction:column !important;align-items:center !important}
   .game-screen.auctioning .trick-cards,
   .game-screen.auctioning .center-caption{display:none !important}
-  .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important}
+  .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important;margin-top:80px !important;margin-bottom:20px !important}
 
   /* ★修正: アクションパネルの配置調整 */
   .action-panel:not(#auction-panel){position:absolute !important;bottom:120px !important;top:auto !important;left:50% !important;transform:translateX(-50%) !important;width:94% !important;max-width:400px !important;padding:12px 14px !important;margin:0 !important;z-index:40 !important;background:rgba(9,26,22,.98) !important;border:1px solid rgba(225,188,112,.45) !important;border-radius:10px !important;box-shadow:0 4px 15px rgba(0,0,0,.6) !important}
@@ -677,4 +677,67 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .hand.discard-mode .card .rank { font-size: 12px !important; left: 3px !important; top: 3px !important; }
   .hand.discard-mode .card .suit { font-size: 11px !important; left: 3px !important; top: 18px !important; }
   .game-screen.discarding .hand-dock { height: 190px !important; }
+}
+
+/* ===== 捨て札のヘッダー表示用 ===== */
+.kitty-view.hidden {
+    display: none !important;
+}
+
+.contract-kitty-cards {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-left: 2px;
+}
+.contract-kitty-card {
+    width: 22px;
+    height: 30px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    position: relative;
+    border: 1px solid rgba(226,229,223,.9);
+    background: #fbfaf6;
+    color: #19251f;
+}
+.contract-kitty-card .rank {
+    position: absolute;
+    left: 2px;
+    top: 1px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+}
+.contract-kitty-card .suit {
+    position: absolute;
+    left: 2px;
+    top: 12px;
+    font-size: 10px;
+}
+.contract-kitty-card.red {
+    color: #c6453f;
+}
+
+/* ===== モバイル用調整 ===== */
+@media(max-width: 760px) {
+    .contract-info {
+        justify-content: flex-start !important;
+        overflow-x: auto !important;
+        padding: 0 8px !important;
+        white-space: nowrap;
+    }
+    .contract-kitty-card {
+        width: 18px !important;
+        height: 24px !important;
+    }
+    .contract-kitty-card .rank {
+        font-size: 8px !important;
+        left: 1px !important;
+        top: 1px !important;
+    }
+    .contract-kitty-card .suit {
+        font-size: 8px !important;
+        left: 1px !important;
+        top: 10px !important;
+    }
 }
