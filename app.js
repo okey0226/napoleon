@@ -1227,7 +1227,14 @@ function drawOnlineControls(s){
     const el=$(id); if(el) el.classList.add('hidden');
   });
   if(s.phase==='result'){ showOnlineResult(s); return; }
-  if(s.phase==='auction' && s.active===g.mySeat) return drawOnlineAuction(s);
+
+  if(s.phase==='auction'){
+    if(s.auction && Array.isArray(s.auction.active) && s.auction.active.includes(g.mySeat)){
+      return drawOnlineAuction(s);
+    }
+    return;
+  }
+
   if(s.phase==='appeal-offer' && s.appeal && s.appeal.bottomSeat===g.mySeat) return drawOnlineAppealOffer(s);
   if(s.phase==='appeal-response' && s.appeal && s.appeal.fourthSeat===g.mySeat) return drawOnlineAppealResponse(s);
   if(s.phase==='call' && s.active===g.mySeat) return drawOnlineCall(s);
@@ -1418,11 +1425,47 @@ function showOnlineResult(s){
 }
 // ===== [ONLINE UI ここまで] =====
 
+function showFriendLobby(m) {
+  let overlay = document.getElementById('friend-lobby-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'friend-lobby-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:rgba(3,5,15,.85);backdrop-filter:blur(6px);';
+    document.body.appendChild(overlay);
+  }
+  overlay.classList.remove('hidden');
+  
+  overlay.innerHTML = `
+    <div style="max-width:380px;width:90%;padding:28px;border-radius:18px;border:1px solid rgba(180,160,255,.5);background:rgba(18,22,48,.95);text-align:center;">
+      <div class="eyebrow">WAITING ROOM</div>
+      <h2 style="font-size:36px;letter-spacing:.25em;margin:15px 0;color:#fff;text-shadow:0 0 20px rgba(150,180,255,.5);">${m.code}</h2>
+      <p class="micro-copy" style="margin-bottom:12px;font-size:12px;">この合言葉を友達に共有してください</p>
+      <p style="margin-bottom:24px;color:#a3b1a8;font-size:14px;">参加者: <b style="color:#f3d48e;">${m.count} / 5 人</b></p>
+      
+      ${m.host ? `<button class="primary-button" id="start-now" style="width:100%;margin-bottom:12px;min-height:48px;font-size:14px;">今すぐ開始（COMで埋める）</button>` : ''}
+      <button class="secondary-button" id="leave-lobby" style="width:100%;min-height:48px;font-size:14px;">キャンセル</button>
+    </div>
+  `;
+
+  overlay.querySelector('#leave-lobby').onclick = () => {
+    overlay.classList.add('hidden');
+    g.room?.send({type:'leave-room'});
+    g.room?.close?.();
+    g.room = null;
+    screen('mode-select-screen');
+  };
+
+  if (m.host) {
+    overlay.querySelector('#start-now').onclick = () => {
+      g.room?.send({type:'start-now'});
+    };
+  }
+}
+
 // ===== [追加] 対戦用ルーム接続ヘルパー =====
 async function joinGameRoom() {
   const WS_URL = window.NAPOLEON_WS_URL || null;
   if (!WS_URL) {
-    // フォールバック（Websim用 / ローカル用）
     if (window.WebsimSocket?.joinRoom) {
       const roomInstance = await window.WebsimSocket.joinRoom();
       return {
@@ -1446,16 +1489,14 @@ async function joinGameRoom() {
     };
   }
 
-  // ① 事前にサーバーを起こす（Render無料プランのスリープ対策）
   const healthUrl = WS_URL
     .replace(/^wss:/, 'https:')
     .replace(/^ws:/, 'http:')
     .replace(/\/ws$/, '/healthz');
   try {
     await fetch(healthUrl, { mode: 'no-cors', cache: 'no-store' });
-  } catch { /* 起きてなくても後続で再挑戦する */ }
+  } catch { }
 
-  // ② WebSocket接続を最大3回まで試す（60秒待ち）
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -1496,7 +1537,14 @@ function bindOnlineWs(ws){
 
 function handleOnlineMessage(m){
   if(m.type==='lobby'){message(m.text);return;}
+  
+  if(m.type==='friend-lobby'){
+    showFriendLobby(m);
+    return;
+  }
+
   if(m.type==='matched'){
+    document.getElementById('friend-lobby-overlay')?.remove();
     g.online=m;g.mySeat=m.seat;
     g.players=m.players.map(p=>({name:p.id,hand:[],taken:[],roundPoints:0}));
     g.active=-1;
@@ -1604,16 +1652,14 @@ $('create-friend')?.addEventListener('click', () => {
   let c = code();
   const fc = $('friend-code');
   if (fc) fc.value = c;
-  const cc = $('com-count');
-  online('friend', c, Number(cc?.value || 4), 3);
+  online('friend', c, 0, 3); // ★4から0に変更（COM数はサーバー側で制御）
 });
 $('join-friend')?.addEventListener('click', () => {
   const fc = $('friend-code');
   if (!fc) return;
   let c = fc.value.trim().toUpperCase();
   if (!c) { toast('合言葉を入力してください'); return; }
-  const cc = $('com-count');
-  online('friend', c, Number(cc?.value || 4), 3);
+  online('friend', c, 0, 3);
 });
 
 $('start-ranked')?.addEventListener('click', () => online('ranked', '', 0));
