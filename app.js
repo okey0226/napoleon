@@ -498,7 +498,16 @@ function callUi(){
   phase('副官指名');
   if(!g.onlineState) showDiscardedKitty();
   else {
-    showDiscardedKitty();
+    // オンラインの場合は捨て札を表示
+    const label=document.createElement('span');
+    label.className='open-label';
+    label.textContent='捨て札';
+    const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
+    const el=$('kitty-view');
+    if(el){
+      if(cards.length) el.replaceChildren(label, ...cards);
+      else el.replaceChildren();
+    }
   }
   const bidSolo=g.contract.solo;
   const forceSolo=isSoloForced()||bidSolo;
@@ -547,7 +556,7 @@ function callUi(){
   update()
 }
 
-// ★修正: オンラインでも指名確認を待つ
+// ★修正: オンラインでも指名確認を待つボタンの描画
 function drawOnlineCallReveal(){
   const p=$('call-panel');if(!p)return;
   p.classList.remove('hidden');
@@ -1381,7 +1390,8 @@ function handleOnlineMessage(m){
     g.allianceKittyPoints = m.state.allianceKittyPoints;
     g.contract = m.state.contract;
     g.appealInfo = m.state.appealInfo;
-    g.kitty = m.state.kitty || m.state.revealedKitty || [];
+    g.kitty = m.state.kitty || [];
+    g.discardedKitty = m.state.revealedKitty || [];
     
     // プレイヤー情報の同期
     m.state.players.forEach((p, i) => {
@@ -1423,9 +1433,9 @@ function handleOnlineMessage(m){
   }
   if(m.type==='private-hand'){
     g.privateHand=m.hand;g.onlineLegal=m.legal;
-    if(m.state && m.state.phase === 'play') {
+    if(g.onlineState && g.onlineState.phase === 'play') {
       g.players[g.mySeat].hand = m.hand;
-      g.active = m.state.active;
+      g.active = g.onlineState.active;
       if(g.active === g.mySeat) {
         drawLocalPlayControls();
       }
@@ -1465,7 +1475,7 @@ function drawOnlineKitty(){
     const label=document.createElement('span');
     label.className='open-label';
     label.textContent='捨て札';
-    const cards=(g.kitty||[]).map(c=>cardEl(c));
+    const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
     if(cards.length) el.replaceChildren(label, ...cards);
     else el.replaceChildren();
   } else if(g.phase==='auction'){
