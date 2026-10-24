@@ -493,7 +493,8 @@ wss.on('connection', (ws) => {
   });
 });
 
-setInterval(() => {
+// ここが修正箇所です（async を追加しました）
+setInterval(async () => {
   const now = Date.now();
   if (queues.ranked.length && now - queues.ranked[queues.ranked.length - 1].joined >= 90000) { const group = queues.ranked.splice(0, Math.min(4, queues.ranked.length)); beginMatch("ranked", "", group, null, {}); }
   for (const [c, l] of friendRooms) if (now - l.created > 900000) friendRooms.delete(c);
