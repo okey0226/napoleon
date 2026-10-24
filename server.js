@@ -113,14 +113,15 @@ function publicState(m) {
     appeal: m.appeal, appealInfo: m.appealInfo || '', lastTrickWinner: m.lastTrickWinner ?? null,
     notice: m.notice, active: m.active, allianceKittyPoints: m.allianceKittyPoints || 0,
     players: m.seats.map((p, seat) => ({
-      seat, name: p.bot ? p.player.username : (p.player.playerId || p.player.username),
-      username: p.player.username, rating: p.player.rating, bot: p.bot,
+      seat, name: p.bot ? p.player.username : (p.player.playerId || p.player.username || "player"),
+      username: p.player.username || "player", rating: p.player.rating, bot: p.bot,
       handCount: p.hand.length, points: p.points, taken: p.taken, active: m.active,
       approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.active) && !m.auction.active.includes(seat),
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    revealedKitty: (m.phase !== "auction" && m.kitty) ? m.kitty : [],
+    // ★修正: 捨て札は絵札（得点札）のみを公開
+    revealedKitty: (m.phase !== "auction" && m.discardedKitty) ? m.discardedKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
@@ -503,7 +504,12 @@ wss.on('connection', (ws) => {
       let player;
       try { player = await getProfile(env, conn); } catch (e) { sendSafe(conn, { type: "room-error", message: "エラー" }); return; }
       
+      // ★修正: 名前を正しく反映
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
+      if (msg.playerId) {
+        entry.player.username = String(msg.playerId);
+        entry.player.playerId = String(msg.playerId);
+      }
       
       if (mode === "ranked") {
         queues.ranked.push(entry);
