@@ -19,6 +19,8 @@ async function readResponse(res) {
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
 const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set()};
 let toastTimer;
+let lastAuctionDrawHash = ''; // ★追加: オークション画面の無駄な再描画を防ぐハッシュ
+
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
 function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
@@ -287,7 +289,14 @@ function announceRound(round,rule){
 function prepAuction(){g.phase='prep';announceRound(g.round,finalAuctionRule(g.matchScores,g.mult));phase('競り準備');let n=7;message('競り開始まで '+n+' 秒');const tick=()=>{n--;if(n<=0){auctionStart();return}message('競り開始まで '+n+' 秒');later(tick,1000)};later(tick,1000)}
 
 function scheduleHumanAuctionTimeout(){const auction=g.auction;if(!auction)return;clearTimeout(auction.humanTimeout);auction.humanTimeout=setTimeout(()=>{if(g.phase==='auction'&&g.auction===auction)humanApprove(true)},30000)}
-function auctionActivity(){if(g.phase!=='auction'||!g.auction)return;g.auction.autoApprove[g.mySeat]=false;scheduleHumanAuctionTimeout()}
+function auctionActivity(){
+  if(g.phase!=='auction'||!g.auction)return;
+  // ★修正: autoApprove が存在しない場合のエラーを防ぐ
+  if (g.auction.autoApprove && Array.isArray(g.auction.autoApprove)) {
+    g.auction.autoApprove[g.mySeat]=false;
+  }
+  scheduleHumanAuctionTimeout();
+}
 function appealDetails(hand){const held=['♣J','♦J','♥J','♠J','♠A'].filter(id=>hand.some(c=>c.id===id));return held.length?held.join(' '):'なし'}
 
 function enterAuction(){g.phase='auction';phase('競り');message(g.auction.requiredBidSeat===null?'順番なし。宣言するか、承認して競りを降りてください':name(g.auction.requiredBidSeat)+'が申告せず立つ選択。最低枚数以上で宣言してください');$('auction-panel')?.classList.remove('hidden');$('auction-clock')?.classList.add('hidden');scheduleHumanAuctionTimeout();drawAuction();drawSeats();scheduleComBids()}
@@ -359,6 +368,16 @@ function drawAuction(){
   renderContractInfo();
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
+
+  // ★修正: オンライン対戦時、状態が変わっていない場合は再描画をスキップしてタッチ操作のキャンセルを防ぐ
+  if (g.onlineState && g.phase === 'auction') {
+    const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active);
+    if (lastAuctionDrawHash === currentHash && !p.classList.contains('hidden')) {
+      return;
+    }
+    lastAuctionDrawHash = currentHash;
+  }
+
   if(g.auction){
     const minV=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid);
     if(g.bid<minV) g.bid=minV;
