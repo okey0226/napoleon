@@ -1,14 +1,25 @@
-// quiz-questions.js — 何切る問題バンク（決定論的生成）
+// quiz-questions.js — 何切る問題バンク（決定論的生成 / 50問版）
 import { SUITS, RANKS, defaultStrategy, sortHand, estimatedWinRate } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, winningEntry, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
+import {
+  shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay,
+  winningEntry, handStrength, colorStrength, ntHandStrength
+} from './ai-tactics.js';
 
 export const QUIZ_CATEGORIES = ['bid', 'call', 'discard', 'play'];
-// 合計50問: bid10 + call10 + discard10 + play20
 export const QUIZ_COUNTS = { bid: 10, call: 10, discard: 10, play: 20 };
-export const QUIZ_LABELS = { bid:'何で立つ？', call:'誰を指名する？', discard:'何を切る？', play:'何を出す？' };
+export const QUIZ_LABELS = {
+  bid: '何で立つ？',
+  call: '誰を指名する？',
+  discard: '何を切る？',
+  play: '何を出す？'
+};
 
-export function totalQuestionCount() { return QUIZ_CATEGORIES.reduce((n,c)=>n+QUIZ_COUNTS[c],0); }
-export function makeQuestionId(category, index) { return `${category}-${String(index+1).padStart(4,'0')}`; }
+export function totalQuestionCount() {
+  return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
+}
+export function makeQuestionId(category, index) {
+  return `${category}-${String(index + 1).padStart(4, '0')}`;
+}
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
   const m = /^(bid|call|discard|play)-(\d{1,4})$/.exec(id);
@@ -18,6 +29,7 @@ export function parseQuestionId(id) {
   return { category, index };
 }
 
+// --- 決定論的乱数（Mulberry32） ---
 function mulberry32(seed) {
   let s = seed | 0;
   return function () {
@@ -35,7 +47,7 @@ function hashStr(str) {
 }
 function shuffleWithRng(arr, rng) {
   const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
 function buildDeck() {
@@ -44,21 +56,83 @@ function buildDeck() {
   return d;
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
+function SV(s) { return { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 }[s] || 0; }
+
+// =========================================================
+// 立ち履歴の生成：現在の high に至るまでの合法的な競り履歴
+// =========================================================
+function generateBidHistory(rng, high, mySeat, numPlayers = 5) {
+  if (high.num < 13) return [];
+  const suitPool = SUITS.concat(['NT']);
+  const otherSeats = [];
+  for (let i = 0; i < numPlayers; i++) if (i !== mySeat) otherSeats.push(i);
+
+  // high より厳密に弱い合法ビッドを列挙
+  const allBids = [];
+  for (let n = 13; n <= high.num; n++) {
+    for (const s of suitPool) {
+      if (n < high.num) allBids.push({ num: n, suit: s });
+      else if (SV(s) < SV(high.suit)) allBids.push({ num: n, suit: s });
+    }
+  }
+  if (allBids.length === 0) {
+    return [{ seat: high.player, num: high.num, suit: high.suit }];
+  }
+
+  // 中間ビッドを 0〜3 個選ぶ
+  const numIntermediate = Math.floor(rng() * 4);
+  let finalPicked = [];
+  if (numIntermediate > 0) {
+    const shuffled = shuffleWithRng(allBids, rng);
+    const picked = shuffled.slice(0, numIntermediate);
+    picked.sort((a, b) => a.num - b.num || SV(a.suit) - SV(b.suit));
+    let last = { num: 12, suit: '' };
+    for (const bid of picked) {
+      if (bid.num > last.num || (bid.num === last.num && SV(bid.suit) > SV(last.suit))) {
+        finalPicked.push(bid);
+        last = bid;
+      }
+    }
+  }
+
+  const history = [];
+  const seatPool = shuffleWithRng(otherSeats.filter(s => s !== high.player), rng);
+  if (seatPool.length === 0) seatPool.push(high.player);
+  for (let i = 0; i < finalPicked.length; i++) {
+    history.push({ seat: seatPool[i % seatPool.length], num: finalPicked[i].num, suit: finalPicked[i].suit });
+  }
+  history.push({ seat: high.player, num: high.num, suit: high.suit });
+  return history;
+}
 
 // ============ 1) bid ============
 function genBidQuestion(rng, idx) {
   const deck = shuffleWithRng(buildDeck(), rng);
   const hand = deck.splice(0, 10); sortHand(hand);
   const params = defaultStrategy();
-  const highNum = 12 + Math.floor(rng() * 6);
+  const mySeat = 0;
   const suitPool = SUITS.concat(['NT']);
-  const highSuit = highNum >= 13 ? suitPool[Math.floor(rng() * suitPool.length)] : '';
-  const high = { num: highNum, suit: highSuit, player: 0, solo: false };
+
+  // 70% の確率で「現在の最高宣言」が存在する状況
+  const hasHighBid = rng() < 0.7;
+  let high, bidHistory;
+
+  if (hasHighBid) {
+    const highNum = 13 + Math.floor(rng() * 5); // 13〜17
+    const highSuit = suitPool[Math.floor(rng() * suitPool.length)];
+    const highPlayer = 1 + Math.floor(rng() * 4); // 席1〜4（自分以外）
+    high = { num: highNum, suit: highSuit, player: highPlayer, solo: false };
+    bidHistory = generateBidHistory(rng, high, mySeat, 5);
+  } else {
+    high = { num: 12, suit: '', player: -1, solo: false };
+    bidHistory = [];
+  }
+
   const minNext = Math.max(13, high.num + 1);
   const candidates = [];
   for (let num = minNext; num <= 20; num++) {
     for (const suit of suitPool) {
-      if (num === high.num && highSuit && SV(suit) <= SV(highSuit)) continue;
+      if (num === high.num && high.suit && SV(suit) <= SV(high.suit)) continue;
       const strength = suit === 'NT' ? ntHandStrength(hand, params) : colorStrength(hand, suit, params);
       const p = estimatedWinRate(strength, num);
       if (p < 0.05) continue;
@@ -77,7 +151,11 @@ function genBidQuestion(rng, idx) {
       candidates.push({ num, suit, solo: true, p, score: p * num * 1.2 });
     }
   }
-  const aiBid = shouldBid(hand, high, 13, params, [], 0, null);
+
+  // 立ち履歴を AI に渡して、相手の動向を考慮した判断をさせる
+  const historyForAI = bidHistory.map(b => ({ round: 1, seat: b.seat, num: b.num, suit: b.suit }));
+  const aiBid = shouldBid(hand, high, 13, params, historyForAI, mySeat, null);
+
   candidates.sort((a, b) => b.score - a.score);
   const picked = [], seen = new Set();
   if (aiBid) {
@@ -93,31 +171,42 @@ function genBidQuestion(rng, idx) {
     seen.add(key);
   }
   // 最低2択を保証
-  for (const fallback of [{num:13,suit:'♣',solo:false},{num:13,suit:'♠',solo:false},{num:14,suit:'♣',solo:false}]) {
+  for (const fallback of [{ num: 13, suit: '♣', solo: false }, { num: 13, suit: '♠', solo: false }, { num: 14, suit: '♣', solo: false }]) {
     if (picked.length >= 4) break;
     const key = `${fallback.num}-${fallback.suit}-false`;
     if (seen.has(key)) continue;
     picked.push(fallback); seen.add(key);
   }
   picked.push({ num: 0, suit: '', solo: false, pass: true });
+
   const displayed = shuffleWithRng(picked, rng);
   const labels = displayed.map(o => o.pass ? 'パス（降りる）' : `${o.num}${o.suit}${o.solo ? '（ソロ）' : ''}`);
   const correctIdx = displayed.findIndex(o => aiBid
     ? (o.num === aiBid.num && o.suit === aiBid.suit && !!o.solo === !!aiBid.solo)
     : o.pass);
+
   return {
-    id: makeQuestionId('bid', idx), category: 'bid',
+    id: makeQuestionId('bid', idx),
+    category: 'bid',
     title: '競り：何で立つ？',
-    scenario: { hand: hand.map(c => c.id), high: { num: high.num, suit: high.suit }, minBid: 13 },
+    scenario: {
+      hand: hand.map(c => c.id),
+      high: { num: high.num, suit: high.suit, player: high.player },
+      bidHistory,   // ← 立ち履歴を追加
+      mySeat,
+      minBid: 13
+    },
     options: displayed.map((o, i) => ({
-      index: i, label: labels[i],
+      index: i,
+      label: labels[i],
       value: o.pass ? null : { num: o.num, suit: o.suit, solo: o.solo }
     })),
     aiAnswerIndex: correctIdx >= 0 ? correctIdx : displayed.length - 1,
-    explanation: aiBid ? `AIは ${aiBid.num}${aiBid.suit}${aiBid.solo ? '（ソロ）' : ''} を選択。` : 'AIはパスを選択。'
+    explanation: aiBid
+      ? `AIは ${aiBid.num}${aiBid.suit}${aiBid.solo ? '（ソロ）' : ''} を選択。`
+      : 'AIはパスを選択。'
   };
 }
-function SV(s) { return { '♣':1,'♦':2,'♥':3,'♠':4,NT:5 }[s] || 0; }
 
 // ============ 2) call ============
 function genCallQuestion(rng, idx) {
@@ -143,7 +232,7 @@ function genCallQuestion(rng, idx) {
   };
   push('♠', 'A');
   if (suit !== 'NT') push(suit, 'J');
-  const sameColorMap = { '♣':'♠','♠':'♣','♦':'♥','♥':'♦' };
+  const sameColorMap = { '♣': '♠', '♠': '♣', '♦': '♥', '♥': '♦' };
   if (suit !== 'NT') push(sameColorMap[suit], 'J');
   const shuffledSuits = shuffleWithRng(SUITS, rng);
   for (const s of shuffledSuits) push(s, 'A');
