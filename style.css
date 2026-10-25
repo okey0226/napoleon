@@ -223,20 +223,9 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 #call-panel .call-preview-card{width:70px;height:100px}
 .call-card-preview strong{display:block;margin-top:4px;color:var(--gold);font-size:22px}
 .call-warning{min-height:14px;margin-top:5px;color:#e6be72;font-size:10px}
-.appeal-forecast{
-  display:grid;gap:5px;margin:11px auto;
-  padding:9px 11px;max-width:360px;text-align:left;
-  border:1px solid rgba(225,188,112,.24);
-  border-radius:9px;background:rgba(0,0,0,.24);
-}
-.appeal-forecast>div{
-  display:flex;justify-content:space-between;align-items:center;gap:10px;
-  font-size:11px;color:#b9c7bf;line-height:1.4;
-}
-.appeal-forecast>div>b{
-  flex:none;color:#f3d48e;font-size:13px;font-weight:800;
-  font-variant-numeric:tabular-nums;
-}
+.appeal-forecast{display:grid;gap:5px;margin:11px auto;padding:9px 11px;max-width:360px;text-align:left;border:1px solid rgba(225,188,112,.24);border-radius:9px;background:rgba(0,0,0,.24);}
+.appeal-forecast>div{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:11px;color:#b9c7bf;line-height:1.4;}
+.appeal-forecast>div>b{flex:none;color:#f3d48e;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;}
 .call-rank-choice{min-width:31px}
 .call-rank-choice.selected{border-color:var(--gold);color:var(--gold)}
 .suit-choice,.small-action{border:1px solid #456256;background:#1a3a30;color:#edf4ee;border-radius:7px;padding:8px 10px;font-weight:700}
@@ -598,9 +587,8 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .game-screen.auctioning .center-caption{display:none !important}
   .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important;margin-top:80px !important;margin-bottom:20px !important}
 
-  /* ★修正: アクションパネルの配置調整 */
   .action-panel:not(#auction-panel){position:absolute !important;bottom:120px !important;top:auto !important;left:50% !important;transform:translateX(-50%) !important;width:94% !important;max-width:400px !important;padding:12px 14px !important;margin:0 !important;z-index:40 !important;background:rgba(9,26,22,.98) !important;border:1px solid rgba(225,188,112,.45) !important;border-radius:10px !important;box-shadow:0 4px 15px rgba(0,0,0,.6) !important}
-  
+
   .game-screen.auctioning .action-panel{position:relative !important;top:auto !important;left:auto !important;bottom:auto !important;transform:none !important;margin:0 auto 20px !important;z-index:10 !important;width:92% !important;max-width:360px !important}
 
   .play-confirm-preview{margin:2px auto 8px !important;gap:8px !important}
@@ -612,7 +600,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 
   #call-panel{bottom:180px !important;top:auto !important;position:absolute !important;transform:translateX(-50%) !important;max-height:50dvh !important;overflow-y:auto !important;padding:12px !important}
 
-  /* ▼ 追加: アピール回答時の予測表示（モバイル調整） */
   .appeal-forecast{padding:8px 10px !important;margin:8px auto !important;max-width:100% !important}
   .appeal-forecast>div{font-size:10px !important}
   .appeal-forecast>div>b{font-size:12px !important}
@@ -676,7 +663,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   border-radius: 6px !important;
 }
 
-/* モバイル用微調整 */
 @media(max-width: 760px) {
   .hand.discard-mode {
     grid-template-columns: repeat(6, 1fr) !important;
@@ -728,7 +714,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
     color: #c6453f;
 }
 
-/* ===== モバイル用調整 ===== */
 @media(max-width: 760px) {
     .contract-info {
         justify-content: flex-start !important;
@@ -750,4 +735,54 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
         left: 1px !important;
         top: 10px !important;
     }
+}
+
+/* ============================================================
+   ▼ 制限時間バー（新規追加）
+   ============================================================ */
+.turn-timer-bar {
+  flex-shrink: 0;
+  position: relative;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  margin: 0 auto;
+  width: min(760px, 100%);
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 11;
+}
+.turn-timer-bar.hidden { display: none !important; }
+.turn-timer-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 100%;
+  background: linear-gradient(90deg, #a9d2ae, #e1bc70);
+  transition: width 0.1s linear, background 0.3s;
+}
+.turn-timer-fill.warning {
+  background: linear-gradient(90deg, #e6be72, #e89685);
+}
+.turn-timer-fill.danger {
+  background: linear-gradient(90deg, #ff6b6b, #e89685);
+}
+.turn-timer-text {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+  font-variant-numeric: tabular-nums;
+  z-index: 1;
+  pointer-events: none;
+}
+@media(max-width: 760px) {
+  .turn-timer-bar {
+    height: 6px;
+    margin: 2px auto;
+    width: calc(100% - 12px);
+  }
+  .turn-timer-text { font-size: 8px; right: 6px; }
 }
