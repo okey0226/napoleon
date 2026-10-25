@@ -1406,7 +1406,7 @@ async function records(){
               <input id="edit-favorite-song" value="${escapeHTML(favoriteSong)}" placeholder="例：都ぞ弥生">
             </label>
             <label>主な経歴
-              <input id="edit-career" value="${escapeHTML(career)}" placeholder="例：野球部、寮祭実行委員">
+              <input id="edit-career" value="${escapeHTML(career)}" placeholder="例：ヤン常委員長">
             </label>
             <label>怖い上の年目の「改め」
               <input id="edit-scary-senior" value="${escapeHTML(scarySenior)}" placeholder="例：〇〇さん">
