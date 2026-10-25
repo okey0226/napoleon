@@ -136,6 +136,20 @@
       <form id="profile-form" class="form-card" onsubmit="return false">
         <label>プレイヤーID<input id="account-id" autocomplete="username" maxlength="20" placeholder="英数字 3〜20文字"></label>
         <label>パスワード<input id="account-password" type="password" autocomplete="new-password" minlength="8" placeholder="8文字以上"></label>
+        
+        <div class="dorm-profile-inputs">
+          <label>入寮期
+            <select id="reg-dorm-period">
+              <!-- JSで生成 -->
+            </select>
+          </label>
+          <label>好きな寮歌（任意）<input id="reg-favorite-song" placeholder="例：都ぞ弥生"></label>
+          <label>主な経歴（任意）<input id="reg-career" placeholder="例：野球部、寮祭実行委員"></label>
+          <label>怖い上の年目の「改め」（任意）<input id="reg-scary-senior" placeholder="例：〇〇さん"></label>
+          <label>無限にたべられるもの（任意）<input id="reg-infinite-food" placeholder="例：カレー"></label>
+          <label>好きな立ち（任意）<input id="reg-favorite-standing" placeholder="例：15♠"></label>
+        </div>
+
         <div class="form-actions">
           <button type="button" id="register-account" class="primary-button">新規登録</button>
           <button type="button" id="login-account" class="secondary-button">ログイン</button>
