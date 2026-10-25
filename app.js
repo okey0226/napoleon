@@ -1,6 +1,7 @@
 // ===== [app.js 完全版 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { openQuizScreen } from './quiz-app.js';
 
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
@@ -21,9 +22,6 @@ const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshol
 let toastTimer;
 let lastAuctionDrawHash = '';
 
-// ==========================================
-// 制限時間バー（新規）
-// ==========================================
 function startTurnTimer(deadlineMs, force = false) {
   if (!deadlineMs) { stopTurnTimer(); return; }
   const bar = $('turn-timer-bar'), fill = $('turn-timer-fill'), text = $('turn-timer-text');
@@ -31,7 +29,6 @@ function startTurnTimer(deadlineMs, force = false) {
   const now = Date.now();
   const remaining = Math.max(0, deadlineMs - now);
   const total = Math.max(30000, remaining);
-  // 同じ deadline で既に動いているなら再起動しない
   if (!force && g.turnTimerRAF && g.turnTimerDeadline && Math.abs(g.turnTimerDeadline - deadlineMs) < 200) return;
   stopTurnTimer();
   g.turnTimerDeadline = deadlineMs;
@@ -63,7 +60,6 @@ function syncTurnTimer() {
     return;
   }
   if (g.phase === 'auction' && g.auction?.active?.includes(mySeat)) {
-    // サーバーの lastAction 同期は複雑なので、UI上の操作でリセットする方式
     if (!g.turnTimerRAF) startTurnTimer(Date.now() + 30000);
     return;
   }
@@ -77,7 +73,7 @@ function resetAuctionTimer() {
 }
 
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
-function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();}
+function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
@@ -240,7 +236,6 @@ function startLocal(){
     clearInterval(g.autoNextTimer);
     g.intentionalLeave = false;
   }
-  // ★オンライン状態の残骸を完全リセット（友人待機経由でもCOM戦を正常動作）
   g.onlineState=null; g.privateHand=[]; g.onlineLegal=[]; g.online=null; g.mySeat=0;
   g.lastRating=null; g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
   g.selectedCard=null; g.active=-1; g.bid=13; g.suit='♠'; g.discard=new Set();
@@ -329,7 +324,6 @@ function finalAuctionRule(scores,mult=1){const ranked=scores.map((score,seat)=>(
 function dialog(title,text,cb){
   let d=$('message-dialog'),card=$('dialog-card');
   if(!d||!card)return;
-  // ★既存の開いているdialogを全クローズ（多重showModal防止）
   document.querySelectorAll('dialog[open]').forEach(dlg=>{ try{ if(dlg!==d) dlg.close(); }catch{} });
   try { if (d.open) d.close(); } catch {}
   card.classList.add('hidden'); card.replaceChildren();
@@ -477,7 +471,6 @@ function drawAuction(){
   if(minus)minus.onclick=()=>{auctionActivity();const mv=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid);g.bid=Math.max(g.auction.minBid,mv,g.bid-1);if(g.bid>20)g.bid=20;drawAuction();};
   if(approve)approve.onclick=()=>humanApprove();
   if(submit)submit.onclick=humanBid;
-  // ★オンライン: auction 中で自分の手番ならタイマー開始
   syncTurnTimer();
 }
 
@@ -966,7 +959,6 @@ function finishGame(){
   const replayAllLast=!!(finalRule&&scores[finalRule.bottomSeat]>0&&g.matchScores[finalRule.bottomSeat]===g.matchScores[finalRule.fourthSeat]);
   if(replayAllLast)g.playoff=true;
   const format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),final=g.round>=10&&!replayAllLast;
-  // ★ローカルCOM戦も予行練習として Elo を加算（5段階 + Elo）
   const ratings=final?matchRatingChanges(g.matchScores,[]):null;
   let eloDelta=0,combinedDelta=0;
   if(final&&ratings){
@@ -1398,7 +1390,6 @@ function handleOnlineMessage(m){
     if (g.phase === 'play' || g.phase === 'auction' || g.phase === 'discard' || g.phase === 'call' || g.phase === 'prep') { clearTimers(); clearInterval(g.autoNextTimer); clearTimeout(g.auction?.humanTimeout); toast('友人戦が開始されました。COM戦を終了して移行します。'); }
     g.online=m;g.mySeat=m.seat;
     g.players=m.players.map(p=>({name:p.username || p.id, username:p.username, originalName:p.username, abandoned:false, hand:[], taken:[], roundPoints:0}));
-    // ★完全リセット
     g.phase=''; g.active=-1; g.discard=new Set(); g.selectedCard=null;
     g.privateHand=[]; g.onlineLegal=[]; g.bid=13; g.suit='♠'; g.lastRating=null;
     g.auction=null; g.contract=null; g.localLog=[];
@@ -1455,7 +1446,6 @@ function handleOnlineMessage(m){
       if (g.phase === 'prep') {
         const displayRound = (g.playoff && g.round > 10) ? '10 (再戦)' : String(g.round);
         const roundLab=$('round-label'); if(roundLab)roundLab.textContent=displayRound;
-        // ★bid/suit リセット
         g.bid = 13; g.suit = '♠';
         lastAuctionDrawHash = '';
         g.discard = new Set();
@@ -1534,12 +1524,10 @@ async function online(mode,roomCode,bots,botLevel=3){
   if(mode==='ranked'&&!localStorage.getItem('napoleon_session')){toast('先にプレイヤー登録をしてください');screen('profile-screen');return}
   g.intentionalLeave=false;
   g.reconnecting=false;
-  // ★前のルームを先に閉じる（連続クリック防止）
   if (g.room) { try { g.room.close?.(); } catch {} g.room = null; }
   loadTopStrategy();
   try{
     await stopPresence();
-    // join 待機中の「戻る」に対応
     const beforeJoin = g.intentionalLeave;
     const { roomInstance, send, close } = await joinGameRoom();
     if (g.intentionalLeave && !beforeJoin) { try { close?.(); } catch {} return; }
@@ -1561,7 +1549,6 @@ async function online(mode,roomCode,bots,botLevel=3){
   }catch(e){ console.warn('[online] connect failed:', e?.message); toast('対戦に接続できませんでした（サーバー起動待ちの可能性があります。少し待って再試行してください）'); screen('home-screen'); }
 }
 
-// 入寮期の選択肢生成
 const regDormPeriod = $('reg-dorm-period');
 if (regDormPeriod && !regDormPeriod.options.length) {
   for (let p = 250; p <= 330; p++) { const opt = document.createElement('option'); opt.value = p; opt.textContent = p + '期'; if (p === 310) opt.selected = true; regDormPeriod.appendChild(opt); }
@@ -1583,6 +1570,7 @@ $('start-ranked')?.addEventListener('click', () => online('ranked', '', 0));
 $('profile-open')?.addEventListener('click', () => g.account ? records() : screen('profile-screen'));
 $('show-record')?.addEventListener('click', records);
 $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.leaderboardExpanded; loadLeaderboard(); });
+$('open-quiz')?.addEventListener('click', () => openQuizScreen());
 
 const strategyBtn = $('open-strategy-lab');
 if (strategyBtn) strategyBtn.addEventListener('click', () => screen('strategy-screen'));
