@@ -143,6 +143,21 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .skill-rows>div{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed rgba(226,239,230,.08);font-size:11px;color:#a3b1a8}
 .skill-rows>div>b{color:#e8d7a9;font-variant-numeric:tabular-nums;font-weight:700}
 
+/* ===== 恵迪寮プロフィール ===== */
+.dorm-section{margin-top:22px;padding:16px;border:1px solid rgba(225,188,112,.25);border-radius:15px;background:linear-gradient(120deg,rgba(24,58,46,.96),rgba(13,34,29,.94))}
+.section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.section-header .section-title{margin:0;padding-left:10px}
+.dorm-display{display:grid;gap:8px}
+.dorm-row{display:flex;justify-content:space-between;gap:12px;padding:6px 4px;border-bottom:1px dashed rgba(226,239,230,.1);font-size:12px;color:#a3b1a8}
+.dorm-row:last-child{border-bottom:0;flex-direction:column;align-items:flex-start;gap:4px}
+.dorm-row>span{font-size:10px;color:#93a69a}
+.dorm-row>b{color:#f3d48e;font-weight:700;text-align:right}
+.dorm-row>p{margin:0;color:#e8d7a9;line-height:1.5;white-space:pre-wrap}
+.dorm-edit .form-card{background:transparent;border:none;padding:0;margin:0}
+.dorm-edit .form-card label{color:#c8d4cd}
+.dorm-edit .form-card input,.dorm-edit .form-card select,.dorm-edit .form-card textarea{width:100%;color:#f6f7f2;background:#0c211c;border:1px solid #35534a;border-radius:8px;padding:10px 11px;outline:none;font-size:13px}
+.dorm-edit .form-card textarea{resize:vertical}
+
 /* ===== ゲーム画面 ===== */
 .game-screen{max-width:1200px;height:calc(100dvh - 70px);min-height:640px;padding:12px 24px 0;display:flex;flex-direction:column}
 .game-head{display:flex;align-items:center;justify-content:space-between;height:42px;flex-shrink:0}
@@ -182,7 +197,7 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
 .center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
 .trick-cards{position:absolute;inset:0;z-index:2;display:block;min-height:0;pointer-events:none}
-.trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px;z-index:20} /* ★ z-index追加 */
+.trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px;z-index:20}
 .trick-card.played-seat-0{left:50%;top:70%}
 .trick-card.played-seat-1{left:76%;top:62%}
 .trick-card.played-seat-2{left:76%;top:39%}
