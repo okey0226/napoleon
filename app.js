@@ -400,6 +400,7 @@ function drawAppealResponse(){
   p.querySelector('#appeal-disclose').onclick=()=>answerLocalAppeal('disclose');
   p.querySelector('#appeal-stand').onclick=()=>answerLocalAppeal('stand');
 }
+
 function answerLocalAppeal(choice){
   if(g.onlineState) {
     if(choice==='skip') g.room?.send({type:'game', action:{type:'skip-appeal'}});
@@ -409,11 +410,56 @@ function answerLocalAppeal(choice){
     $('auction-panel')?.classList.add('hidden');
     return;
   }
-  
-  const rule=finalAuctionRule(g.matchScores,g.mult),fourth=rule.fourthSeat;
-  if(choice==='skip'){g.appealInfo='5位はアピールせず競りへ';enterAuction();return}
-  if(choice==='appeal'){if(fourth===0){g.phase='appeal-response';phase('アピール回答');message('4位は所持するJ・マイティを申告するか、申告せず立ちます');drawAppealResponse();return}g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);enterAuction();return}
-  if(choice==='stand'){g.auction.requiredBidSeat=fourth;g.appealInfo='4位は申告せず立つことを選択';enterAuction();return}g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);enterAuction()
+
+  const rule=finalAuctionRule(g.matchScores,g.mult);
+  const bottom = rule.bottomSeat;
+  const fourth = rule.fourthSeat;
+
+  if(choice==='skip'){
+    g.appealInfo='5位はアピールせず競りへ';
+    g.auction.high={num:12,suit:'',player:-1,solo:false};
+    g.auction.requiredBidSeat=null;
+    enterAuction();
+    return;
+  }
+
+  if(choice==='appeal'){
+    g.phase='appeal-response';
+    g.active=fourth;
+    if(fourth===g.mySeat){
+      phase('アピール回答');
+      message('4位は所持するJ・マイティを申告するか、申告せず立ちます');
+      drawAppealResponse();
+    } else {
+      later(() => {
+        if (g.phase === 'appeal-response') {
+          // ボットの4位はとりあえず申告する（縛り発生）
+          answerLocalAppeal('disclose');
+        }
+      }, 1000);
+    }
+    return;
+  }
+
+  if(choice==='disclose'){
+    g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);
+    g.auction.high={num:rule.minBid, suit:'♣', player:bottom, solo:false};
+    g.auction.requiredBidSeat=null;
+    g.active=bottom;
+    addGameLog(`${name(bottom)}が最低宣言数 ${rule.minBid}♣ で立ちました`);
+    enterAuction();
+    return;
+  }
+
+  if(choice==='stand'){
+    g.appealInfo='4位は申告せず立つことを選択';
+    g.auction.high={num:rule.minBid, suit:'♣', player:fourth, solo:false};
+    g.auction.requiredBidSeat=fourth;
+    g.active=fourth;
+    addGameLog(`${name(fourth)}が最低宣言数 ${rule.minBid}♣ で立ちました`);
+    enterAuction();
+    return;
+  }
 }
 
 function auctionStart(){
@@ -425,12 +471,25 @@ function auctionStart(){
   g.auction={active:rule?rule.eligible:[0,1,2,3,4],minBid:rule?.minBid||13,high:{num:12,suit:'',player:-1,solo:false},version:0,autoApprove:Array(5).fill(false),botBids:Array(5).fill(0),botSeen:Array(5).fill(-1),requiredBidSeat:null};
   g.bid=g.auction.minBid;
   g.active=-1;
-  if(!rule){enterAuction();return}
-  const bottom=rule.bottomSeat,fourth=rule.fourthSeat;
-  if(bottom===0){g.phase='appeal-offer';phase('アピール');message('5位は4位にJ・マイティの所持を尋ねられます');drawAppealOffer();return}
-  if(fourth===0){g.phase='appeal-response';phase('アピール回答');g.appealInfo='5位からのアピール';message('5位がアピールしました。所持する札を申告するか、申告せず立つか選んでください');drawAppealResponse();return}
-  g.appealInfo='4位の申告：'+appealDetails(g.players[fourth].hand);
-  enterAuction()
+
+  if (!rule) {
+    enterAuction();
+    return;
+  }
+
+  // オーラス・アピールフェーズ
+  const bottom = rule.bottomSeat;
+  g.phase = 'appeal-offer';
+  g.active = bottom;
+  if (bottom === g.mySeat) {
+    phase('アピール');
+    message('5位は4位にJ・マイティの所持を尋ねられます');
+    drawAppealOffer();
+  } else {
+    later(() => {
+      if (g.phase === 'appeal-offer') answerLocalAppeal('appeal');
+    }, 1000);
+  }
 }
 
 function bidHistoryHTML(history,getName){const entries=(history||[]).slice(-50).reverse();return'<div class="bid-history"><div class="bid-history-title">この対局の立ち履歴</div>'+(entries.length?'<div class="bid-history-list">'+entries.map(entry=>'<div class="bid-history-row player-color-'+entry.seat+'"><small>第'+entry.round+'局</small><span class="bid-player">'+escapeHTML(getName(entry.seat))+'</span><strong>'+entry.num+entry.suit+'</strong></div>').join('')+'</div>':'<div class="bid-history-empty">まだありません</div>')+'</div>'}
