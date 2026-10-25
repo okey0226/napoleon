@@ -7,12 +7,9 @@
   <title>Napoleon</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css">
-  
-  <!-- ▼ 追加：Renderで作ったWebSocketサーバーのURL ▼ -->
   <script>
     window.NAPOLEON_WS_URL = 'wss://napoleon-4ufm.onrender.com/ws';
   </script>
-  
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -25,7 +22,6 @@
   </header>
 
   <main id="app">
-    <!-- ===== ヒーロー ===== -->
     <section id="home-screen" class="screen home-screen hero-screen">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -33,11 +29,9 @@
         <div class="space-stars space-stars-mid"></div>
         <div class="space-stars space-stars-near"></div>
       </div>
-
       <div class="hero-content">
         <div class="eyebrow">TRICK-TAKING CARD GAME</div>
         <h1 class="hero-title">Napoleon</h1>
-
         <div class="hero-ace-wrap" aria-hidden="true">
           <div class="home-ace-spinner">
             <div class="ace-card">
@@ -50,9 +44,7 @@
             </div>
           </div>
         </div>
-
         <button id="home-start" class="hero-start-button" type="button">START</button>
-
         <div class="hero-footer">
           <button id="show-record" class="text-button">PROFILE / RANKINGS</button>
           <button id="open-strategy-lab" class="text-button">AI STRATEGY LAB</button>
@@ -60,7 +52,6 @@
       </div>
     </section>
 
-    <!-- ===== モード選択 ===== -->
     <section id="mode-select-screen" class="screen mode-select-screen hidden">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -68,19 +59,17 @@
         <div class="space-stars space-stars-mid"></div>
         <div class="space-stars space-stars-near"></div>
       </div>
-
       <div class="mode-select-inner">
         <button class="back-button" data-go-home>← 戻る</button>
         <div class="eyebrow">SELECT MODE</div>
         <h1>挑戦するモードを選ぶ</h1>
-
         <div id="my-rating" class="my-rating hidden" aria-label="自分のレート"></div>
 
         <article class="mode-card mode-ranked">
           <div class="mode-mark gold">◆</div>
           <div class="mode-info">
             <h2>レートバトル</h2>
-            <p>ランキングに挑む10局の真剣勝負。</p>
+            <p>ランキングに挑む10局の真剣勝負。5人揃うまでお待ちください。</p>
           </div>
           <div class="mode-action">
             <button id="start-ranked" class="rank-button">対戦相手を探す</button>
@@ -108,7 +97,6 @@
             <p>合言葉で対戦。空席にはCOMが入ります。</p>
           </div>
           <div class="mode-action mode-friend-controls">
-            <!-- ▼ COM人数選択を削除し、シンプルに入力とボタンのみに変更 ▼ -->
             <input id="friend-code" maxlength="8" placeholder="合言葉">
             <button id="create-friend" class="secondary-button">部屋を作る</button>
             <button id="join-friend" class="quiet-button">参加</button>
@@ -127,7 +115,6 @@
       </div>
     </section>
 
-    <!-- ===== プロフィール画面 ===== -->
     <section id="profile-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER CARD</div>
@@ -136,20 +123,14 @@
       <form id="profile-form" class="form-card" onsubmit="return false">
         <label>プレイヤーID<input id="account-id" autocomplete="username" maxlength="20" placeholder="英数字 3〜20文字"></label>
         <label>パスワード<input id="account-password" type="password" autocomplete="new-password" minlength="8" placeholder="8文字以上"></label>
-        
         <div class="dorm-profile-inputs">
-          <label>入寮期
-            <select id="reg-dorm-period">
-              <!-- JSで生成 -->
-            </select>
-          </label>
+          <label>入寮期<select id="reg-dorm-period"></select></label>
           <label>好きな寮歌（任意）<input id="reg-favorite-song" placeholder="例：都ぞ弥生"></label>
           <label>主な経歴（任意）<input id="reg-career" placeholder="例：ヤン常委員長"></label>
           <label>怖い上の年目の「改め」（任意）<input id="reg-scary-senior" placeholder="例：〇〇さん"></label>
           <label>無限にたべられるもの（任意）<input id="reg-infinite-food" placeholder="例：カレー"></label>
           <label>好きな立ち（任意）<input id="reg-favorite-standing" placeholder="例：15♠"></label>
         </div>
-
         <div class="form-actions">
           <button type="button" id="register-account" class="primary-button">新規登録</button>
           <button type="button" id="login-account" class="secondary-button">ログイン</button>
@@ -159,7 +140,6 @@
       <div id="profile-summary" class="profile-summary hidden"></div>
     </section>
 
-    <!-- ===== ゲーム画面 ===== -->
     <section id="game-screen" class="screen game-screen hidden">
       <div class="game-head">
         <button id="leave-game" class="back-button">← メニュー</button>
@@ -173,6 +153,13 @@
       </div>
       <div id="contract-info" class="contract-info hidden" aria-live="polite"></div>
       <div id="table-message" class="table-message" aria-live="polite">配札しています</div>
+
+      <!-- ★追加: 制限時間バー（他UIと非干渉） -->
+      <div id="turn-timer-bar" class="turn-timer-bar hidden" aria-hidden="true">
+        <div id="turn-timer-fill" class="turn-timer-fill"></div>
+        <span id="turn-timer-text" class="turn-timer-text"></span>
+      </div>
+
       <div class="table-area">
         <div id="players-ring" class="players-ring"></div>
         <div id="trick-cards" class="trick-cards" aria-label="場札"></div>
@@ -192,7 +179,6 @@
       </div>
     </section>
 
-    <!-- ===== 記録画面 ===== -->
     <section id="records-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER PROFILE</div>
@@ -200,7 +186,6 @@
       <div id="records-content" class="records-content"><p class="subcopy">プレイヤー登録すると、レートと対戦履歴を確認できます。</p></div>
     </section>
 
-    <!-- ===== 戦略ラボ ===== -->
     <section id="strategy-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">AI STRATEGY LAB</div>
@@ -210,7 +195,7 @@
         <p class="subcopy">戦略を読み込み中…</p>
       </div>
     </section>
-  </main>
+  </mainz>
 
   <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title">
     <div class="game-log-head">
