@@ -17,7 +17,7 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false};
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null}; // ★追加: friendLobby
 let toastTimer;
 let lastAuctionDrawHash = ''; 
 
@@ -27,7 +27,20 @@ function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)retur
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
 function clearTimers(){g.timer.forEach(clearTimeout);g.timer=[]}
-function closeOnline(){g.intentionalLeave=true;clearTimers();clearInterval(g.countdownTimer);g.countdownTimer=null;clearTimeout(g.onlineResultTimer);clearTimeout(g.auction?.humanTimeout);clearInterval(g.autoNextTimer);g.room?.close?.();g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;const ac=$('auction-clock');if(ac)ac.classList.add('hidden');setTimeout(()=>{g.intentionalLeave=false},600)}
+function closeOnline(){
+  g.intentionalLeave=true;
+  clearTimers();
+  clearInterval(g.countdownTimer);g.countdownTimer=null;
+  clearTimeout(g.onlineResultTimer);
+  clearTimeout(g.auction?.humanTimeout);
+  clearInterval(g.autoNextTimer);
+  g.room?.close?.();
+  g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;
+  g.friendLobby=null;
+  hideWaitingBanner();
+  const ac=$('auction-clock');if(ac)ac.classList.add('hidden');
+  setTimeout(()=>{g.intentionalLeave=false},600)
+}
 function message(t){const el=$('table-message');if(el)el.textContent=t}
 function addGameLog(text){if(!g.localLog)return;g.localLog.push({round:g.round,text});if(g.localLog.length>300)g.localLog.shift();const cnt=$('game-log-count');if(cnt)cnt.textContent=String(g.localLog.length);if($('game-log-dialog')?.open)renderGameLog()}
 function renderGameLog(){const list=$('game-log-list');if(!list)return;list.innerHTML=g.localLog?.length?g.localLog.map(entry=>'<article class="game-log-entry"><small>第'+entry.round+'局</small><span>'+escapeHTML(entry.text)+'</span></article>').join(''):'<p class="game-log-empty">まだログはありません</p>';list.scrollTop=list.scrollHeight}
@@ -231,8 +244,21 @@ function sendRoundLearn(wonRound) {
     }).then(() => loadExperience()).catch(() => {});
   } catch (e) { console.warn('[sendRoundLearn]', e?.message); }
 }
+
 function startLocal(){
-  closeOnline();
+  if (!g.friendLobby) {
+    closeOnline();
+  } else {
+    // 友人戦待機中のCOM戦。タイマーだけクリアし、通信は維持する
+    clearTimers();
+    clearInterval(g.countdownTimer);
+    g.countdownTimer = null;
+    clearTimeout(g.onlineResultTimer);
+    clearTimeout(g.auction?.humanTimeout);
+    clearInterval(g.autoNextTimer);
+    g.intentionalLeave = false;
+  }
+
   g.matchDebugLog=[];
   addDebugLog('match-start',{botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights)});
   loadTopStrategy();
@@ -1374,6 +1400,7 @@ function code(){return Math.random().toString(36).slice(2,7).toUpperCase()}
 // ===== ONLINE UI（COM戦と共通化） =====
 // ============================================================
 function showFriendLobby(m) {
+  g.friendLobby = m; // 状態を保存
   let overlay = document.getElementById('friend-lobby-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -1390,16 +1417,25 @@ function showFriendLobby(m) {
       <p class="micro-copy" style="margin-bottom:12px;font-size:12px;">この合言葉を友達に共有してください</p>
       <p style="margin-bottom:24px;color:#a3b1a8;font-size:14px;">参加者: <b style="color:#f3d48e;">${m.count} / 5 人</b></p>
       
+      <button class="primary-button" id="wait-close" style="width:100%;margin-bottom:12px;min-height:48px;font-size:14px;background:#3e9b65;color:#fff;">裏で待機してCOM戦をする</button>
       ${m.host ? `<button class="primary-button" id="start-now" style="width:100%;margin-bottom:12px;min-height:48px;font-size:14px;">今すぐ開始（COMで埋める）</button>` : ''}
       <button class="secondary-button" id="leave-lobby" style="width:100%;min-height:48px;font-size:14px;">キャンセル</button>
     </div>
   `;
+
+  overlay.querySelector('#wait-close').onclick = () => {
+    overlay.classList.add('hidden');
+    startLocal();
+    showWaitingBanner(m);
+  };
 
   overlay.querySelector('#leave-lobby').onclick = () => {
     overlay.classList.add('hidden');
     g.room?.send({type:'leave-room'});
     g.room?.close?.();
     g.room = null;
+    g.friendLobby = null;
+    hideWaitingBanner();
     screen('mode-select-screen');
   };
 
@@ -1408,6 +1444,38 @@ function showFriendLobby(m) {
       g.room?.send({type:'start-now'});
     };
   }
+}
+
+function showWaitingBanner(m) {
+  let banner = document.getElementById('friend-waiting-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'friend-waiting-banner';
+    banner.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:1000;background:#1a2e28;border:1px solid #e1bc70;color:#e1bc70;padding:8px 16px;border-radius:99px;font-size:12px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 12px rgba(0,0,0,0.5);cursor:pointer;';
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = `
+    <span>友人戦待機中: ${m.code} (${m.count}/5人)</span>
+    ${m.host ? '<button id="banner-start" class="small-action" style="padding:2px 8px;font-size:10px;min-height:24px;">開始</button>' : ''}
+    <button id="banner-return" class="small-action" style="padding:2px 8px;font-size:10px;min-height:24px;">ロビーに戻る</button>
+  `;
+  banner.onclick = (e) => {
+    if (e.target.id === 'banner-start') {
+      g.room?.send({type:'start-now'});
+    } else if (e.target.id === 'banner-return') {
+      showFriendLobby(g.friendLobby);
+      banner.classList.add('hidden');
+    } else {
+      showFriendLobby(g.friendLobby);
+      banner.classList.add('hidden');
+    }
+  };
+  banner.classList.remove('hidden');
+}
+
+function hideWaitingBanner() {
+  const b = document.getElementById('friend-waiting-banner');
+  if (b) b.remove();
 }
 
 async function joinGameRoom() {
@@ -1485,12 +1553,32 @@ function handleOnlineMessage(m){
   if(m.type==='lobby'){message(m.text);return;}
   
   if(m.type==='friend-lobby'){
-    showFriendLobby(m);
+    g.friendLobby = m;
+    const banner = document.getElementById('friend-waiting-banner');
+    const overlay = document.getElementById('friend-lobby-overlay');
+    if (banner && !banner.classList.contains('hidden')) {
+        showWaitingBanner(m); // 裏で待機中のバナー人数更新
+    } else if (overlay && !overlay.classList.contains('hidden')) {
+        showFriendLobby(m); // ロビー画面の再描画
+    } else {
+        showFriendLobby(m); // 初回表示
+    }
     return;
   }
 
   if(m.type==='matched'){
-    document.getElementById('friend-lobby-overlay')?.remove();
+    document.getElementById('friend-lobby-overlay')?.classList.add('hidden');
+    hideWaitingBanner();
+    g.friendLobby = null;
+    
+    // COM戦が進行中なら中断
+    if (g.phase === 'play' || g.phase === 'auction' || g.phase === 'discard' || g.phase === 'call' || g.phase === 'prep') {
+      clearTimers();
+      clearInterval(g.autoNextTimer);
+      clearTimeout(g.auction?.humanTimeout);
+      toast('友人戦が開始されました。COM戦を終了して移行します。');
+    }
+
     g.online=m;g.mySeat=m.seat;
     g.players=m.players.map(p=>({name:p.username || p.id, username:p.username, hand:[], taken:[], roundPoints:0}));
     g.active=-1;
