@@ -857,3 +857,63 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .quiz-panel-title{font-size:11px;margin-bottom:6px}
   .quiz-next-btn{min-height:46px}
 }
+/* ===== 何切る：立ち履歴 ===== */
+.quiz-bid-history {
+  margin: 6px auto 10px;
+  max-width: 360px;
+  padding: 8px 10px;
+  border: 1px solid rgba(225,188,112,.22);
+  border-radius: 8px;
+  background: rgba(0,0,0,.28);
+  text-align: left;
+}
+.quiz-bid-history-title {
+  font-size: 9px;
+  color: #9bb0a4;
+  letter-spacing: .08em;
+  margin-bottom: 5px;
+  text-align: left;
+  text-transform: uppercase;
+}
+.quiz-bid-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.quiz-bid-history-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #c4d0c8;
+  background: rgba(255,255,255,.025);
+}
+.quiz-bid-history-row .bid-player {
+  color: var(--player-color, #f2f5ef);
+  font-weight: 600;
+}
+.quiz-bid-history-row strong {
+  color: #f3d48e;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.quiz-bid-history-row.is-high {
+  background: rgba(225,188,112,.14);
+  border: 1px solid rgba(225,188,112,.4);
+}
+.quiz-bid-history-row.is-high strong {
+  color: #f8e5a8;
+  font-size: 12px;
+}
+
+@media(max-width:760px){
+  .quiz-bid-history { margin: 4px auto 8px; padding: 6px 8px; max-height: none; }
+  .quiz-bid-history-list { max-height: 100px; }
+  .quiz-bid-history-row { font-size: 10px; padding: 3px 6px; }
+  .quiz-bid-history-row.is-high strong { font-size: 11px; }
+}
