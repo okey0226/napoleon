@@ -1184,6 +1184,18 @@ function showOnlineResult() {
   }).join('');
 
   const final = g.onlineState.phase === 'result';
+  const placements = res.placements || [];
+  
+  let rankingHtml = '';
+  if (final) {
+    const rankRows = res.matchScores.map((score, seat) => {
+      return { seat, score, rank: placements[seat] || 0 };
+    }).sort((a, b) => a.rank - b.rank).map(item => {
+      const medal = item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : '';
+      return `<div class="round-score-row"><span>${item.rank}位 ${medal} ${escapeHTML(name(item.seat))}</span><strong>${format(item.score)} pt</strong></div>`;
+    }).join('');
+    rankingHtml = `<div class="round-score-list"><div class="micro-copy">FINAL RANKING</div>${rankRows}</div>`;
+  }
 
   r.classList.remove('hidden');
   r.innerHTML = `
@@ -1195,6 +1207,7 @@ function showOnlineResult() {
     ${res.lastTrickWinner != null ? `<p class="micro-copy">最終トリック勝者: ${escapeHTML(name(res.lastTrickWinner))}</p>` : ''}
     ${res.allLastReplay ? '<p>5位が4位に並びました。プレーオフを行います。</p>' : ''}
     <div class="round-score-list"><div class="micro-copy">ROUND SCORE</div>${rows}</div>
+    ${rankingHtml}
     <button id="next-online-round" class="primary-button">${final ? 'MENU' : res.allLastReplay ? 'プレーオフ再戦' : 'NEXT ROUND'}</button>
   `;
 
