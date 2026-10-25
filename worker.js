@@ -2,6 +2,7 @@
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
 import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
+import { handleQuizRequest, quizSchema } from './quiz-api.js';
 
 function safeJsonParse(str, fallback = null) {
   try { if (typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
@@ -40,7 +41,8 @@ export const schema = [
   "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN scary_senior TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN infinite_food TEXT DEFAULT ''",
-  "ALTER TABLE players ADD COLUMN favorite_standing TEXT DEFAULT ''"
+  "ALTER TABLE players ADD COLUMN favorite_standing TEXT DEFAULT ''",
+  ...quizSchema
 ];
 
 const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
@@ -125,6 +127,13 @@ export default {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed", e); } }
 
     try {
+      // 何切る問題集
+      if (url.pathname.startsWith('/api/quiz/')) {
+        const quizRes = await handleQuizRequest(request, env, url);
+        if (quizRes) return quizRes;
+        return response({ error: 'not found' }, { status: 404 });
+      }
+
       if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
         let body; try { body = await request.json(); } catch { return response({ error: "入力を確認してください" }, 400); }
         const id = String(body.id || "").trim(), pass = String(body.password || "");
@@ -360,7 +369,6 @@ function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
 
 async function beginMatch(kind, roomCode, group, room, env) {
-  // ★ ranked は 5人純真人のみ
   if (kind === "ranked") {
     if (!Array.isArray(group) || group.length !== 5) return;
     const browserIds = new Set();
@@ -570,7 +578,6 @@ async function finish(m, room, env) {
   const lastRound = m.round >= 10 && !replayAllLast;
   if (replayAllLast) m.playoff = true;
 
-  // ★ランキングは全モードで計算、ratingChanges は ranked のみ
   const abandonedSeats = m.seats.map((s, i) => s.abandoned ? i : -1).filter(i => i >= 0);
   const rankingResult = matchRatingChanges(m.matchScores, abandonedSeats);
   m.result = {
@@ -785,7 +792,7 @@ export const room = {
         if (connMatch.has(conn.id) && connMatch.get(conn.id) !== foundMatch.id) connMatch.delete(conn.id);
         seat.connId = conn.id;
         seat.bot = false;
-        seat.abandoned = false; // ★復帰で放棄取消
+        seat.abandoned = false;
         seat.player.username = seat.originalPlayerName || "player";
         seat.player.playerId = seat.originalPlayerId || "player";
         if (foundMatch.kind === "ranked") seat.player.userId = userId;
@@ -821,7 +828,6 @@ export const room = {
         return;
       }
 
-      // friend
       if (connMatch.has(conn.id)) { sendSafe(conn, { type: "room-error", message: "既に対戦中です" }); return; }
       let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
       if (!entryCode) entryCode = makeCode();
@@ -852,7 +858,7 @@ export const room = {
       for (const [c, l] of friendRooms) {
         l.players = l.players.filter(x => x.id !== conn.id);
         if (!l.players.length) { friendRooms.delete(c); continue; }
-        if (l.host === conn.id) l.host = l.players[0].id; // ★ホスト繰越
+        if (l.host === conn.id) l.host = l.players[0].id;
         l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       }
       return;
@@ -880,7 +886,6 @@ export const room = {
       }
     }
 
-    // ★ランクキュー: 5人純真人・重複ブラウザ排除
     if (rankedQueue.length >= 5) {
       const live = rankedQueue.filter(x => conns.has(x.id) && x.player.userId);
       const seenUsers = new Set(), seenBrowsers = new Set(), dedup = [];
@@ -901,7 +906,6 @@ export const room = {
 
     for (const [c, l] of friendRooms) if (now - l.created > 900000) friendRooms.delete(c);
 
-    // ゾンビマッチ強制終了（3時間超）
     for (const [id, m] of matches) {
       if (now - m.created > 3 * 60 * 60 * 1000) {
         matches.delete(id);
@@ -953,7 +957,6 @@ export const room = {
     conns.delete(conn.id);
     queues.ranked = queues.ranked.filter(x => x.id !== conn.id);
     const uid = conn.authUserId || conn.userId;
-    // キュー待機中のみ削除（試合中は finish() まで残す）
     if (!id && uid && rankedUsers.get(uid) === conn.id) rankedUsers.delete(uid);
     for (const [c, l] of friendRooms) {
       l.players = l.players.filter(x => x.id !== conn.id);
@@ -972,7 +975,7 @@ export const room = {
           if (!s.originalPlayerId) s.originalPlayerId = s.player.playerId;
           s.disconnectedAt = Date.now();
           s.bot = true;
-          s.abandoned = true;   // ★放棄フラグ（復帰で false）
+          s.abandoned = true;
           s.connId = null;
           s.player.username = "COM";
           s.player.playerId = "COM";
