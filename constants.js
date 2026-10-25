@@ -8,7 +8,7 @@ export const SWEET_SPOT_BONUS = 2.5;
 export const HONEST_BID_FIXED_BONUS = 2.0;
 export const ALLY_LOSS_PENALTY = -5;
 export const ALLY_WIN_BONUS = 5;
-export const ALLY_BLOCK_BONUS = 2; // ←これがなくてエラーになってました
+export const ALLY_BLOCK_BONUS = 2;
 
 export const shuffledDeck = () => {
   let d = [];
@@ -82,26 +82,35 @@ export const pointsTierOf = (pts) => pts === 0 ? 'zero' : pts < 3 ? 'mid' : 'hig
 export const experienceConfidence = (samples) => Math.min(1, samples / 10);
 export const blendWithExperience = (p, exp) => exp && exp.samples >= 3 ? (p * 0.7 + (exp.wins / exp.samples) * 0.3) : p;
 
-export const matchRatingChanges = (matchScores, matchArt, rates, matchStats, matchContracts) => {
-   const sorted = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
-   return matchScores.map((s, i) => ({
-     outcome: i === sorted[0].i ? 'win' : 'loss',
-     delta: i === sorted[0].i ? 10 : -10,
-     breakdown: { rank: i + 1, rounds: [] }
-   }));
+export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
+  const abandoned = new Set(Array.isArray(abandonedSeats) ? abandonedSeats : []);
+  const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
+  const placementBySeat = [];
+  ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
+  const baseDeltas = { 1: 10, 2: 3, 3: 0, 4: -5, 5: -10 };
+  return matchScores.map((s, i) => {
+    const isAbandoned = abandoned.has(i);
+    const rank = placementBySeat[i];
+    const baseDelta = baseDeltas[rank] ?? 0;
+    const abandonPenalty = isAbandoned ? -20 : 0;
+    const delta = baseDelta + abandonPenalty;
+    return {
+      outcome: isAbandoned ? 'loss' : (rank === 1 ? 'win' : 'loss'),
+      delta, placement: rank, abandoned: isAbandoned, abandonPenalty, baseDelta,
+      breakdown: { rank, rounds: [] }
+    };
+  });
 };
 
 export const computeEloDelta = (myElo, oppElos, outcome) => {
-   let expected = 0;
-   for (const elo of oppElos) {
-      expected += 1 / (1 + Math.pow(10, (elo - myElo) / 400));
-   }
-   expected /= oppElos.length;
-   const score = outcome === 'win' ? 1 : 0;
-   return Math.round(32 * (score - expected));
+  if (!Array.isArray(oppElos) || !oppElos.length) return 0;
+  let expected = 0;
+  for (const elo of oppElos) expected += 1 / (1 + Math.pow(10, (elo - myElo) / 400));
+  expected /= oppElos.length;
+  const score = outcome === 'win' ? 1 : 0;
+  return Math.round(32 * (score - expected));
 };
 
-// --- ai-simulator.js 用のダミー定義（エラー防止） ---
 export const PARAM_BOUNDS = {
   bidThreshold: [2, 6], riskTolerance: [0.1, 1.0], leadAggression: [0.2, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 1.5], mightyBonus: [0.5, 3.0],
@@ -109,9 +118,7 @@ export const PARAM_BOUNDS = {
 };
 export const mutateStrategy = (base, rate) => {
   const out = { ...base };
-  for (const k of Object.keys(out)) {
-    if (Math.random() < 0.1) out[k] = out[k] * (1 + (Math.random() * 2 - 1) * rate);
-  }
+  for (const k of Object.keys(out)) if (Math.random() < 0.1) out[k] = out[k] * (1 + (Math.random() * 2 - 1) * rate);
   return out;
 };
 export const rateRound = () => 0;
