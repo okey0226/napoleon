@@ -300,6 +300,10 @@ function roundStart(){
   g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];
   g.discardedKitty=[];
   g.allianceKittyPoints=0;
+  // ★修正: 捨て札選択状態をリセット（前局の選択が残らないようにする）
+  g.discard = new Set();
+  $('game-screen')?.classList.remove('discarding');
+  $('hand')?.classList.remove('discard-mode');
   g.humanRoundLog = { round: g.round, bid: null, call: null, playDecisions: [] };
   g.players.forEach(p=>{p.roundTaken=[];p.roundPoints=0;});
   addGameLog('配札');
@@ -639,7 +643,9 @@ function doApprove(i,version){if(!g.auction.active.includes(i))return;if(g.aucti
 function auctionEnd(w){
   clearTimeout(g.auction?.humanTimeout);
   $('auction-panel')?.classList.add('hidden');
-  showKittyBacks();
+  // ★修正: 未定義の showKittyBacks() を showDiscardedKitty() に置換
+  //   （ReferenceError で kittyStart() に到達できず COM戦が停止していた）
+  showDiscardedKitty();
   $('auction-clock')?.classList.add('hidden');
   if(w<0||g.auction.high.num<13){
     if(g.round>=10){w=finalAuctionRule(g.matchScores,g.mult).bottomSeat;g.auction.high={num:g.auction.minBid,suit:strongestSuit(g.players[w].hand),player:w,solo:false}}
