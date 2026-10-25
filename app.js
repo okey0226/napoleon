@@ -17,7 +17,7 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null}; // ★追加: friendLobby
+const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null};
 let toastTimer;
 let lastAuctionDrawHash = ''; 
 
@@ -169,13 +169,10 @@ function computeTeamMinBid(scores,mult,napSeat,deputySeat){
     const a=13+f(S3-S4,6*m),b=13+f(S3-S5,4*m),c=13+f(S4-S5,2*m),raw=Math.max(a,b,c);
     return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,achievable:raw<=20,incentiveBroken:a>20||b>20,soloRequired:false,case:'B',details:{S3,S4,S5,needNapOverThird:a,needDeputyOverThird:b,needDeputyOverNapOnLoss:c}};
   }
-  if(napSeat===bottomSeat&&deputySeat!==fourthSeat){
+  // 通常（ケースC）と旧逆立ちを統合
+  if((napSeat===bottomSeat&&deputySeat!==fourthSeat)||(napSeat===fourthSeat&&deputySeat!==bottomSeat)){
     const raw=13+f(S4-S5,6*m);
     return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,achievable:raw<=20,incentiveBroken:false,soloRequired:false,case:'C',details:{S3,S4,S5,needNapOverFourth:raw}};
-  }
-  if(napSeat===fourthSeat&&deputySeat!==bottomSeat){
-    const raw=13+f(S4-S5,6*m);
-    return{minBid:Math.min(20,raw),rawMin:raw,canOvertake:raw<=20,achievable:raw<=20,incentiveBroken:false,soloRequired:false,case:'D',details:{S3,S4,S5,needNapLoss:raw}};
   }
   return null;
 }
@@ -349,9 +346,8 @@ function announceRound(round,rule){
   const caseA=computeTeamMinBid(scores,m,bottomSeat,fourthSeat);
   const caseB=computeTeamMinBid(scores,m,fourthSeat,bottomSeat);
   const caseC=computeTeamMinBid(scores,m,bottomSeat,bottomSeat);
-  const caseD=computeTeamMinBid(scores,m,fourthSeat,fourthSeat);
   const soloRaw=soloMinimumBid(S3-S5,m);
-  const body=['【現在の順位】',...lines,'','【逆転立ちの最低枚数】','　通常　　　： '+fmtMinBid(caseC),'　組んだら　： '+fmtMinBid(caseA),'　逆組み　　： '+fmtMinBid(caseB),'　逆立ち　　： '+fmtMinBid(caseD),'　ひとり立ち： '+fmtSoloMinBid(soloRaw)].join('\n');
+  const body=['【現在の順位】',...lines,'','【逆転立ちの最低枚数】','　通常　　　： '+fmtMinBid(caseC),'　組んだら　： '+fmtMinBid(caseA),'　逆組み　　： '+fmtMinBid(caseB),'　ひとり立ち： '+fmtSoloMinBid(soloRaw)].join('\n'); // 逆立ち削除
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
@@ -395,12 +391,10 @@ function drawAppealResponse(){
   const rule=finalAuctionRule(g.matchScores,g.mult);
   const fourth=rule.fourthSeat,bottom=rule.bottomSeat;
   const caseB=computeTeamMinBid(g.matchScores,g.mult,fourth,bottom);
-  const caseD=computeTeamMinBid(g.matchScores,g.mult,fourth,fourth);
   p.innerHTML='<div class="panel-title">5位からアピール</div>'+
     '<div class="micro-copy">所持するJ・マイティを申告するか、申告せず立つか選んでください。</div>'+
     '<div class="appeal-forecast">'+
       '<div><span>逆組み（あなた=NAP・5位=副官）</span><b>'+fmtMinBid(caseB)+'</b></div>'+
-      '<div><span>逆立ち（あなた=NAP・5位が副官でない）</span><b>'+fmtMinBid(caseD)+'</b></div>'+
     '</div>'+
     '<div class="panel-row"><button class="small-action" id="appeal-disclose">札を申告する</button><button class="small-action pass" id="appeal-stand">申告せず立つ</button></div>';
   p.querySelector('#appeal-disclose').onclick=()=>answerLocalAppeal('disclose');
@@ -495,7 +489,7 @@ function scheduleComBids(){
   const version=g.auction.version;
   for(let i=1;i<5;i++){
     if(g.auction.active.includes(i) && g.auction.botSeen[i]<version){
-      later(()=>comBid(i,version), 300+Math.random()*1000); // ★修正: 思考時間を短縮
+      later(()=>comBid(i,version), 300+Math.random()*1000);
     }
   }
 }
@@ -976,7 +970,7 @@ function play(i,c){
       const r=computeTeamMinBid(g.matchScores,g.mult,g.contract.nap,g.contract.deputy);
       if(r!==null){
         const oldBid=g.contract.num;
-        const caseLabel={A:'組んだら',B:'逆組み',C:'通常',D:'逆立ち'}[r.case];
+        const caseLabel={A:'組んだら',B:'逆組み',C:'通常'}[r.case];
         if(!r.achievable){ toast('副官判明（'+caseLabel+'）：20枚でも逆転不可能（不可）'); addGameLog('★副官判明（'+caseLabel+'）：20枚でも逆転不可能（不可）'); message('副官判明：20枚でも逆転不可能'); }
         else if(r.minBid>oldBid){ g.contract.num=r.minBid;renderContractInfo();drawSeats(); toast('副官判明：立ちを '+oldBid+'枚 → '+r.minBid+'枚 に引き上げ（'+caseLabel+'）'); addGameLog('★副官判明による立ち変更：'+oldBid+'枚 → '+r.minBid+'枚（'+caseLabel+'）'); message('副官判明により立ちを '+r.minBid+'枚へ引き上げました'); }
         else{ addGameLog('副官判明：立ち '+oldBid+'枚は最低条件 '+r.minBid+'枚を満たしています（'+caseLabel+'）'); toast('副官判明：立ち '+oldBid+'枚は最低条件を満たしています（'+caseLabel+'）'); }
