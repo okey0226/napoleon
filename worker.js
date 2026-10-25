@@ -412,7 +412,8 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
       details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c }
     };
   }
-  if (napSeat === bottomSeat && deputySeat !== fourthSeat) {
+  // 通常（ケースC）と旧逆立ちを統合
+  if ((napSeat === bottomSeat && deputySeat !== fourthSeat) || (napSeat === fourthSeat && deputySeat !== bottomSeat)) {
     const raw = 13 + f(S4 - S5, 6 * m);
     return {
       minBid: Math.min(20, raw),
@@ -423,19 +424,6 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
       soloRequired: false,
       case: 'C',
       details: { S3, S4, S5, needNapOverFourth: raw }
-    };
-  }
-  if (napSeat === fourthSeat && deputySeat !== bottomSeat) {
-    const raw = 13 + f(S4 - S5, 6 * m);
-    return {
-      minBid: Math.min(20, raw),
-      rawMin: raw,
-      canOvertake: raw <= 20,
-      achievable: raw <= 20,
-      incentiveBroken: false,
-      soloRequired: false,
-      case: 'D',
-      details: { S3, S4, S5, needNapLoss: raw }
     };
   }
   return null;
@@ -645,7 +633,7 @@ function playCard(m, seat, id, room, env) {
       const r = computeTeamMinBid(m.matchScores, m.mult, m.contract.nap, m.contract.deputy);
       if (r !== null) {
         const oldBid = m.contract.num;
-        const caseLabel = { A: '組んだら', B: '逆組み', C: '通常', D: '逆立ち' }[r.case];
+        const caseLabel = { A: '組んだら', B: '逆組み', C: '通常' }[r.case];
         if (!r.achievable) {
           raisedNotice = '副官判明（' + caseLabel + '）。20枚でも逆転不可能（不可）です。';
         } else if (r.minBid > oldBid) {
