@@ -119,29 +119,24 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .performance-card>span{font-size:10px;color:#a3b1a8;letter-spacing:.06em;font-weight:600}
 .performance-card>strong{font-size:24px;color:#f3d48e;font-variant-numeric:tabular-nums;line-height:1.1;font-weight:800}
 .performance-card>small{font-size:9px;color:#7f958a;font-variant-numeric:tabular-nums}
-.role-skill-section{margin-top:22px}
-.role-skill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-.role-skill{display:grid;gap:11px;padding:15px 16px;border:1px solid rgba(226,239,230,.1);border-radius:13px;background:linear-gradient(135deg,rgba(10,28,24,.9),rgba(5,18,14,.85))}
-.role-skill.role-nap{border-color:rgba(225,188,112,.35)}
-.role-skill.role-dep{border-color:rgba(145,188,231,.28)}
-.role-skill.role-all{border-color:rgba(196,144,255,.25)}
-.role-skill-head{display:flex;align-items:center;gap:12px}
-.role-emblem{width:40px;height:40px;display:grid;place-items:center;flex:none;border-radius:11px;border:1px solid rgba(225,188,112,.35);background:rgba(225,188,112,.08);font-size:20px;color:#f3d48e;font-weight:700}
-.role-dep .role-emblem{border-color:rgba(145,188,231,.35);background:rgba(145,188,231,.08);color:#a3d0ee}
-.role-all .role-emblem{border-color:rgba(196,144,255,.35);background:rgba(196,144,255,.08);color:#c9a4ff}
-.role-title{flex:1;min-width:0}
-.role-title .eyebrow{font-size:9px;letter-spacing:.14em}
-.role-score{font-size:26px;font-weight:800;color:#f3d48e;line-height:1.05;font-variant-numeric:tabular-nums}
-.role-dep .role-score{color:#a3d0ee}
-.role-all .role-score{color:#c9a4ff}
-.role-score small{font-size:11px;font-weight:500;color:#8fa69a;margin-left:3px}
-.skill-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
-.skill-bar>div{height:100%;border-radius:99px;background:linear-gradient(90deg,#d4a850,#f3d48e);transition:width .45s ease}
-.role-dep .skill-bar>div{background:linear-gradient(90deg,#5c9bcb,#a3d0ee)}
-.role-all .skill-bar>div{background:linear-gradient(90deg,#8a63c4,#c9a4ff)}
-.skill-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
-.skill-rows>div{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed rgba(226,239,230,.08);font-size:11px;color:#a3b1a8}
-.skill-rows>div>b{color:#e8d7a9;font-variant-numeric:tabular-nums;font-weight:700}
+
+/* ===== レート遷移 ===== */
+.rate-history-section{margin-top:22px}
+.rate-history-list{display:flex;align-items:flex-end;gap:4px;height:60px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.rate-bar-container{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end}
+.rate-bar{width:100%;max-width:20px;border-radius:4px 4px 0 0;transition:height .3s ease}
+.rate-bar.positive{background:#79dfb7}
+.rate-bar.negative{background:#ff9e82}
+.rate-label{font-size:9px;color:#8fa69a;font-variant-numeric:tabular-nums}
+
+/* ===== 順位率割合 ===== */
+.rank-distribution-section{margin-top:22px}
+.rank-dist-list{display:grid;gap:8px}
+.rank-dist-row{display:flex;align-items:center;gap:10px}
+.rank-dist-label{width:40px;font-size:11px;color:#a3b1a8;flex:none}
+.rank-dist-bar-bg{flex:1;height:8px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden}
+.rank-dist-bar{height:100%;border-radius:99px;background:linear-gradient(90deg,#d4a850,#f3d48e);transition:width .4s ease}
+.rank-dist-val{width:55px;text-align:right;font-size:11px;color:#e8d7a9;font-weight:700;font-variant-numeric:tabular-nums}
 
 /* ===== 恵迪寮プロフィール ===== */
 .dorm-section{margin-top:22px;padding:16px;border:1px solid rgba(225,188,112,.25);border-radius:15px;background:linear-gradient(120deg,rgba(24,58,46,.96),rgba(13,34,29,.94))}
