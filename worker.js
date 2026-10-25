@@ -34,7 +34,13 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS ai_call_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT NOT NULL, trump_suit TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_call_exp_key ON ai_call_experience(call_id, trump_suit)",
   "CREATE TABLE IF NOT EXISTS ai_play_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, phase TEXT NOT NULL, points_tier TEXT NOT NULL, rank_tier TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
-  "CREATE UNIQUE INDEX IF NOT EXISTS ai_play_exp_key ON ai_play_experience(role, phase, points_tier, rank_tier)"
+  "CREATE UNIQUE INDEX IF NOT EXISTS ai_play_exp_key ON ai_play_experience(role, phase, points_tier, rank_tier)",
+  "ALTER TABLE players ADD COLUMN dorm_period INTEGER DEFAULT 310",
+  "ALTER TABLE players ADD COLUMN favorite_song TEXT DEFAULT ''",
+  "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
+  "ALTER TABLE players ADD COLUMN scary_senior TEXT DEFAULT ''",
+  "ALTER TABLE players ADD COLUMN infinite_food TEXT DEFAULT ''",
+  "ALTER TABLE players ADD COLUMN favorite_standing TEXT DEFAULT ''"
 ];
 
 const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
@@ -124,7 +130,18 @@ export default {
         if (isRegister) {
           userId = crypto.randomUUID();
           const salt = crypto.getRandomValues(new Uint8Array(16)), digest = await hashPassword(pass, salt);
-          try { await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash) VALUES(?,?,?,?,?)").bind(userId, id, id, hex(salt), digest).run(); } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
+          
+          const dormPeriod = Number(body.dormPeriod) || 310;
+          const favoriteSong = String(body.favoriteSong || "").slice(0, 100);
+          const career = String(body.career || "").slice(0, 200);
+          const scarySenior = String(body.scarySenior || "").slice(0, 50);
+          const infiniteFood = String(body.infiniteFood || "").slice(0, 100);
+          const favoriteStanding = String(body.favoriteStanding || "").slice(0, 50);
+
+          try { 
+            await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+              .bind(userId, id, id, hex(salt), digest, dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding).run(); 
+          } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
         } else {
           const p = await env.DB.prepare("SELECT user_id,salt,password_hash FROM players WHERE player_id=?").bind(id).first();
           if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
@@ -142,8 +159,30 @@ export default {
         const token = hex(crypto.getRandomValues(new Uint8Array(32)));
         const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
         await env.DB.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").bind(token, userId, expiresAt).run();
-        const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing FROM players WHERE user_id=?").bind(userId).first();
         return response({ ...player, sessionToken: token });
+      }
+      if (request.method === "POST" && url.pathname === "/api/account/update-dorm") {
+        const token = request.headers.get("x-session-token");
+        let userId = null;
+        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        if (!userId) return response({ error: "認証情報が必要です" }, 401);
+        let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
+        
+        const dormPeriod = Number(body.dormPeriod) || 310;
+        const favoriteSong = String(body.favoriteSong || "").slice(0, 100);
+        const career = String(body.career || "").slice(0, 200);
+        const scarySenior = String(body.scarySenior || "").slice(0, 50);
+        const infiniteFood = String(body.infiniteFood || "").slice(0, 100);
+        const favoriteStanding = String(body.favoriteStanding || "").slice(0, 50);
+
+        try {
+          await env.DB.prepare("UPDATE players SET dorm_period=?, favorite_song=?, career=?, scary_senior=?, infinite_food=?, favorite_standing=? WHERE user_id=?")
+            .bind(dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding, userId).run();
+          return response({ ok: true });
+        } catch (e) {
+          return response({ error: e.message }, 500);
+        }
       }
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
@@ -151,7 +190,7 @@ export default {
         if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
         if (!userId) { const who = signed(request); if (who) userId = who.id; }
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
-        const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games FROM players WHERE user_id=?").bind(userId).first();
+        const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing FROM players WHERE user_id=?").bind(userId).first();
         if (!p) return response({ error: "プレイヤー登録がありません" }, 404);
         const [performanceRow, precisionRow, artRateRow, allyFeedRow, boldBidRow, historyPage, matchStatsRow] = await Promise.all([
           env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_performance WHERE user_id=?").bind(userId).first(),
