@@ -461,8 +461,39 @@ function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" ||
 function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 400 + Math.random() * 1600; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
 function appealDetails(hand) { const held = ['♣J', '♦J', '♥J', '♠J', '♠A'].filter(id => hand.some(card => card.id === id)); return held.length ? held.join(' ') : 'なし'; }
 function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
-function answerAppealOffer(m, seat, appeal, room) { if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return; if (!appeal) { m.appealInfo = '5位はアピールせず競りへ'; enterAuctionAfterAppeal(m, room); return; } m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000; m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room); if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room); }
-function answerAppealResponse(m, seat, choice, room) { if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return; if (choice === 'declare') { const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'の申告：' + appealDetails(m.seats[seat].hand); enterAuctionAfterAppeal(m, room); return; } const player = m.seats[seat].player; m.appealInfo = (player.playerId || player.username) + 'は申告せず立つことを選択。'; enterAuctionAfterAppeal(m, room, seat); }
+function answerAppealOffer(m, seat, appeal, room) {
+  if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return;
+  if (!appeal) {
+    m.appealInfo = '5位はアピールせず競りへ';
+    m.phase = 'auction'; m.active = -1; m.notice = '競り開始です。';
+    m.auction.high = { num: 12, suit: '', player: -1, solo: false };
+    m.auction.requiredBidSeat = null;
+    publish(m, room);
+    return;
+  }
+  m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000;
+  m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room);
+  if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room);
+}
+function answerAppealResponse(m, seat, choice, room) {
+  if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return;
+  const bottom = m.appeal.bottomSeat;
+  const fourth = m.appeal.fourthSeat;
+  const rule = finalAuctionRule(m.matchScores, m.mult);
+
+  if (choice === 'declare') {
+    m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'の申告：' + appealDetails(m.seats[seat].hand);
+    m.auction.high = { num: rule.minBid, suit: '♣', player: bottom, solo: false };
+    m.auction.requiredBidSeat = null; m.active = bottom;
+    m.notice = m.appealInfo + '。' + m.seats[bottom].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。';
+  } else {
+    m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'は申告せず立つことを選択。';
+    m.auction.high = { num: rule.minBid, suit: '♣', player: fourth, solo: false };
+    m.auction.requiredBidSeat = fourth; m.active = fourth;
+    m.notice = m.appealInfo + '。' + m.seats[fourth].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。';
+  }
+  m.phase = 'auction'; m.deadline = 0; publish(m, room);
+}
 function auctionDone(m, seat, room) {
   if (seat < 0 || m.auction.high.num < 13) {
     if (m.round >= 10) {
