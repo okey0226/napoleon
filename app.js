@@ -347,7 +347,7 @@ function announceRound(round,rule){
   const caseB=computeTeamMinBid(scores,m,fourthSeat,bottomSeat);
   const caseC=computeTeamMinBid(scores,m,bottomSeat,bottomSeat);
   const soloRaw=soloMinimumBid(S3-S5,m);
-  const body=['【現在の順位】',...lines,'','【逆転立ちの最低枚数】','　通常　　　： '+fmtMinBid(caseC),'　組んだら　： '+fmtMinBid(caseA),'　逆組み　　： '+fmtMinBid(caseB),'　ひとり立ち： '+fmtSoloMinBid(soloRaw)].join('\n'); // 逆立ち削除
+  const body=['【現在の順位】',...lines,'','【逆転立ちの最低枚数】','　通常　　　： '+fmtMinBid(caseC),'　組んだら　： '+fmtMinBid(caseA),'　逆組み　　： '+fmtMinBid(caseB),'　ひとり立ち： '+fmtSoloMinBid(soloRaw)].join('\n');
   dialog(g.playoff?'プレーオフ':'オールラスト',body);
 }
 
@@ -1277,8 +1277,20 @@ async function account(path){
   if(!idEl||!passEl)return;
   const id=idEl.value.trim(),password=passEl.value;
   if(!id||!password){toast('IDとパスワードを入力してください');return}
+  
+  const payload = {
+    id,
+    password,
+    dormPeriod: Number($('reg-dorm-period')?.value) || 310,
+    favoriteSong: $('reg-favorite-song')?.value || "",
+    career: $('reg-career')?.value || "",
+    scarySenior: $('reg-scary-senior')?.value || "",
+    infiniteFood: $('reg-infinite-food')?.value || "",
+    favoriteStanding: $('reg-favorite-standing')?.value || ""
+  };
+
   try{
-    const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,password})});
+    const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
     const { data: d, parseError } = await readResponse(r);
     if(!r.ok || parseError)throw Error((d && d.error) || (parseError && 'JSON parse error') || '処理できませんでした');
     g.account=d;g.sessionToken=d.sessionToken||null;if(d.sessionToken)localStorage.setItem('napoleon_session',d.sessionToken);
@@ -1358,9 +1370,61 @@ async function records(){
     const depScore=depAtt>0?Math.round((depWinRate*0.75+feedRate*0.25)*100):null;
     const allScore=totalRanks>0?Math.round((rankScore*0.7+artRate*0.3)*100):null;
     const pct=v=>(v*100).toFixed(1)+'%',scoreText=s=>s===null?'—':String(s),barW=s=>s===null?0:s,scoreUnit=s=>s===null?'':'<small>/100</small>';
+    
+    const dormPeriod = d.dorm_period || 310;
+    const favoriteSong = d.favorite_song || '';
+    const career = d.career || '';
+    const scarySenior = d.scary_senior || '';
+    const infiniteFood = d.infinite_food || '';
+    const favoriteStanding = d.favorite_standing || '';
+
     rc.innerHTML=`
       <div class="mypage-head"><div class="profile-emblem large">♠</div><div class="mypage-identity"><div class="eyebrow">PLAYER CARD</div><h2>${escapeHTML(d.id)}</h2></div><div class="mypage-rating"><span>RATE</span><strong>${d.rating}</strong></div></div>
       <div class="record-stats"><div class="record-stat"><span>MATCHES</span><b>${d.games}</b></div><div class="record-stat"><span>WINS</span><b>${d.wins}</b></div><div class="record-stat"><span>LOSSES</span><b>${d.losses}</b></div></div>
+      
+      <section class="dorm-section">
+        <div class="section-header">
+          <h3 class="section-title">恵迪寮プロフィール</h3>
+          <button id="edit-dorm-btn" class="small-action">編集</button>
+        </div>
+        <div id="dorm-profile-display" class="dorm-display">
+          <div class="dorm-row"><span>入寮期</span><b>${dormPeriod}期</b></div>
+          <div class="dorm-row"><span>好きな寮歌</span><b>${escapeHTML(favoriteSong || '未設定')}</b></div>
+          <div class="dorm-row"><span>主な経歴</span><b>${escapeHTML(career || '未設定')}</b></div>
+          <div class="dorm-row"><span>怖い上の年目の「改め」</span><b>${escapeHTML(scarySenior || '未設定')}</b></div>
+          <div class="dorm-row"><span>無限にたべられるもの</span><b>${escapeHTML(infiniteFood || '未設定')}</b></div>
+          <div class="dorm-row"><span>好きな立ち</span><b>${escapeHTML(favoriteStanding || '未設定')}</b></div>
+        </div>
+        <div id="dorm-profile-edit" class="dorm-edit hidden">
+          <div class="form-card">
+            <label>入寮期
+              <select id="edit-dorm-period">
+                ${Array.from({length: 330 - 250 + 1}, (_, i) => 250 + i).map(p => `<option value="${p}" ${p === dormPeriod ? 'selected' : ''}>${p}期</option>`).join('')}
+              </select>
+            </label>
+            <label>好きな寮歌
+              <input id="edit-favorite-song" value="${escapeHTML(favoriteSong)}" placeholder="例：都ぞ弥生">
+            </label>
+            <label>主な経歴
+              <input id="edit-career" value="${escapeHTML(career)}" placeholder="例：野球部、寮祭実行委員">
+            </label>
+            <label>怖い上の年目の「改め」
+              <input id="edit-scary-senior" value="${escapeHTML(scarySenior)}" placeholder="例：〇〇さん">
+            </label>
+            <label>無限にたべられるもの
+              <input id="edit-infinite-food" value="${escapeHTML(infiniteFood)}" placeholder="例：カレー">
+            </label>
+            <label>好きな立ち
+              <input id="edit-favorite-standing" value="${escapeHTML(favoriteStanding)}" placeholder="例：15♠">
+            </label>
+            <div class="form-actions">
+              <button id="save-dorm-btn" class="primary-button">保存する</button>
+              <button id="cancel-dorm-btn" class="secondary-button">キャンセル</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="performance-section"><h3 class="section-title">パフォーマンス指標</h3><div class="performance-grid">
         <article class="performance-card"><span>平均立ち成功率</span><strong>${napAtt>0?pct(napWinRate):'—'}</strong><small>${napWins} / ${napAtt}</small></article>
         <article class="performance-card"><span>平均宣言数</span><strong>${avgBid>0?avgBid.toFixed(1)+'枚':'—'}</strong><small>${napAtt>0?napAtt+'回の立ち':'実績なし'}</small></article>
@@ -1372,6 +1436,42 @@ async function records(){
         <article class="role-skill role-all"><div class="role-skill-head"><div class="role-emblem">♥</div><div class="role-title"><span class="eyebrow">ALLIANCE</span><div class="role-score">${scoreText(allScore)}${scoreUnit(allScore)}</div></div></div><div class="skill-bar"><div style="width:${barW(allScore)}%"></div></div><div class="skill-rows"><div><span>平均順位</span><b>${totalRanks>0?avgRank.toFixed(2)+'位':'—'}</b></div><div><span>1位率</span><b>${totalRanks>0?pct(r1/totalRanks):'—'}</b></div><div><span>4〜5位率</span><b>${totalRanks>0?pct((r4+r5)/totalRanks):'—'}</b></div><div><span>アート成功率</span><b>${artAtt>0?pct(artRate):'—'}</b></div></div></article>
       </div></section>
     `;
+
+    const editBtn = $('edit-dorm-btn');
+    if (editBtn) editBtn.onclick = () => {
+      $('dorm-profile-display')?.classList.add('hidden');
+      $('dorm-profile-edit')?.classList.remove('hidden');
+    };
+    const cancelBtn = $('cancel-dorm-btn');
+    if (cancelBtn) cancelBtn.onclick = () => {
+      $('dorm-profile-display')?.classList.remove('hidden');
+      $('dorm-profile-edit')?.classList.add('hidden');
+    };
+    const saveBtn = $('save-dorm-btn');
+    if (saveBtn) saveBtn.onclick = async () => {
+      const payload = {
+        dormPeriod: Number($('edit-dorm-period')?.value) || 310,
+        favoriteSong: $('edit-favorite-song')?.value || "",
+        career: $('edit-career')?.value || "",
+        scarySenior: $('edit-scary-senior')?.value || "",
+        infiniteFood: $('edit-infinite-food')?.value || "",
+        favoriteStanding: $('edit-favorite-standing')?.value || ""
+      };
+      const token = localStorage.getItem('napoleon_session');
+      try {
+        const res = await fetch('/api/account/update-dorm', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-session-token': token },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('保存に失敗しました');
+        toast('プロフィールを保存しました');
+        records(); // 再描画
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+
   }catch(e){rc.textContent='UNABLE TO LOAD PLAYER STATS.'}
 }
 
@@ -1929,6 +2029,18 @@ async function online(mode,roomCode,bots,botLevel=3){
     console.warn('[online] connect failed:', e?.message);
     toast('対戦に接続できませんでした（サーバー起動待ちの可能性があります。少し待って再試行してください）');
     screen('home-screen');
+  }
+}
+
+// 入寮期の選択肢生成
+const regDormPeriod = $('reg-dorm-period');
+if (regDormPeriod && !regDormPeriod.options.length) {
+  for (let p = 250; p <= 330; p++) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p + '期';
+    if (p === 310) opt.selected = true;
+    regDormPeriod.appendChild(opt);
   }
 }
 
