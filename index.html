@@ -48,6 +48,7 @@
         <div class="hero-footer">
           <button id="show-record" class="text-button">PROFILE / RANKINGS</button>
           <button id="open-strategy-lab" class="text-button">AI STRATEGY LAB</button>
+          <button id="open-quiz" class="text-button">QUIZ</button>
         </div>
       </div>
     </section>
@@ -154,7 +155,6 @@
       <div id="contract-info" class="contract-info hidden" aria-live="polite"></div>
       <div id="table-message" class="table-message" aria-live="polite">配札しています</div>
 
-      <!-- ★追加: 制限時間バー（他UIと非干渉） -->
       <div id="turn-timer-bar" class="turn-timer-bar hidden" aria-hidden="true">
         <div id="turn-timer-fill" class="turn-timer-fill"></div>
         <span id="turn-timer-text" class="turn-timer-text"></span>
@@ -195,7 +195,14 @@
         <p class="subcopy">戦略を読み込み中…</p>
       </div>
     </section>
-  </mainz>
+
+    <section id="quiz-screen" class="screen quiz-screen hidden">
+      <div id="quiz-progress" class="quiz-progress"></div>
+      <div id="quiz-shell" class="quiz-shell">
+        <div class="quiz-loading">読み込み中…</div>
+      </div>
+    </section>
+  </main>
 
   <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title">
     <div class="game-log-head">
