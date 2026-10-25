@@ -639,6 +639,7 @@ async function finish(m, room, env) {
   m.result.ratingChanges = ratingChanges;
   const placementOrder = m.matchScores.map((score, seat) => ({ score, seat })).sort((a, b) => b.score - a.score || a.seat - b.seat);
   const placementBySeat = []; placementOrder.forEach((entry, index) => placementBySeat[entry.seat] = index + 1);
+  m.result.placements = placementBySeat;
   if (m.kind === "ranked") {
     const userIds = [...new Set(m.seats.map(seat => seat.player.userId).filter(Boolean))]; const updates = [];
     if (userIds.length) {
