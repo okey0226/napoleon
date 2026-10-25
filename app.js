@@ -357,7 +357,25 @@ function announceRound(round,rule){
 
 function prepAuction(){g.phase='prep';announceRound(g.round,finalAuctionRule(g.matchScores,g.mult));phase('競り準備');let n=7;message('競り開始まで '+n+' 秒');const tick=()=>{n--;if(n<=0){auctionStart();return}message('競り開始まで '+n+' 秒');later(tick,1000)};later(tick,1000)}
 
-function scheduleHumanAuctionTimeout(){const auction=g.auction;if(!auction)return;clearTimeout(auction.humanTimeout);auction.humanTimeout=setTimeout(()=>{if(g.phase==='auction'&&g.auction===auction)humanApprove(true)},30000)}
+function scheduleHumanAuctionTimeout(){
+  const auction=g.auction;
+  if(!auction)return;
+  clearTimeout(auction.humanTimeout);
+  // ★修正: オンラインなら30秒、ローカルCOM戦なら5分（300秒）に延長
+  const timeoutMs = g.onlineState ? 30000 : 300000;
+  auction.humanTimeout=setTimeout(()=>{
+    if(g.phase==='auction' && g.auction===auction) {
+      if (g.onlineState) {
+        humanApprove(true);
+      } else {
+        if (!g.auction.active.includes(g.mySeat)) return;
+        message('操作がありません。「承認」か「宣言する」を選んでください。');
+        scheduleHumanAuctionTimeout(); // タイマーを再セット
+      }
+    }
+  }, timeoutMs);
+}
+
 function auctionActivity(){
   if(g.phase!=='auction'||!g.auction)return;
   if (g.auction.autoApprove && Array.isArray(g.auction.autoApprove)) {
@@ -472,7 +490,15 @@ function drawAuction(){
 
 function beatsBid(n,s){const h=g.auction.high;return n>=g.auction.minBid&&n>h.num||(n===h.num&&n>=13&&SV[s]>SV[h.suit])}
 function removeBid(i){g.auction.active=g.auction.active.filter(x=>x!==i)}
-function scheduleComBids(){if(g.phase!=='auction')return;const version=g.auction.version;for(let i=1;i<5;i++)if(g.auction.active.includes(i)&&g.auction.botSeen[i]<version)later(()=>comBid(i,version),500+Math.random()*1800)}
+function scheduleComBids(){
+  if(g.phase!=='auction')return;
+  const version=g.auction.version;
+  for(let i=1;i<5;i++){
+    if(g.auction.active.includes(i) && g.auction.botSeen[i]<version){
+      later(()=>comBid(i,version), 300+Math.random()*1000); // ★修正: 思考時間を短縮
+    }
+  }
+}
 
 function humanApprove(forced=false){
   if(g.onlineState){
