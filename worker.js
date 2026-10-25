@@ -45,6 +45,11 @@ export const schema = [
 
 const queues = { ranked: [] }, rankedUsers = new Map(), conns = new Map(), friendRooms = new Map(), matches = new Map(), connMatch = new Map();
 
+function broadcastQueueStatus() {
+  const text = "対戦相手を検索中 · " + queues.ranked.length + "/5人";
+  for (const x of queues.ranked) sendSafe(x.conn, { type: "lobby", text });
+}
+
 let __cachedBotStrategy = null, __cachedBotStrategyTime = 0;
 async function loadBotStrategy(env) {
   if (__cachedBotStrategy && Date.now() - __cachedBotStrategyTime < 60000) return __cachedBotStrategy;
@@ -130,17 +135,15 @@ export default {
         if (isRegister) {
           userId = crypto.randomUUID();
           const salt = crypto.getRandomValues(new Uint8Array(16)), digest = await hashPassword(pass, salt);
-          
           const dormPeriod = Number(body.dormPeriod) || 310;
           const favoriteSong = String(body.favoriteSong || "").slice(0, 100);
           const career = String(body.career || "").slice(0, 200);
           const scarySenior = String(body.scarySenior || "").slice(0, 50);
           const infiniteFood = String(body.infiniteFood || "").slice(0, 100);
           const favoriteStanding = String(body.favoriteStanding || "").slice(0, 50);
-
-          try { 
+          try {
             await env.DB.prepare("INSERT INTO players(user_id,username,player_id,salt,password_hash,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-              .bind(userId, id, id, hex(salt), digest, dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding).run(); 
+              .bind(userId, id, id, hex(salt), digest, dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding).run();
           } catch { return response({ error: "そのIDはすでに使われています" }, 409); }
         } else {
           const p = await env.DB.prepare("SELECT user_id,salt,password_hash FROM players WHERE player_id=?").bind(id).first();
@@ -168,21 +171,17 @@ export default {
         if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
-        
         const dormPeriod = Number(body.dormPeriod) || 310;
         const favoriteSong = String(body.favoriteSong || "").slice(0, 100);
         const career = String(body.career || "").slice(0, 200);
         const scarySenior = String(body.scarySenior || "").slice(0, 50);
         const infiniteFood = String(body.infiniteFood || "").slice(0, 100);
         const favoriteStanding = String(body.favoriteStanding || "").slice(0, 50);
-
         try {
           await env.DB.prepare("UPDATE players SET dorm_period=?, favorite_song=?, career=?, scary_senior=?, infinite_food=?, favorite_standing=? WHERE user_id=?")
             .bind(dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding, userId).run();
           return response({ ok: true });
-        } catch (e) {
-          return response({ error: e.message }, 500);
-        }
+        } catch (e) { return response({ error: e.message }, 500); }
       }
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
@@ -289,7 +288,6 @@ export default {
           }
           if (body.exactWins > 1) { weights.riskTolerance = Math.min(1.0, (weights.riskTolerance ?? base.riskTolerance) + lr * 0.3); weights.trumpBonus = Math.min(1.5, (weights.trumpBonus ?? base.trumpBonus) + lr * 0.2); }
           if (body.lastPlacePenalty > 0) { weights.riskTolerance = Math.max(0.1, (weights.riskTolerance ?? base.riskTolerance) - lr * 0.3); }
-
           if (isMatchEnd && wonMatch && body.aiWeights && typeof body.aiWeights === "object") {
             const blend = 0.3;
             for (const [k, [lo, hi]] of Object.entries(PARAM_BOUNDS)) {
@@ -362,17 +360,29 @@ function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
 
 async function beginMatch(kind, roomCode, group, room, env) {
+  // ★ ranked は 5人純真人のみ
+  if (kind === "ranked") {
+    if (!Array.isArray(group) || group.length !== 5) return;
+    const browserIds = new Set();
+    for (const x of group) {
+      if (!x || !x.player || !x.player.userId || !x.id || !conns.has(x.id)) return;
+      if (x.browserId) {
+        if (browserIds.has(x.browserId)) return;
+        browserIds.add(x.browserId);
+      }
+    }
+  }
   const id = Math.random().toString(36).slice(2, 12).toUpperCase();
   const seats = group.map(x => ({
-    connId: x.id,
-    originalConnId: x.id,
+    connId: x.id, originalConnId: x.id,
     originalUserId: x.player.userId || null,
     originalPlayerName: x.player.username || "player",
     originalPlayerId: x.player.playerId || "player",
-    disconnectedAt: null,
+    browserId: x.browserId || null,
+    disconnectedAt: null, abandoned: false,
     player: x.player, bot: false, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0
   }));
-  while (seats.length < 5) seats.push({ connId: null, originalConnId: null, originalUserId: null, originalPlayerName: null, originalPlayerId: null, disconnectedAt: null, player: { username: "COM " + (seats.length + 1), playerId: "COM", rating: 1000, games: 0 }, bot: true, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0 });
+  while (seats.length < 5) seats.push({ connId: null, originalConnId: null, originalUserId: null, originalPlayerName: null, originalPlayerId: null, browserId: null, disconnectedAt: null, abandoned: false, player: { username: "COM " + (seats.length + 1), playerId: "COM", rating: 1000, games: 0 }, bot: true, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0 });
   const m = {
     id, kind, code: roomCode, seats: seats.slice(0, 5), created: Date.now(), botLevel: 3,
     matchScores: Array(5).fill(0), matchArt: Array(5).fill(0), matchContracts: [], bidHistory: [],
@@ -387,15 +397,13 @@ async function beginMatch(kind, roomCode, group, room, env) {
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
   if (env?.DB) { loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {}); loadExperience(env).then(e => { m.botExperience = e; }).catch(() => {}); }
-  const players = m.seats.map((x, seat) => ({ seat, id: x.player.playerId, username: x.player.username, rating: x.player.rating, bot: x.bot }));
+  const players = m.seats.map((x, seat) => ({ seat, id: x.player.playerId, username: x.player.username, rating: x.player.rating, bot: x.bot, abandoned: false }));
   group.forEach((x, seat) => sendSafe(x.conn, { type: "matched", matchId: id, mode: kind, code: roomCode || null, players, seat, botCount: 5 - group.length }));
   deal(m);
   publish(m, room);
 }
 function deal(m) {
-  m.lastTrickWinner = null;
-  m.humanAutoPlayAt = null;
-  m.botThinkAt = null;
+  m.lastTrickWinner = null; m.humanAutoPlayAt = null; m.botThinkAt = null;
   const d = shuffledDeck();
   m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
   m.kitty = d.splice(0, 2);
@@ -423,47 +431,16 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
   const m = Math.max(1, mult);
   const f = (gap, denom) => Math.floor(Math.max(0, gap) / denom);
   if (napSeat === bottomSeat && deputySeat === fourthSeat) {
-    const a = 13 + f(S3 - S5, 6 * m);
-    const b = 13 + f(S3 - S4, 4 * m);
-    const raw = Math.max(a, b);
-    const achievable = raw <= 20;
-    return {
-      minBid: Math.min(20, raw),
-      rawMin: raw,
-      canOvertake: achievable,
-      achievable,
-      incentiveBroken: !achievable,
-      soloRequired: false,
-      case: 'A',
-      details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b }
-    };
+    const a = 13 + f(S3 - S5, 6 * m), b = 13 + f(S3 - S4, 4 * m), raw = Math.max(a, b), achievable = raw <= 20;
+    return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: achievable, achievable, incentiveBroken: !achievable, soloRequired: false, case: 'A', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b } };
   }
   if (napSeat === fourthSeat && deputySeat === bottomSeat) {
     const a = 13 + f(S3 - S4, 6 * m), b = 13 + f(S3 - S5, 4 * m), c = 13 + f(S4 - S5, 2 * m), raw = Math.max(a, b, c);
-    return {
-      minBid: Math.min(20, raw),
-      rawMin: raw,
-      canOvertake: raw <= 20,
-      achievable: raw <= 20,
-      incentiveBroken: a > 20 || b > 20,
-      soloRequired: false,
-      case: 'B',
-      details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c }
-    };
+    return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, achievable: raw <= 20, incentiveBroken: a > 20 || b > 20, soloRequired: false, case: 'B', details: { S3, S4, S5, needNapOverThird: a, needDeputyOverThird: b, needDeputyOverNapOnLoss: c } };
   }
-  // 通常（ケースC）と旧逆立ちを統合
   if ((napSeat === bottomSeat && deputySeat !== fourthSeat) || (napSeat === fourthSeat && deputySeat !== bottomSeat)) {
     const raw = 13 + f(S4 - S5, 6 * m);
-    return {
-      minBid: Math.min(20, raw),
-      rawMin: raw,
-      canOvertake: raw <= 20,
-      achievable: raw <= 20,
-      incentiveBroken: false,
-      soloRequired: false,
-      case: 'C',
-      details: { S3, S4, S5, needNapOverFourth: raw }
-    };
+    return { minBid: Math.min(20, raw), rawMin: raw, canOvertake: raw <= 20, achievable: raw <= 20, incentiveBroken: false, soloRequired: false, case: 'C', details: { S3, S4, S5, needNapOverFourth: raw } };
   }
   return null;
 }
@@ -477,14 +454,17 @@ function publicState(m) {
     finalRoundRule: m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null,
     notice: m.notice, active: m.active, allianceKittyPoints: m.allianceKittyPoints || 0,
     players: m.seats.map((p, seat) => ({
-      seat, name: p.bot ? p.player.username : (p.player.playerId || p.player.username),
-      username: p.player.username, rating: p.player.rating, bot: p.bot,
+      seat,
+      name: p.bot ? (p.abandoned ? (p.originalPlayerName || p.player.username) + " (放棄)" : p.player.username) : (p.player.playerId || p.player.username),
+      username: p.originalPlayerName || p.player.username,
+      originalName: p.originalPlayerName || p.player.username,
+      abandoned: !!p.abandoned,
+      rating: p.player.rating, bot: p.bot,
       handCount: p.hand.length, points: p.points, taken: p.taken, active: m.active,
       approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.active) && !m.auction.active.includes(seat),
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    // ★修正: 捨て札は絵札（得点札）のみを公開
     revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
@@ -502,44 +482,21 @@ function appealDetails(hand) { const held = ['♣J', '♦J', '♥J', '♠J', '�
 function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
 function answerAppealOffer(m, seat, appeal, room) {
   if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return;
-  if (!appeal) {
-    m.appealInfo = '5位はアピールせず競りへ';
-    m.phase = 'auction'; m.active = -1; m.notice = '競り開始です。';
-    m.auction.high = { num: 12, suit: '', player: -1, solo: false };
-    m.auction.requiredBidSeat = null;
-    publish(m, room);
-    return;
-  }
-  m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000;
-  m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room);
+  if (!appeal) { m.appealInfo = '5位はアピールせず競りへ'; m.phase = 'auction'; m.active = -1; m.notice = '競り開始です。'; m.auction.high = { num: 12, suit: '', player: -1, solo: false }; m.auction.requiredBidSeat = null; publish(m, room); return; }
+  m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000; m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room);
   if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room);
 }
 function answerAppealResponse(m, seat, choice, room) {
   if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return;
-  const bottom = m.appeal.bottomSeat;
-  const fourth = m.appeal.fourthSeat;
-  const rule = finalAuctionRule(m.matchScores, m.mult);
-
-  if (choice === 'declare') {
-    m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'の申告：' + appealDetails(m.seats[seat].hand);
-    m.auction.high = { num: rule.minBid, suit: '♣', player: bottom, solo: false };
-    m.auction.requiredBidSeat = null; m.active = bottom;
-    m.notice = m.appealInfo + '。' + m.seats[bottom].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。';
-  } else {
-    m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'は申告せず立つことを選択。';
-    m.auction.high = { num: rule.minBid, suit: '♣', player: fourth, solo: false };
-    m.auction.requiredBidSeat = fourth; m.active = fourth;
-    m.notice = m.appealInfo + '。' + m.seats[fourth].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。';
-  }
+  const bottom = m.appeal.bottomSeat, fourth = m.appeal.fourthSeat, rule = finalAuctionRule(m.matchScores, m.mult);
+  if (choice === 'declare') { m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'の申告：' + appealDetails(m.seats[seat].hand); m.auction.high = { num: rule.minBid, suit: '♣', player: bottom, solo: false }; m.auction.requiredBidSeat = null; m.active = bottom; m.notice = m.appealInfo + '。' + m.seats[bottom].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。'; }
+  else { m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'は申告せず立つことを選択。'; m.auction.high = { num: rule.minBid, suit: '♣', player: fourth, solo: false }; m.auction.requiredBidSeat = fourth; m.active = fourth; m.notice = m.appealInfo + '。' + m.seats[fourth].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。'; }
   m.phase = 'auction'; m.deadline = 0; publish(m, room);
 }
 function auctionDone(m, seat, room) {
   if (seat < 0 || m.auction.high.num < 13) {
-    if (m.round >= 10) {
-      seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat;
-      m.auction.high = { num: m.auction.minBid || 13, suit: strongestSuit(m.seats[seat].hand), player: seat, solo: false };
-      m.notice = "オールラストは立ち必須。最下位が最低枚数で立ちます。";
-    } else { m.notice = "宣言なし。配り直します。"; m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return; }
+    if (m.round >= 10) { seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat; m.auction.high = { num: m.auction.minBid || 13, suit: strongestSuit(m.seats[seat].hand), player: seat, solo: false }; m.notice = "オールラストは立ち必須。最下位が最低枚数で立ちます。"; }
+    else { m.notice = "宣言なし。配り直します。"; m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return; }
   }
   const bs = defaultStrategy();
   const strengthAtBid = m.auction.high.suit === 'NT' ? ntHandStrength(m.seats[seat].hand, bs) : colorStrength(m.seats[seat].hand, m.auction.high.suit, bs);
@@ -550,24 +507,17 @@ function auctionDone(m, seat, room) {
 function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
 function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
 
-function callCard(m, seat, suit, rank, room) { 
-  if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return; 
-  const card = { suit, rank, id: suit + rank }; 
-  if (m.kitty.some(x => x.id === card.id)) return; 
-  const isOwn = m.seats[seat].hand.some(c => c.id === card.id); 
-  const forceSolo = isSoloForcedInMatch(m); 
-  if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; } 
-  
-  m.contract.call = card; 
-  m.contract.solo = isOwn || m.contract.solo; 
-  m.contract.revealedCall = false; 
-  m.contract.ready = m.seats.map(p => p.bot); 
-  m.phase = "call-reveal"; 
-  m.active = seat; 
-  m.deadline = Date.now() + 15000; 
-  m.kitty = []; 
-  m.notice = suit + rank + "が指名されました。全員の確認後に開始します。"; 
-  publish(m, room); 
+function callCard(m, seat, suit, rank, room) {
+  if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return;
+  const card = { suit, rank, id: suit + rank };
+  if (m.kitty.some(x => x.id === card.id)) return;
+  const isOwn = m.seats[seat].hand.some(c => c.id === card.id);
+  const forceSolo = isSoloForcedInMatch(m);
+  if ((m.contract.solo || forceSolo) && !isOwn) { m.notice = "ひとり立ちを選択しているため、自分の手札からのみ指名できます。"; publish(m, room); return; }
+  m.contract.call = card; m.contract.solo = isOwn || m.contract.solo; m.contract.revealedCall = false;
+  m.contract.ready = m.seats.map(p => p.bot);
+  m.phase = "call-reveal"; m.active = seat; m.deadline = Date.now() + 15000; m.kitty = [];
+  m.notice = suit + rank + "が指名されました。全員の確認後に開始します。"; publish(m, room);
 }
 
 function discardCards(m, seat, ids, room) {
@@ -577,9 +527,7 @@ function discardCards(m, seat, ids, room) {
   m.seats[seat].hand = h.filter(c => !ids.includes(c.id));
   const kittyPoints = removed.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
   m.allianceKittyPoints = (m.allianceKittyPoints || 0) + kittyPoints.length;
-  m.kitty = removed;
-  m.openKitty = removed.slice();
-  m.discardedKitty = removed.slice();
+  m.kitty = removed; m.openKitty = removed.slice(); m.discardedKitty = removed.slice();
   sortHand(m.seats[seat].hand);
   m.phase = "call"; m.active = seat; m.deadline = Date.now() + 30000;
   m.humanAutoPlayAt = null;
@@ -589,9 +537,11 @@ function discardCards(m, seat, ids, room) {
 }
 
 async function finish(m, room, env) {
-  m.matchScores = m.matchScores || Array(5).fill(0); m.matchArt = m.matchArt || Array(5).fill(0); m.matchContracts = m.matchContracts || [];
+  m.matchScores = m.matchScores || Array(5).fill(0);
+  m.matchArt = m.matchArt || Array(5).fill(0);
+  m.matchContracts = m.matchContracts || [];
   m.matchStats = m.matchStats || Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 }));
-  m.matchStats.forEach(stat => { stat.declarerAttempts = stat.declarerAttempts || 0; stat.declarerSuccesses = stat.declarerSuccesses || 0; stat.deputyAttempts = stat.deputyAttempts || 0; stat.deputySuccesses = stat.deputySuccesses || 0; stat.exactAttempts = stat.exactAttempts || 0; stat.exactSuccesses = stat.exactSuccesses || 0; stat.soloAttempts = stat.soloAttempts || 0; stat.soloSuccesses = stat.soloSuccesses || 0; stat.artAttempts = stat.artAttempts || 0; stat.allyFeedAttempts = stat.allyFeedAttempts || 0; stat.allyFeedSuccesses = stat.allyFeedSuccesses || 0; stat.boldAttempts = stat.boldAttempts || 0; stat.boldSuccesses = stat.boldSuccesses || 0; stat.bidTotal = stat.bidTotal || 0; stat.ntBids = stat.ntBids || 0; stat.colorBids = stat.colorBids || 0; });
+  m.matchStats.forEach(stat => { for (const k of Object.keys(stat)) stat[k] = stat[k] || 0; });
   m.roundArt = m.roundArt || Array(5).fill(0);
   const finalRule = m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null;
   const nap = m.contract.nap, unit = Math.max(0, m.contract.num - 12) * m.mult * (m.round >= 10 ? 2 : 1);
@@ -612,56 +562,56 @@ async function finish(m, room, env) {
   else { scores[m.contract.deputy] = sign * unit; for (let i = 0; i < 5; i++) if (i !== nap && i !== m.contract.deputy) scores[i] = -sign * unit; }
   const art = m.roundArt.slice();
   if (made && points === m.contract.num) { art[nap] += 2; m.matchStats[nap].exactWins++; m.matchStats[nap].exactSuccesses++; if (!m.contract.solo) art[m.contract.deputy] += 1; if (m.contract.num >= 15) { art[nap] += 2; m.matchStats[nap].boldExactWins++; if (!m.contract.solo) art[m.contract.deputy] += 1; } }
-  if (m.contract.solo) { art[nap] += made ? 4 : 2; if (made) { m.matchStats[nap].soloWins++; } }
+  if (m.contract.solo) { art[nap] += made ? 4 : 2; if (made) m.matchStats[nap].soloWins++; }
   if (!made && !m.contract.solo && m.contract.num - points >= 3) { art[nap] -= 2; art[m.contract.deputy] -= 1; }
   for (let i = 0; i < 5; i++) { m.matchScores[i] += scores[i]; m.matchArt[i] += art[i]; }
   m.matchContracts.push({ round: m.round, nap, deputy: m.contract.deputy, num: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, points, napWin: made, revealTrickNo: m.contract.revealTrickNo ?? null, takenPoints: m.seats.map(s => s.roundPoints || 0), strengthAtBid: m.contract.strengthAtBid ?? 8, allianceKittyPoints: allianceKitty, mult: m.mult || 1 });
   const replayAllLast = !!(finalRule && scores[finalRule.bottomSeat] > 0 && m.matchScores[finalRule.bottomSeat] === m.matchScores[finalRule.fourthSeat]);
   const lastRound = m.round >= 10 && !replayAllLast;
   if (replayAllLast) m.playoff = true;
+
+  // ★ランキングは全モードで計算、ratingChanges は ranked のみ
+  const abandonedSeats = m.seats.map((s, i) => s.abandoned ? i : -1).filter(i => i >= 0);
+  const rankingResult = matchRatingChanges(m.matchScores, abandonedSeats);
   m.result = {
     round: m.round, made, points, bid: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, stake: unit,
-    nap: m.contract.nap, deputy: m.contract.deputy, // ★ 追加: 役割を明示
+    nap, deputy: m.contract.deputy,
     allianceKittyPoints: allianceKitty,
     lastTrickWinner: m.lastTrickWinner ?? null,
-    lastTrickWinnerName: m.lastTrickWinner != null ? (m.seats[m.lastTrickWinner]?.bot ? m.seats[m.lastTrickWinner].player.username : (m.seats[m.lastTrickWinner]?.player.playerId || m.seats[m.lastTrickWinner]?.player.username)) : null,
+    lastTrickWinnerName: m.lastTrickWinner != null ? (m.seats[m.lastTrickWinner]?.bot ? (m.seats[m.lastTrickWinner]?.originalPlayerName || m.seats[m.lastTrickWinner]?.player.username) : (m.seats[m.lastTrickWinner]?.player.playerId || m.seats[m.lastTrickWinner]?.player.username)) : null,
     scoreChanges: scores.map((delta, seat) => ({ seat, delta, role: seat === nap ? "ナポレオン" : !m.contract.solo && seat === m.contract.deputy ? "副官" : "連合軍" })),
     artChanges: art.map((delta, seat) => ({ seat, delta })),
     winners: made ? team : m.seats.map((_, i) => i).filter(i => !team.includes(i)),
     matchScores: m.matchScores.slice(), matchArt: m.matchArt.slice(),
+    placements: rankingResult.map(r => r.placement),
     allLastReplay: replayAllLast, playoff: !!m.playoff
   };
   m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000;
   m.humanAutoPlayAt = null;
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
-  const ratingChanges = matchRatingChanges(m.matchScores, m.matchArt, m.seats.map(seat => Number(seat.player.rating) || 1000), m.matchStats, m.matchContracts);
-  m.result.ratingChanges = ratingChanges;
-  const placementOrder = m.matchScores.map((score, seat) => ({ score, seat })).sort((a, b) => b.score - a.score || a.seat - b.seat);
-  const placementBySeat = []; placementOrder.forEach((entry, index) => placementBySeat[entry.seat] = index + 1);
-  m.result.placements = placementBySeat;
+
   if (m.kind === "ranked") {
-    const userIds = [...new Set(m.seats.map(seat => seat.player.userId).filter(Boolean))]; const updates = [];
+    m.result.ratingChanges = rankingResult;
+    const userIds = [...new Set(m.seats.map(seat => seat.originalUserId).filter(Boolean))];
+    const updates = [];
     if (userIds.length) {
       try {
         const placeholders = userIds.map(() => "?").join(",");
-        const [profileRes, eloRes] = await Promise.all([
-          env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + placeholders + ")").bind(...userIds).all(),
-          env.DB.prepare("SELECT user_id, elo FROM player_elo WHERE user_id IN (" + placeholders + ")").bind(...userIds).all()
-        ]);
+        const profileRes = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + placeholders + ")").bind(...userIds).all();
         const byId = new Map(profileRes.results.map(profile => [profile.user_id, profile]));
-        const eloMap = new Map((eloRes.results || []).map(row => [row.user_id, row.elo]));
         const statements = [];
+        const placementBySeat = rankingResult.map(r => r.placement);
         for (let seat = 0; seat < m.seats.length; seat++) {
-          const player = m.seats[seat], userId = player.player.userId, profile = userId && byId.get(userId);
+          const playerSeat = m.seats[seat];
+          const userId = playerSeat.originalUserId;
+          const profile = userId && byId.get(userId);
           if (!profile) continue;
-          const change = ratingChanges[seat], outcome = change.outcome;
-          const currentElo = eloMap.get(userId) ?? ELO_INIT;
-          const oppElos = m.seats.filter((_, i) => i !== seat).map(s => { if (!s.player.userId) return ELO_INIT; return eloMap.get(s.player.userId) ?? ELO_INIT; });
-          const eloDelta = computeEloDelta(currentElo, oppElos, outcome);
-          const combinedDelta = change.delta + eloDelta;
+          const change = rankingResult[seat];
+          const outcome = change.outcome;
+          const combinedDelta = change.delta;
           const rating = Math.max(100, (Number(profile.rating) || 1000) + combinedDelta);
-          change.rating = rating; change.eloDelta = eloDelta;
+          change.rating = rating;
           const stat = m.matchStats[seat];
           statements.push(
             env.DB.prepare("UPDATE players SET rating=?,wins=wins+?,losses=losses+?,games=games+1 WHERE user_id=?").bind(rating, outcome === "win" ? 1 : 0, outcome === "loss" ? 1 : 0, profile.user_id),
@@ -673,18 +623,29 @@ async function finish(m, room, env) {
             env.DB.prepare("INSERT INTO player_art_rate(user_id,attempts,plays) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,plays=plays+excluded.plays").bind(profile.user_id, stat.artAttempts, stat.dramaticPlays),
             env.DB.prepare("INSERT INTO player_ally_feed(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.allyFeedAttempts, stat.allyFeedSuccesses),
             env.DB.prepare("INSERT INTO player_bold_bid_rate(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.boldAttempts, stat.boldSuccesses),
-            env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0)),
-            env.DB.prepare("INSERT INTO player_elo(user_id, elo) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET elo=excluded.elo").bind(userId, rating)
+            env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0))
           );
-          updates.push({ connId: player.connId, change, rating, outcome, combinedDelta, eloDelta });
+          updates.push({ connId: playerSeat.connId, change, rating, outcome, combinedDelta });
         }
         if (statements.length) await env.DB.batch(statements);
       } catch (error) { console.error("ranked match settlement failed", m.id, error); m.result.rateSaveFailed = true; }
-      if (!m.result.rateSaveFailed) for (const update of updates) { try { sendSafe(conns.get(update.connId), { type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating, eloDelta: update.eloDelta, placement: update.change.placement, art: update.change.art, breakdown: update.change.breakdown }); } catch (error) { console.warn("rating notification failed", m.id, error); } }
+      if (!m.result.rateSaveFailed) for (const update of updates) {
+        if (!update.connId) continue;
+        try {
+          sendSafe(conns.get(update.connId), {
+            type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
+            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
+          });
+        } catch (error) { console.warn("rating notification failed", m.id, error); }
+      }
     }
   }
+
   publish(m, room); matches.delete(m.id);
-  for (const seat of m.seats) { if (seat.connId) connMatch.delete(seat.connId); const userId = seat.player.userId; if (userId && rankedUsers.get(userId) === seat.originalConnId) rankedUsers.delete(userId); }
+  for (const seat of m.seats) {
+    if (seat.connId) connMatch.delete(seat.connId);
+    if (seat.originalUserId) rankedUsers.delete(seat.originalUserId);
+  }
 }
 function artfulCard(m, entry, trick) { const c = entry.card, led = trick[0].card.suit, black = s => s === "♣" || s === "♠"; return c.id === "♠A" || c.id === "♥Q" && trick.some(x => x.card.id === "♠A") || c.rank === "J" && m.contract.suit !== "NT" && (c.suit === m.contract.suit || c.suit !== m.contract.suit && black(c.suit) === black(m.contract.suit)) || c.rank === "2" && c.suit === led && trick.every(x => x.card.suit === led); }
 function playCard(m, seat, id, room, env) {
@@ -703,23 +664,17 @@ function playCard(m, seat, id, room, env) {
     if (m.round >= 10 && !m.contract.solo) {
       const r = computeTeamMinBid(m.matchScores, m.mult, m.contract.nap, m.contract.deputy);
       if (r !== null) {
-        const oldBid = m.contract.num;
-        const caseLabel = { A: '組んだら', B: '逆組み', C: '通常' }[r.case];
-        if (!r.achievable) {
-          raisedNotice = '副官判明（' + caseLabel + '）。20枚でも逆転不可能（不可）です。';
-        } else if (r.minBid > oldBid) {
-          m.contract.num = r.minBid;
-          raisedNotice = '副官判明（' + caseLabel + '）。立ちを ' + oldBid + '枚 → ' + r.minBid + '枚 に引き上げました。';
-        } else {
-          raisedNotice = '副官判明（' + caseLabel + '）。立ち ' + oldBid + '枚は最低条件を満たしています。';
-        }
+        const oldBid = m.contract.num, caseLabel = { A: '組んだら', B: '逆組み', C: '通常' }[r.case];
+        if (!r.achievable) raisedNotice = '副官判明（' + caseLabel + '）。20枚でも逆転不可能（不可）です。';
+        else if (r.minBid > oldBid) { m.contract.num = r.minBid; raisedNotice = '副官判明（' + caseLabel + '）。立ちを ' + oldBid + '枚 → ' + r.minBid + '枚 に引き上げました。'; }
+        else raisedNotice = '副官判明（' + caseLabel + '）。立ち ' + oldBid + '枚は最低条件を満たしています。';
       }
     }
   }
   if (previous && m.contract.revealedCall) { const team = x => x === m.contract.nap || x === m.contract.deputy ? "nap" : "alliance"; if (team(seat) === team(previous.seat) && winningEntry(m.contract, m.trickNo, m.trick).seat === seat) m.roundArt[seat]--; }
   const revealNotice = m.contract.solo ? "ひとり立ちが判明しました。" : "副官が判明しました。";
   m.humanAutoPlayAt = null;
-  m.botThinkAt = null; // ★ COMの思考タイマーをリセット
+  m.botThinkAt = null;
   if (m.trick.length < 5) { m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000; m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。"); publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
   const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat, taken = m.trick.filter(x => ["10", "J", "Q", "K", "A"].includes(x.card.rank)).map(x => x.card);
   for (const entry of m.trick) { if (!entry.feedOpportunity) continue; const stat = m.matchStats[entry.seat]; stat.allyFeedAttempts++; if (entry.feedCard && teamOf(w) === teamOf(entry.seat)) { stat.allyFeedSuccesses++; m.roundFeed[entry.seat]++; m.roundArt[entry.seat]++; } }
@@ -730,36 +685,20 @@ function playCard(m, seat, id, room, env) {
   const alliancePoints = alliancePointsRaw + (m.allianceKittyPoints || 0);
   const napPoints = m.seats.reduce((n, p, i) => n + (i === m.contract.nap || !m.contract.solo && i === m.contract.deputy ? p.points : 0), 0);
   m.earlyFinish = alliancePoints > 20 - m.contract.num || napPoints >= m.contract.num && (m.contract.num === 20 || alliancePoints >= 1);
-  const isFinalTrick = m.trickNo >= 9;
-  const willFinish = m.earlyFinish || isFinalTrick;
+  const isFinalTrick = m.trickNo >= 9, willFinish = m.earlyFinish || isFinalTrick;
   m.notice = raisedNotice || (napPoints >= m.contract.num ? "ナポレオン軍が立ちを達成しました。" : m.earlyFinish ? "連合軍の獲得得点札で立ちが成立不能になりました。" : reveal ? revealNotice : m.seats[w].player.username + "が場札を取りました。");
-  if (willFinish) {
-    m.notice = (isFinalTrick ? '最終トリック' : '決着トリック') + '勝者: ' + m.seats[w].player.username;
-  }
+  if (willFinish) m.notice = (isFinalTrick ? '最終トリック' : '決着トリック') + '勝者: ' + (m.seats[w].originalPlayerName || m.seats[w].player.username);
   m.phase = "trick-end"; m.deadline = willFinish ? Date.now() + 2200 : Date.now() + 1250; publish(m, room);
 }
 
 function botAuctionBid(m, seat, room) {
   m.botLevel = 3; const a = m.auction, version = a.version;
   if (a.botSeen[seat] >= version || !a.active.includes(seat)) return;
-  a.botSeen[seat] = version;
-  m.botThinkAt = 0;
-
-  if (a.high.player === seat) {
-    if (a.active.length === 1) auctionDone(m, seat, room);
-    return;
-  }
-
-  const h = m.seats[seat].hand;
-  const params = m.botStrategy || defaultStrategy();
-  const currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
+  a.botSeen[seat] = version; m.botThinkAt = 0;
+  if (a.high.player === seat) { if (a.active.length === 1) auctionDone(m, seat, room); return; }
+  const h = m.seats[seat].hand, params = m.botStrategy || defaultStrategy(), currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
   const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null);
-  if (bid && validBid(m, bid.num, bid.suit)) {
-    a.botBids[seat]++;
-    doBid(m, seat, bid.num, bid.suit, room, bid.solo === true);
-    if (m.phase === "auction") a.botAt[seat] = Date.now() + 2500 + Math.random() * 1800;
-    return;
-  }
+  if (bid && validBid(m, bid.num, bid.suit)) { a.botBids[seat]++; doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); if (m.phase === "auction") a.botAt[seat] = Date.now() + 2500 + Math.random() * 1800; return; }
   if (a.high.player === seat) { if (a.active.length === 1) doApprove(m, seat, room); return; }
   doApprove(m, seat, room);
 }
@@ -768,19 +707,14 @@ function botAction(m, room) {
   if (!m || m.phase === "result") return;
   m.botLevel = 3; const i = m.active, p = m.seats[i];
   if (!p?.bot) return;
-  m.lastBot = Date.now();
-  m.botThinkAt = 0;
-  const params = m.botStrategy || defaultStrategy();
-  const experience = m.botExperience || null;
+  m.lastBot = Date.now(); m.botThinkAt = 0;
+  const params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null;
   if (m.phase === "auction") { botAuctionBid(m, i, room); return; }
   if (m.phase === "call") {
     if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; }
     const forceSolo = isSoloForcedInMatch(m);
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
-    else {
-      const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience);
-      if (x) callCard(m, i, x.suit, x.rank, room);
-    }
+    else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); }
     return;
   }
   if (m.phase === "discard") { const drop = chooseDiscard(p.hand, m.contract.suit).map(x => x.id); discardCards(m, i, drop, room); return; }
@@ -788,16 +722,7 @@ function botAction(m, room) {
     const legal = legalCards(m, i);
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
     const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
-    const ctx = {
-      hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
-      playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
-      discardedKitty: m.discardedKitty || [],
-      isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy),
-      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
-      isRevealed: m.contract.revealedCall, isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
-      lastSeat: m.trick.length === 4, params, call: m.contract.call, currentNapPoints,
-      experience
-    };
+    const ctx = { hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract, playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy, discardedKitty: m.discardedKitty || [], isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy), isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false, isRevealed: m.contract.revealedCall, isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap, lastSeat: m.trick.length === 4, params, call: m.contract.call, currentNapPoints, experience };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
     else c = chooseCardToPlay(ctx);
@@ -806,33 +731,25 @@ function botAction(m, room) {
   }
 }
 function nextRound(m, room) { if (m.phase !== "round-result") return; m.round++; m.mult = 1; m.redraws = 0; deal(m); publish(m, room); }
-async function processAction(conn, msg, room, env) { 
-  const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return; 
-  const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return; 
-  const a = msg.action || {}; 
-  if (a.type === "appeal") return answerAppealOffer(m, seat, true, room); 
-  if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room); 
-  if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room); 
-  if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room); 
-  if (a.type === "next-round") return nextRound(m, room); 
-  if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; } 
-  
-  if (a.type === "confirm-call") { 
-    if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; 
-    m.contract.ready[seat] = true; 
-    if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); 
-    else { m.notice = "指名カードの確認中です。"; publish(m, room); } 
-    return; 
-  } 
-  
-  if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room); 
-  else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true); 
-  else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room); 
-  else if (a.type === "discard") discardCards(m, seat, a.cards, room); 
-  else if (a.type === "play") playCard(m, seat, a.card, room, env); 
+async function processAction(conn, msg, room, env) {
+  const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return;
+  const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
+  const a = msg.action || {};
+  if (a.type === "appeal") return answerAppealOffer(m, seat, true, room);
+  if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room);
+  if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room);
+  if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room);
+  if (a.type === "next-round") return nextRound(m, room);
+  if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
+  if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
+  if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room);
+  else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true);
+  else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room);
+  else if (a.type === "discard") discardCards(m, seat, a.cards, room);
+  else if (a.type === "play") playCard(m, seat, a.card, room, env);
 }
 async function saveEnd(m, room, env) { await finish(m, room, env); }
-function timeoutAction(m, room) { const i = m.active, p = m.seats[i]; const params = m.botStrategy || defaultStrategy(); const experience = m.botExperience || null; if (m.phase === "call") { if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; } const forceSolo = isSoloForcedInMatch(m); if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); } else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); } } else if (m.phase === "discard") { const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id); discardCards(m, i, ids, room); } else if (m.phase === "play") { const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (c) playCard(m, i, c.id, room, null); } }
+function timeoutAction(m, room) { const i = m.active, p = m.seats[i], params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null; if (m.phase === "call") { if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; } const forceSolo = isSoloForcedInMatch(m); if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); } else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); } } else if (m.phase === "discard") { const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id); discardCards(m, i, ids, room); } else if (m.phase === "play") { const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (c) playCard(m, i, c.id, room, null); } }
 
 export const room = {
   tickMs: 500,
@@ -859,17 +776,16 @@ export const room = {
           if (m.phase === "result") continue;
           for (let i = 0; i < m.seats.length; i++) {
             const s = m.seats[i];
-            if (s.originalUserId === userId && s.bot === true && s.connId === null) {
-              foundMatch = m; foundSeat = i; break;
-            }
+            if (s.originalUserId === userId && s.bot === true && s.connId === null) { foundMatch = m; foundSeat = i; break; }
           }
           if (foundMatch) break;
         }
         if (!foundMatch) { sendSafe(conn, { type: "reconnect-failed" }); return; }
         const seat = foundMatch.seats[foundSeat];
-        if (connMatch.has(conn.id) && connMatch.get(conn.id) !== foundMatch.id) { connMatch.delete(conn.id); }
+        if (connMatch.has(conn.id) && connMatch.get(conn.id) !== foundMatch.id) connMatch.delete(conn.id);
         seat.connId = conn.id;
         seat.bot = false;
+        seat.abandoned = false; // ★復帰で放棄取消
         seat.player.username = seat.originalPlayerName || "player";
         seat.player.playerId = seat.originalPlayerId || "player";
         if (foundMatch.kind === "ranked") seat.player.userId = userId;
@@ -885,89 +801,114 @@ export const room = {
     if (msg.type === "join") {
       if (msg.sessionToken) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(msg.sessionToken, Date.now()).first(); if (sess) conn.authUserId = sess.user_id; }
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
-      
-      let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
-      if (mode === "friend") {
-        if (!entryCode) entryCode = makeCode();
-        let l = friendRooms.get(entryCode);
-        if (!l) {
-          l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; 
-          friendRooms.set(entryCode, l);
-        }
+      const browserId = (typeof msg.browserId === "string" && msg.browserId) ? msg.browserId.slice(0, 64) : null;
+
+      if (mode === "ranked") {
+        if (!conn.authUserId) { sendSafe(conn, { type: "room-error", message: "レートバトルはプレイヤー登録（ログイン）が必要です" }); return; }
+        if (rankedUsers.has(conn.authUserId)) { sendSafe(conn, { type: "room-error", message: "このアカウントはすでに待機中または対戦中です" }); return; }
+        if (connMatch.has(conn.id)) { sendSafe(conn, { type: "room-error", message: "既に対戦中です" }); return; }
+        if (browserId && queues.ranked.some(x => x.browserId === browserId)) { sendSafe(conn, { type: "room-error", message: "同じブラウザから複数のタブで待機することはできません" }); return; }
+        let player;
+        try { player = await getProfile(env, conn); }
+        catch (error) { sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
+        if (!conns.has(conn.id)) return;
+        const entry = { id: conn.id, player, conn, joined: Date.now(), browserId };
+        if (msg.playerId) { entry.player.username = String(msg.playerId); entry.player.playerId = String(msg.playerId); }
+        rankedUsers.set(conn.authUserId, conn.id);
+        queues.ranked.push(entry);
+        queues.ranked.sort((a, b) => a.joined - b.joined);
+        broadcastQueueStatus();
+        return;
       }
 
-      if (mode === "ranked" && conn.authUserId && rankedUsers.has(conn.authUserId)) { sendSafe(conn, { type: "room-error", message: "このアカウントはすでに待機中または対戦中です" }); return; }
-      if (mode === "ranked" && conn.authUserId) rankedUsers.set(conn.authUserId, conn.id);
-      if (connMatch.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
-      
-      let player; try { player = await getProfile(env, conn); } catch (error) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
-      if (!conns.has(conn.id)) { if (mode === "ranked" && conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); return; }
-      
-      const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, bots: 0, botLevel: 3 };
-      if (msg.playerId) {
-        entry.player.username = String(msg.playerId);
-        entry.player.playerId = String(msg.playerId);
-      }
-      
-      if (mode === "ranked") { queues.ranked.push(entry); queues.ranked.sort((a, b) => a.joined - b.joined); sendSafe(conn, { type: "lobby", text: "対戦相手を検索中 · " + queues.ranked.length + "/5人" }); if (queues.ranked.length >= 5) beginMatch("ranked", "", queues.ranked.splice(0, 5), room, env); return; }
-      
-      let l = friendRooms.get(entry.code);
-      if (!l) l = { code: entry.code, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 };
-      
-      if (l.players.some(x => x.id === conn.id || player.userId && x.player.userId === player.userId)) { sendSafe(conn, { type: "room-error", message: "このプレイヤーはすでに部屋にいます" }); return; }
+      // friend
+      if (connMatch.has(conn.id)) { sendSafe(conn, { type: "room-error", message: "既に対戦中です" }); return; }
+      let entryCode = String(msg.code || "").toUpperCase().slice(0, 8);
+      if (!entryCode) entryCode = makeCode();
+      let l = friendRooms.get(entryCode);
+      if (!l) { l = { code: entryCode, host: conn.id, players: [], created: Date.now(), timeoutAt: Date.now() + 300000 }; friendRooms.set(entryCode, l); }
+      let player; try { player = await getProfile(env, conn); } catch (error) { sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
+      if (!conns.has(conn.id)) return;
+      if (l.players.some(x => x.id === conn.id || (player.userId && x.player.userId === player.userId))) { sendSafe(conn, { type: "room-error", message: "このプレイヤーはすでに部屋にいます" }); return; }
+      if (browserId && l.players.some(x => x.browserId === browserId)) { sendSafe(conn, { type: "room-error", message: "同じブラウザから複数のタブで同じ部屋に参加することはできません" }); return; }
       if (l.players.length >= 5) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
-      
+      const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, browserId };
+      if (msg.playerId) { entry.player.username = String(msg.playerId); entry.player.playerId = String(msg.playerId); }
       l.players.push(entry);
-      
       l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
-      
-      if (l.players.length >= 5) {
-        friendRooms.delete(l.code);
-        beginMatch("friend", l.code, l.players, room, env);
-      }
+      if (l.players.length >= 5) { friendRooms.delete(l.code); beginMatch("friend", l.code, l.players, room, env); }
       return;
     }
 
     if (msg.type === "start-now") {
       let roomCode = null;
-      for (const [code, l] of friendRooms) {
-        if (l.host === conn.id) { roomCode = code; break; }
-      }
-      if (roomCode) {
-        const l = friendRooms.get(roomCode);
-        friendRooms.delete(roomCode);
-        beginMatch("friend", l.code, l.players, room, env);
-      }
+      for (const [code, l] of friendRooms) if (l.host === conn.id) { roomCode = code; break; }
+      if (roomCode) { const l = friendRooms.get(roomCode); friendRooms.delete(roomCode); beginMatch("friend", l.code, l.players, room, env); }
       return;
     }
 
     if (msg.type === "leave-room") {
       for (const [c, l] of friendRooms) {
         l.players = l.players.filter(x => x.id !== conn.id);
-        if (!l.players.length) friendRooms.delete(c);
-        else l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
+        if (!l.players.length) { friendRooms.delete(c); continue; }
+        if (l.host === conn.id) l.host = l.players[0].id; // ★ホスト繰越
+        l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       }
       return;
     }
 
-    if (msg.type === "cancel-queue") { const queueIndex = queues.ranked.findIndex(x => x.id === conn.id); if (queueIndex >= 0) { queues.ranked.splice(queueIndex, 1); if (conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId); } sendSafe(conn, { type: "queue-cancelled" }); return; }
+    if (msg.type === "cancel-queue") {
+      const queueIndex = queues.ranked.findIndex(x => x.id === conn.id);
+      if (queueIndex >= 0) {
+        queues.ranked.splice(queueIndex, 1);
+        if (conn.authUserId && rankedUsers.get(conn.authUserId) === conn.id) rankedUsers.delete(conn.authUserId);
+      }
+      sendSafe(conn, { type: "queue-cancelled" });
+      broadcastQueueStatus();
+      return;
+    }
     if (msg.type === "game") return processAction(conn, msg, room, env);
   },
   async onTick(room, env) {
     const now = Date.now(), rankedQueue = queues.ranked;
-    
+
     for (const [code, l] of friendRooms) {
       if (now >= l.timeoutAt) {
         friendRooms.delete(code);
-        if (l.players.length > 0) {
-          beginMatch("friend", l.code, l.players, room, env);
-        }
+        if (l.players.length > 0) beginMatch("friend", l.code, l.players, room, env);
       }
     }
 
-    if (rankedQueue.length && now - rankedQueue[rankedQueue.length - 1].joined >= 90000) { const group = rankedQueue.splice(0, Math.min(4, rankedQueue.length)); beginMatch("ranked", "", group, room, env); }
+    // ★ランクキュー: 5人純真人・重複ブラウザ排除
+    if (rankedQueue.length >= 5) {
+      const live = rankedQueue.filter(x => conns.has(x.id) && x.player.userId);
+      const seenUsers = new Set(), seenBrowsers = new Set(), dedup = [];
+      for (const x of live) {
+        if (seenUsers.has(x.player.userId)) continue;
+        if (x.browserId && seenBrowsers.has(x.browserId)) continue;
+        seenUsers.add(x.player.userId);
+        if (x.browserId) seenBrowsers.add(x.browserId);
+        dedup.push(x);
+      }
+      queues.ranked = dedup;
+      if (dedup.length >= 5) {
+        const group = queues.ranked.splice(0, 5);
+        beginMatch("ranked", "", group, room, env);
+        broadcastQueueStatus();
+      }
+    }
+
     for (const [c, l] of friendRooms) if (now - l.created > 900000) friendRooms.delete(c);
+
+    // ゾンビマッチ強制終了（3時間超）
+    for (const [id, m] of matches) {
+      if (now - m.created > 3 * 60 * 60 * 1000) {
+        matches.delete(id);
+        for (const s of m.seats) { if (s.originalUserId) rankedUsers.delete(s.originalUserId); if (s.connId) connMatch.delete(s.connId); }
+      }
+    }
+
     for (const m of matches.values()) {
       if (m.phase === "prep" && now >= m.deadline) {
         const rule = m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null;
@@ -981,21 +922,13 @@ export const room = {
       else if (m.phase === "auction") {
         for (const seat of m.auction.active.slice()) { if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true); if (m.phase !== "auction") break; }
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) { if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room); }
-      } else if (m.phase === "call-reveal") { 
-        if (now >= m.deadline) startPlay(m, room); 
-      }
+      } else if (m.phase === "call-reveal") { if (now >= m.deadline) startPlay(m, room); }
       else if (m.phase === "call" || m.phase === "discard") {
-        if (m.seats[m.active]?.bot) {
-          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; 
-          if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
-        }
+        if (m.seats[m.active]?.bot) { if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); } }
         else if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
       } else if (m.phase === "play") {
         const activeSeat = m.active;
-        if (m.seats[activeSeat]?.bot) {
-          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; 
-          if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
-        }
+        if (m.seats[activeSeat]?.bot) { if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); } }
         else {
           const legal = legalCards(m, activeSeat);
           if (legal.length === 1) {
@@ -1018,10 +951,16 @@ export const room = {
   async onClose(conn, room) {
     const id = connMatch.get(conn.id);
     conns.delete(conn.id);
-    queues.ranked.splice(0, queues.ranked.length, ...queues.ranked.filter(x => x.id !== conn.id));
+    queues.ranked = queues.ranked.filter(x => x.id !== conn.id);
     const uid = conn.authUserId || conn.userId;
-    if (uid && rankedUsers.get(uid) === conn.id) rankedUsers.delete(uid);
-    for (const [c, l] of friendRooms) { l.players = l.players.filter(x => x.id !== conn.id); if (!l.players.length) friendRooms.delete(c); }
+    // キュー待機中のみ削除（試合中は finish() まで残す）
+    if (!id && uid && rankedUsers.get(uid) === conn.id) rankedUsers.delete(uid);
+    for (const [c, l] of friendRooms) {
+      l.players = l.players.filter(x => x.id !== conn.id);
+      if (!l.players.length) { friendRooms.delete(c); continue; }
+      if (l.host === conn.id) l.host = l.players[0].id;
+      l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
+    }
     connMatch.delete(conn.id);
     if (id) {
       const m = matches.get(id);
@@ -1033,14 +972,16 @@ export const room = {
           if (!s.originalPlayerId) s.originalPlayerId = s.player.playerId;
           s.disconnectedAt = Date.now();
           s.bot = true;
+          s.abandoned = true;   // ★放棄フラグ（復帰で false）
           s.connId = null;
           s.player.username = "COM";
           s.player.playerId = "COM";
-          if (m.kind === "ranked") s.player.userId = null;
+          if (m.phase !== "result") m.notice = (s.originalPlayerName || "プレイヤー") + "が切断しました。COM操作になります。";
         }
         publish(m, room);
       }
     }
+    broadcastQueueStatus();
     const presence = { type: "presence", count: conns.size };
     room.broadcast(presence);
   }
