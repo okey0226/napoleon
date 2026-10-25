@@ -1378,6 +1378,32 @@ async function records(){
     const infiniteFood = d.infinite_food || '';
     const favoriteStanding = d.favorite_standing || '';
 
+    // レート遷移の計算
+    const hist = (d.history || []).slice(0, 10).reverse();
+    const ratings = hist.map(h => h.rating_after);
+    const minR = Math.min(...ratings, d.rating);
+    const maxR = Math.max(...ratings, d.rating);
+    const range = Math.max(1, maxR - minR);
+    const rateBarsHTML = hist.map(h => {
+      const hPercent = 10 + ((h.rating_after - minR) / range) * 90;
+      const isUp = h.delta >= 0;
+      return `<div class="rate-bar-container">
+        <div class="rate-bar ${isUp ? 'positive' : 'negative'}" style="height: ${hPercent}%"></div>
+        <div class="rate-label">${h.delta > 0 ? '+' : ''}${h.delta}</div>
+      </div>`;
+    }).join('');
+
+    // 順位率割合の計算
+    const rankDistHTML = [1,2,3,4,5].map(r => {
+      const count = [0,r1,r2,r3,r4,r5][r];
+      const rate = totalRanks ? count / totalRanks : 0;
+      return `<div class="rank-dist-row">
+        <div class="rank-dist-label">${r}位</div>
+        <div class="rank-dist-bar-bg"><div class="rank-dist-bar" style="width: ${rate * 100}%"></div></div>
+        <div class="rank-dist-val">${pct(rate)} (${count})</div>
+      </div>`;
+    }).join('');
+
     rc.innerHTML=`
       <div class="mypage-head"><div class="profile-emblem large">♠</div><div class="mypage-identity"><div class="eyebrow">PLAYER CARD</div><h2>${escapeHTML(d.id)}</h2></div><div class="mypage-rating"><span>RATE</span><strong>${d.rating}</strong></div></div>
       <div class="record-stats"><div class="record-stat"><span>MATCHES</span><b>${d.games}</b></div><div class="record-stat"><span>WINS</span><b>${d.wins}</b></div><div class="record-stat"><span>LOSSES</span><b>${d.losses}</b></div></div>
@@ -1430,11 +1456,16 @@ async function records(){
         <article class="performance-card"><span>平均宣言数</span><strong>${avgBid>0?avgBid.toFixed(1)+'枚':'—'}</strong><small>${napAtt>0?napAtt+'回の立ち':'実績なし'}</small></article>
         <article class="performance-card"><span>ナポレオン率</span><strong>${matchCount>0?pct(napRatio):'—'}</strong><small>${matchCount>0?(matchCount*10)+'局中'+napAtt+'回':'実績なし'}</small></article>
       </div></section>
-      <section class="role-skill-section"><h3 class="section-title">役割別実力</h3><div class="role-skill-grid">
-        <article class="role-skill role-nap"><div class="role-skill-head"><div class="role-emblem">♠</div><div class="role-title"><span class="eyebrow">NAPOLEON</span><div class="role-score">${scoreText(napScore)}${scoreUnit(napScore)}</div></div></div><div class="skill-bar"><div style="width:${barW(napScore)}%"></div></div><div class="skill-rows"><div><span>立ち成功率</span><b>${napAtt>0?pct(napWinRate):'—'}</b></div><div><span>EXACT率</span><b>${exactAtt>0?pct(exactRate):'—'}</b></div><div><span>BOLD成功率</span><b>${boldAtt>0?pct(boldRate):'—'}</b></div><div><span>SOLO成功率</span><b>${soloAtt>0?pct(soloRate):'—'}</b></div></div></article>
-        <article class="role-skill role-dep"><div class="role-skill-head"><div class="role-emblem">♣</div><div class="role-title"><span class="eyebrow">DEPUTY</span><div class="role-score">${scoreText(depScore)}${scoreUnit(depScore)}</div></div></div><div class="skill-bar"><div style="width:${barW(depScore)}%"></div></div><div class="skill-rows"><div><span>副官成功率</span><b>${depAtt>0?pct(depWinRate):'—'}</b></div><div><span>絵札回し成功率</span><b>${feedAtt>0?pct(feedRate):'—'}</b></div><div><span>副官経験</span><b>${depAtt>0?depAtt+'回':'—'}</b></div></div></article>
-        <article class="role-skill role-all"><div class="role-skill-head"><div class="role-emblem">♥</div><div class="role-title"><span class="eyebrow">ALLIANCE</span><div class="role-score">${scoreText(allScore)}${scoreUnit(allScore)}</div></div></div><div class="skill-bar"><div style="width:${barW(allScore)}%"></div></div><div class="skill-rows"><div><span>平均順位</span><b>${totalRanks>0?avgRank.toFixed(2)+'位':'—'}</b></div><div><span>1位率</span><b>${totalRanks>0?pct(r1/totalRanks):'—'}</b></div><div><span>4〜5位率</span><b>${totalRanks>0?pct((r4+r5)/totalRanks):'—'}</b></div><div><span>アート成功率</span><b>${artAtt>0?pct(artRate):'—'}</b></div></div></article>
-      </div></section>
+
+      <section class="rate-history-section">
+        <h3 class="section-title">レート遷移（直近10試合）</h3>
+        ${hist.length ? `<div class="rate-history-list">${rateBarsHTML}</div>` : '<p class="subcopy" style="padding:10px 0;">データなし</p>'}
+      </section>
+
+      <section class="rank-distribution-section">
+        <h3 class="section-title">順位率割合</h3>
+        ${totalRanks > 0 ? `<div class="rank-dist-list">${rankDistHTML}</div>` : '<p class="subcopy" style="padding:10px 0;">データなし</p>'}
+      </section>
     `;
 
     const editBtn = $('edit-dorm-btn');
