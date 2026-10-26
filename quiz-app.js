@@ -162,7 +162,7 @@ function renderGameReplica(q, fallbackId = '') {
   const points = q.scenario?.points || [0,0,0,0,0];
   const taken = q.scenario?.taken || [[],[],[],[],[]];
 
-  // 切り札カウンター
+  // 切り札カウンター（NTの時は非表示）
   let trumpInfoHTML = '';
   if (contract && contract.suit && contract.suit !== 'NT') {
     const trumpSuit = contract.suit;
