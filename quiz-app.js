@@ -99,7 +99,8 @@ function renderProgress(p) {
 async function loadQuestion(id) {
   renderLoading();
   try {
-    const res = await authFetch('/api/quiz/q/' + encodeURIComponent(id));
+    // ★ キャッシュ破棄のためタイムスタンプを付与
+    const res = await authFetch('/api/quiz/q/' + encodeURIComponent(id) + '?t=' + Date.now());
     const text = await res.text();
     let data;
     try {
@@ -140,13 +141,27 @@ function renderGameReplica(q, fallbackId = '') {
 
   const mySeat = getMySeat(q);
   const turnIndex = q.scenario?.trick?.length ?? 0;
-  
-  // ★ 自分を常に一番下(pos-0)にする
   const disp = actual => (actual - mySeat + 5) % 5;
   
   const contract = q.scenario?.contract;
   const points = q.scenario?.points || [0,0,0,0,0];
   const taken = q.scenario?.taken || [[],[],[],[],[]];
+
+  // ★ 切り札カウンター
+  let trumpInfoHTML = '';
+  if (contract && contract.suit && contract.suit !== 'NT') {
+    const trumpSuit = contract.suit;
+    const playedTrumps = (q.scenario.playedCards || []).filter(c => c.suit === trumpSuit).length;
+    const myTrumps = (q.scenario.hand || []).filter(id => id[0] === trumpSuit).length;
+    const remainingTrumps = Math.max(0, 13 - playedTrumps - myTrumps);
+    trumpInfoHTML = `
+      <div class="trump-counter" style="display:flex;justify-content:center;align-items:center;gap:12px;margin:4px auto;padding:4px 12px;border:1px solid rgba(225,188,112,.25);border-radius:8px;background:rgba(0,0,0,.4);font-size:11px;color:#dce8df;width:fit-content;">
+        <span style="font-size:16px;font-weight:800;color:var(--gold);">${trumpSuit}</span>
+        <span>場: <b style="color:#f3d48e;font-size:13px;">${playedTrumps}</b></span>
+        <span>自: <b style="color:#f3d48e;font-size:13px;">${myTrumps}</b></span>
+        <span>残: <b style="color:#f3d48e;font-size:13px;">${remainingTrumps}</b></span>
+      </div>`;
+  }
 
   let messageText = '';
   if (turnIndex === 0) messageText = 'あなたが先攻です。カードを出してください';
@@ -216,6 +231,7 @@ function renderGameReplica(q, fallbackId = '') {
         <div class="phase-label">${CATEGORY_PHASE[category]}</div>
       </div>
       ${contractInfoHTML}
+      ${trumpInfoHTML}
       <div class="table-message">${escapeHTML(messageText)}</div>
       <div class="table-area">
         <div class="players-ring">${seatEls.join('')}</div>
@@ -249,7 +265,20 @@ function renderQuestionPanel(q, mySeat) {
   const isReveal = q.reveal;
   const nextBtn = `<button class="primary-button quiz-next-btn" id="quiz-next">次の問題へ →</button>`;
 
-  const opts = (q.options || []).map(o => {
+  let displayIndices = [];
+  if (isReveal && q.stats) {
+    const sortedStats = [...q.stats].sort((a, b) => b.count - a.count);
+    displayIndices = sortedStats.slice(0, 3).map(s => s.index);
+    if (q.myAnswer !== null && q.myAnswer !== undefined && !displayIndices.includes(q.myAnswer)) {
+      displayIndices.push(q.myAnswer);
+    }
+  } else {
+    displayIndices = (q.options || []).map(o => o.index);
+  }
+
+  const opts = displayIndices.map(idx => {
+    const o = q.options.find(opt => opt.index === idx);
+    if (!o) return '';
     const id = o.value || o.label;
     const isAI = isReveal && q.aiAnswerIndex === o.index;
     const isMine = q.myAnswer === o.index;
@@ -263,6 +292,7 @@ function renderQuestionPanel(q, mySeat) {
       ${isMine ? '<span class="quiz-card-tag-mine">あなた</span>' : ''}
     </button>`;
   }).join('');
+  
   return `<div class="quiz-panel-title">出すカードを選んでください（手札のハイライトからもOK）</div>
     <div class="quiz-play-grid">${opts}</div>
     ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>${nextBtn}` : ''}`;
