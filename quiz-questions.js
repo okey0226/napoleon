@@ -51,7 +51,6 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// 1試合をシミュレートし、自分の手番のスナップショットをすべて記録して返す
 function simulateOnePlayScenario(rng) {
   const deck = shuffleWithRng(buildDeck(), rng);
   const hands = [];
@@ -76,10 +75,12 @@ function simulateOnePlayScenario(rng) {
   const seatPoints = [0, 0, 0, 0, 0];
   const seatTaken = [[], [], [], [], []];
   
+  const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
+  
   const mySeat = 0;
   let active = nap;
   let trickNo = 0;
-  const snapshots = [];
+  const allSnaps = [];
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -89,14 +90,13 @@ function simulateOnePlayScenario(rng) {
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       
-      // 自分の手番の時、スナップショットを撮る
       if (seat === mySeat) {
-        snapshots.push({
+        allSnaps.push({
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
           trickNo,
-          turnIndex: trick.length, // 0=リード, 1=2人目, 2=3人目, 3=4人目, 4=最後
+          turnIndex: trick.length,
           playedCards: playedCards.slice(),
           voids: JSON.parse(JSON.stringify(voids)),
           seat: mySeat, 
@@ -122,24 +122,45 @@ function simulateOnePlayScenario(rng) {
     seatPoints[w.seat] += taken.length;
     seatTaken[w.seat].push(...taken.map(c => c.id));
     
+    // 早期終了判定
+    const napPts = seatPoints[nap] + (solo ? 0 : seatPoints[deputy]);
+    const allyPtsRaw = seatPoints.reduce((n, p, i) => n + (i !== nap && (solo || i !== deputy) ? p : 0), 0);
+    const allyPts = allyPtsRaw + kittyPoints;
+    
+    if (napPts >= num && (num === 20 || allyPts >= 1)) {
+      break;
+    }
+    if (allyPts > 20 - num) {
+      break;
+    }
+    
     active = w.seat; 
     trickNo++;
   }
-  return snapshots;
+  return allSnaps;
 }
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
-  // 問題番号に応じて 0(リード) 〜 4(最後) の手番をローテーションして指定
-  const desiredTurnIndex = idx % 5;
   
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const snapshots = simulateOnePlayScenario(rng);
-    // 狙った手番のスナップショットだけを抽出
-    const validSnaps = snapshots.filter(s => s.turnIndex === desiredTurnIndex);
+  const desiredTurnIndex = idx % 5;
+  const desiredTrick = Math.floor(idx / 5) % 10;
+  
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const allSnaps = simulateOnePlayScenario(rng);
+    
+    let validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && s.trickNo === desiredTrick);
+    
+    if (!validSnaps.length) {
+      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && Math.abs(s.trickNo - desiredTrick) <= 2);
+    }
+    
+    if (!validSnaps.length) {
+      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex);
+    }
+    
     if (!validSnaps.length) continue;
     
-    // 複数ある場合はランダムに1つ選ぶ
     const cap = validSnaps[Math.floor(rng() * validSnaps.length)];
 
     const hand = cap.hand.map(cardFromId);
@@ -175,6 +196,7 @@ function genPlayQuestion(rng, idx) {
       explanation: `AIは ${aiChoice.id} を選択。`
     };
   }
+  
   return null;
 }
 
