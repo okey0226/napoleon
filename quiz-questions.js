@@ -59,6 +59,7 @@ function simulateUntilTarget(rng, targetTurn, targetTrick) {
   const kitty = deck.splice(0, 2);
   const params = defaultStrategy();
   const nap = Math.floor(rng() * 5);
+  // ★ ノートランプ(NT)を復活
   const suit = SUITS.concat(['NT'])[Math.floor(rng() * 5)];
   const num = 13 + Math.floor(rng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
@@ -89,22 +90,23 @@ function simulateUntilTarget(rng, targetTurn, targetTrick) {
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       
-      // ★ 狙った手番とトリックが来たら即座にスナップショットを返す
       if (seat === mySeat && trick.length === targetTurn && trickNo === targetTrick) {
-        return {
-          contract: JSON.parse(JSON.stringify(contract)),
-          hand: hand.map(c => c.id),
-          trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
-          trickNo,
-          turnIndex: trick.length,
-          playedCards: playedCards.slice(),
-          voids: JSON.parse(JSON.stringify(voids)),
-          seat: mySeat, 
-          call: { suit: call.suit, rank: call.rank, id: call.id },
-          discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
-          points: seatPoints.slice(),
-          taken: seatTaken.map(arr => arr.slice())
-        };
+        if (legal.length >= 2) {
+          return {
+            contract: JSON.parse(JSON.stringify(contract)),
+            hand: hand.map(c => c.id),
+            trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
+            trickNo,
+            turnIndex: trick.length,
+            playedCards: playedCards.slice(),
+            voids: JSON.parse(JSON.stringify(voids)),
+            seat: mySeat, 
+            call: { suit: call.suit, rank: call.rank, id: call.id },
+            discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
+            points: seatPoints.slice(),
+            taken: seatTaken.map(arr => arr.slice())
+          };
+        }
       }
       
       const ctx = { hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy, discardedKitty: discarded, isRevealed: contract.revealedCall, params, call, currentNapPoints: 0, experience: null };
@@ -126,28 +128,27 @@ function simulateUntilTarget(rng, targetTurn, targetTrick) {
     const allyPtsRaw = seatPoints.reduce((n, p, i) => n + (i !== nap && (solo || i !== deputy) ? p : 0), 0);
     const allyPts = allyPtsRaw + kittyPoints;
     
-    // 早期終了したら、以降のトリックは存在しない
     if (napPts >= num && (num === 20 || allyPts >= 1)) break;
     if (allyPts > 20 - num) break;
     
     active = w.seat; 
     trickNo++;
   }
-  return null; // 指定条件の局面が見つからなかった
+  return null;
 }
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
   
-  // 問題番号(idx)から、狙う手番(0-4)とトリック(0-9)を決定
-  let desiredTurnIndex = idx % 5;
-  let desiredTrick = Math.floor(idx / 5) % 10;
+  // 問題番号(idx)から、狙う手番(0-4)を固定
+  const desiredTurnIndex = idx % 5;
   
-  for (let attempt = 0; attempt < 50; attempt++) {
-    // 試行が進むにつれて、ターゲットをずらす（どうしても見つからない場合のフォールバック）
-    const targetTurn = (desiredTurnIndex + attempt) % 5;
-    const targetTrick = (desiredTrick + Math.floor(attempt / 5)) % 10;
+  // トリックを0〜9までずらして、必ず見つかるまで探す
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const targetTurn = desiredTurnIndex;
+    const targetTrick = attempt % 10;
     
+    // シードを固定してシミュレーション
     const localRng = mulberry32(idx * 999 + attempt * 111);
     const cap = simulateUntilTarget(localRng, targetTurn, targetTrick);
     if (!cap) continue;
@@ -156,7 +157,6 @@ function genPlayQuestion(rng, idx) {
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
     const led = trick[0]?.card.suit;
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
-    if (legal.length < 2) continue;
     
     const ctx = { hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract, playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat, deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall, params, call: cap.contract.call, currentNapPoints: 0, experience: null };
     const aiChoice = chooseCardToPlay(ctx);
