@@ -1570,8 +1570,15 @@ $('start-ranked')?.addEventListener('click', () => online('ranked', '', 0));
 $('profile-open')?.addEventListener('click', () => g.account ? records() : screen('profile-screen'));
 $('show-record')?.addEventListener('click', records);
 $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.leaderboardExpanded; loadLeaderboard(); });
-$('open-quiz')?.addEventListener('click', () => openQuizScreen());
-
+$('open-quiz')?.addEventListener('click', async () => {
+  try {
+    const mod = await import('./quiz-app.js');
+    mod.openQuizScreen();
+  } catch (err) {
+    console.error(err);
+    alert('何切る問題集の読み込みに失敗しました: ' + err.message);
+  }
+});
 const strategyBtn = $('open-strategy-lab');
 if (strategyBtn) strategyBtn.addEventListener('click', () => screen('strategy-screen'));
 
