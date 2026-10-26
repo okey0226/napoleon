@@ -168,6 +168,9 @@ function renderGameReplica(q, fallbackId = '') {
 
   const panelHTML = renderQuestionPanel(q, mySeat);
 
+  // 回答前の play ではパネルを出さない
+  const isPlayAndNotReveal = (category === 'play' && !q.reveal);
+
   shell.innerHTML = `
     <div class="game-screen quiz-game">
       <div class="game-head">
@@ -183,7 +186,7 @@ function renderGameReplica(q, fallbackId = '') {
         <div class="center-table">
           <div class="center-caption">場札</div>
         </div>
-        <div class="quiz-panel">${panelHTML}</div>
+        ${isPlayAndNotReveal ? '' : `<div class="quiz-panel">${panelHTML}</div>`}
       </div>
       <div class="hand-dock">
         <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span></div>
