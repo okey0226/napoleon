@@ -137,7 +137,7 @@ function renderGameReplica(q, fallbackId = '') {
     if (high.num >= 13) {
       if (num === high.num && SV[suit] <= SV[high.suit]) {
         const candidates = ['NT', '♠', '♥', '♦', '♣'];
-        const found = candidates.find(s => SV[s] > SV[high.suit]);
+        const found = candidates.find(s => SV(s) > SV[high.suit]);
         if (found) suit = found;
         else num = Math.min(20, high.num + 1);
       }
@@ -214,14 +214,22 @@ function renderGameReplica(q, fallbackId = '') {
     }).join('');
   }
 
-  let kittyHTML = isBid ? `<span class="open-label">オープン</span>${cardElHTML(null)}${cardElHTML(null)}` : '';
+  // ★オープン2枚は center-table ではなく、画面上部（履歴の下）に独立して表示
+  let openKittyHTML = '';
+  if (isBid) {
+    const openCards = (q.scenario?.kitty || []).map(id => cardElHTML(id));
+    openKittyHTML = `<div class="quiz-open-kitty-wrap">
+      <span class="open-label">オープン</span>
+      <div class="quiz-open-cards">${openCards.join('')}</div>
+    </div>`;
+  }
+
   const handCards = q.scenario?.hand || [];
   const handMode = isDiscard ? 'discard-mode' : '';
   const legalIds = isPlay && !q.reveal ? new Set((q.options || []).map(o => o.value || o.label)) : new Set();
   const handHTML = handCards.map(id => cardElHTML(id, legalIds.has(id) ? 'playable' : '')).join('');
-  const panelHTML = renderQuestionPanel(q, mySeat, category);
 
-  // 立ち履歴をパネルの外（メッセージの下）に配置
+  const panelHTML = renderQuestionPanel(q, mySeat, category);
   const bidHistoryOutside = (isBid && !q.reveal) ? renderBidHistory(q, mySeat) : '';
 
   shell.innerHTML = `
@@ -234,17 +242,17 @@ function renderGameReplica(q, fallbackId = '') {
       ${contractInfoHTML}
       <div class="table-message">${escapeHTML(messageText)}</div>
       ${bidHistoryOutside}
+      ${openKittyHTML}
       <div class="table-area">
         <div class="players-ring">${seatEls.join('')}</div>
         ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
         <div class="center-table">
-          <div class="center-caption">場札</div>
-          ${kittyHTML ? `<div class="kitty-view">${kittyHTML}</div>` : ''}
+          ${!isBid ? '<div class="center-caption">場札</div>' : ''}
         </div>
         <div class="quiz-panel">${panelHTML}</div>
       </div>
       <div class="hand-dock">
-        <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span></div>
+        <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span> ${isBid ? '+ オープン 2枚' : ''}</div>
         <div class="hand ${handMode}">${handHTML}</div>
       </div>
     </div>`;
