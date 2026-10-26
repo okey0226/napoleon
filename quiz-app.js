@@ -139,12 +139,19 @@ function renderGameReplica(q, fallbackId = '') {
   }
 
   const mySeat = getMySeat(q);
+  const turnIndex = q.scenario?.trick?.length ?? 0;
+  
+  // ★ 自分を常に一番下(pos-0)にする
   const disp = actual => (actual - mySeat + 5) % 5;
+  
   const contract = q.scenario?.contract;
   const points = q.scenario?.points || [0,0,0,0,0];
   const taken = q.scenario?.taken || [[],[],[],[],[]];
 
-  let messageText = q.scenario?.trick?.length ? 'あなたの番です。場札に続けてください' : 'あなたが先攻です。カードを出してください';
+  let messageText = '';
+  if (turnIndex === 0) messageText = 'あなたが先攻です。カードを出してください';
+  else if (turnIndex === 4) messageText = 'あなたの番です。最後のカードを出してください';
+  else messageText = 'あなたの番です。場札に続けてください';
 
   let contractInfoHTML = '';
   if (contract) {
