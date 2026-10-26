@@ -84,7 +84,7 @@ async function loadQuestion(id) {
     const res = await authFetch('/api/quiz/q/' + encodeURIComponent(id));
     const data = await res.json();
     if (!res.ok) return renderError(data.error || '読み込み失敗');
-    renderGameReplica(data, id); // IDを渡してカテゴリ判定を堅牢化
+    renderGameReplica(data, id);
     refreshProgress();
   } catch (e) { console.error(e); renderError('通信失敗'); }
 }
@@ -118,7 +118,6 @@ function renderGameReplica(q, fallbackId = '') {
   const shell = $('quiz-shell'); if (!shell) return;
   const category = resolveCategory(q, fallbackId);
   
-  // bid以外でoptionsが空ならエラー
   if (category !== 'bid' && (!q.options || !q.options.length)) {
     return renderError('問題データが不正です（Options missing）');
   }
@@ -131,7 +130,6 @@ function renderGameReplica(q, fallbackId = '') {
   const isDiscard = category === 'discard';
   const isBid = category === 'bid';
 
-  // bid入力モードの初期化
   if (isBid && !q.reveal) {
     const high = q.scenario?.high || { num: 12, suit: '' };
     let num = Math.max(13, high.num);
@@ -217,16 +215,17 @@ function renderGameReplica(q, fallbackId = '') {
   }
 
   let kittyHTML = isBid ? `<span class="open-label">オープン</span>${cardElHTML(null)}${cardElHTML(null)}` : '';
-
   const handCards = q.scenario?.hand || [];
   const handMode = isDiscard ? 'discard-mode' : '';
   const legalIds = isPlay && !q.reveal ? new Set((q.options || []).map(o => o.value || o.label)) : new Set();
   const handHTML = handCards.map(id => cardElHTML(id, legalIds.has(id) ? 'playable' : '')).join('');
-
   const panelHTML = renderQuestionPanel(q, mySeat, category);
 
+  // 立ち履歴をパネルの外（メッセージの下）に配置
+  const bidHistoryOutside = (isBid && !q.reveal) ? renderBidHistory(q, mySeat) : '';
+
   shell.innerHTML = `
-    <div class="game-screen quiz-game ${isDiscard ? 'discarding' : ''}">
+    <div class="game-screen quiz-game ${isDiscard ? 'discarding' : ''} ${isBid ? 'quiz-game-bid' : ''}">
       <div class="game-head">
         <button class="back-button" id="quiz-inner-back">← メニュー</button>
         <div class="game-meta"><span>${escapeHTML((q.id || fallbackId).toUpperCase())}</span><span class="mode-tag">${QUIZ_LABELS[category]}</span></div>
@@ -234,6 +233,7 @@ function renderGameReplica(q, fallbackId = '') {
       </div>
       ${contractInfoHTML}
       <div class="table-message">${escapeHTML(messageText)}</div>
+      ${bidHistoryOutside}
       <div class="table-area">
         <div class="players-ring">${seatEls.join('')}</div>
         ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
@@ -342,13 +342,15 @@ function renderBidHistory(q, mySeat) {
       <strong>${b.num}${b.suit}</strong>
     </div>`;
   }).join('');
-  return `<div class="quiz-bid-history">
-    <div class="quiz-bid-history-title">この競りの立ち履歴</div>
-    <div class="quiz-bid-history-list">${rows}</div>
+  return `<div class="quiz-bid-history-wrapper">
+    <div class="quiz-bid-history">
+      <div class="quiz-bid-history-title">この競りの立ち履歴</div>
+      <div class="quiz-bid-history-list">${rows}</div>
+    </div>
   </div>`;
 }
 
-// ===== bid 入力 =====
+// ===== bid 入力 (コンパクト化) =====
 function renderBidInput(q, mySeat) {
   const high = q.scenario?.high || { num: 12, suit: '', player: -1 };
   const state = _bidInput;
@@ -366,25 +368,20 @@ function renderBidInput(q, mySeat) {
     `<button class="quiz-input-btn quiz-num-btn ${state.num === n ? 'selected' : ''}" data-bid-num="${n}">${n}</button>`
   ).join('');
 
-  return `<div class="quiz-panel-title">${escapeHTML(titleText)}</div>
-    ${renderBidHistory(q, mySeat)}
+  return `<div class="quiz-panel-title" style="margin-bottom:6px">${escapeHTML(titleText)}</div>
     <div class="quiz-input-section">
-      <div class="quiz-input-label">スート</div>
       <div class="quiz-input-row">${suitBtns}</div>
+      <div class="quiz-input-row" style="margin-top:4px">${numBtns}</div>
     </div>
-    <div class="quiz-input-section">
-      <div class="quiz-input-label">枚数</div>
-      <div class="quiz-input-row">${numBtns}</div>
-    </div>
-    <div class="quiz-input-section">
-      <label class="quiz-solo-label"><input type="checkbox" id="quiz-solo" ${state.solo ? 'checked' : ''}> ソロで立つ</label>
-    </div>
-    <div class="quiz-input-preview">
-      あなたの宣言: <strong>${state.num}${state.suit}${state.solo ? '（ソロ）' : ''}</strong>
-      ${!isValid ? '<span class="quiz-input-warning">※現在の宣言より強くしてください</span>' : ''}
+    <div class="quiz-bid-controls">
+      <label class="quiz-solo-label"><input type="checkbox" id="quiz-solo" ${state.solo ? 'checked' : ''}> ソロ</label>
+      <div class="quiz-input-preview">
+        <strong>${state.num}${state.suit}${state.solo ? '（ソロ）' : ''}</strong>
+        ${!isValid ? '<span class="quiz-input-warning">※宣言より強く</span>' : ''}
+      </div>
     </div>
     <div class="quiz-input-actions">
-      <button class="small-action pass" id="quiz-pass">パス（降りる）</button>
+      <button class="small-action pass" id="quiz-pass">パス</button>
       <button class="primary-button" id="quiz-submit-bid" ${!isValid ? 'disabled' : ''}>決定</button>
     </div>`;
 }
@@ -448,7 +445,6 @@ function renderBidReveal(q, mySeat) {
   const myLabel = myEncoded != null ? (dist.find(d => d.encoded === myEncoded)?.label || (myEncoded === 0 ? 'パス' : '—')) : '—';
 
   return `<div class="quiz-panel-title">みんなの回答（全 ${total} 人）</div>
-    ${renderBidHistory(q, mySeat)}
     <div class="quiz-bid-answers-summary">
       <div class="quiz-answer-pill is-mine">あなた: <strong>${escapeHTML(myLabel)}</strong></div>
       <div class="quiz-answer-pill is-ai">AI: <strong>${escapeHTML(aiLabel)}</strong></div>
