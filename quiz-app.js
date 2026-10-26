@@ -1,214 +1,525 @@
-// quiz-api.js — 何切るAPI（worker.jsから呼ばれる）
-import { getQuestion, listQuestions, QUIZ_CATEGORIES, QUIZ_COUNTS, totalQuestionCount, decodeBid } from './quiz-questions.js';
+// quiz-app.js — 何切る問題集（ゲーム画面レプリカ）
+const $ = id => document.getElementById(id);
+const QUIZ_LABELS = { bid: '何で立つ？', call: '誰を指名する？', discard: '何を切る？', play: '何を出す？' };
+const CATEGORY_PHASE = { bid: '競り', call: '副官指名', discard: '浮き札の交換', play: 'カードプレイ' };
+const BID_SUITS = ['♣', '♦', '♥', '♠', 'NT'];
+const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 };
 
-export const quizSchema = [
-  "CREATE TABLE IF NOT EXISTS quiz_answers (user_id TEXT NOT NULL, question_id TEXT NOT NULL, choice_index INTEGER NOT NULL, answered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, question_id))",
-  "CREATE INDEX IF NOT EXISTS quiz_answers_q ON quiz_answers(question_id)",
-  "CREATE INDEX IF NOT EXISTS quiz_answers_u ON quiz_answers(user_id)",
-  "CREATE TABLE IF NOT EXISTS quiz_insights (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL UNIQUE, human_majority INTEGER NOT NULL, ai_answer INTEGER NOT NULL, agreement_rate REAL NOT NULL, total_answers INTEGER NOT NULL, synced_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-];
+let _bound = false;
+let _bidInput = { suit: '♠', num: 13, solo: false };
 
-async function getSessionUser(request, env) {
-  const token = request.headers.get('x-session-token');
-  if (!token) return null;
-  try {
-    const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first();
-    return sess?.user_id || null;
-  } catch { return null; }
+function sessionToken() { return localStorage.getItem('napoleon_session') || null; }
+async function authFetch(url, opts = {}) {
+  const token = sessionToken();
+  const headers = Object.assign({}, opts.headers || {});
+  if (token) headers['x-session-token'] = token;
+  if (opts.body && !headers['content-type']) headers['content-type'] = 'application/json';
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+function encodeBid(bid) {
+  if (!bid || bid.pass) return 0;
+  const suitIdx = BID_SUITS.indexOf(bid.suit);
+  if (suitIdx < 0) return 0;
+  const numIdx = bid.num - 13;
+  if (numIdx < 0 || numIdx > 7) return 0;
+  return 1 + numIdx * 10 + suitIdx + (bid.solo ? 5 : 0);
+}
+function cardElHTML(id, extra = '') {
+  if (!id) return `<div class="card card-back ${extra}"></div>`;
+  const suit = id[0], rank = id.slice(1);
+  const red = suit === '♦' || suit === '♥';
+  return `<div class="card ${red ? 'red ' : ''}${extra}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
+}
+function escapeHTML(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function getSeatName(seat, mySeat) {
+  if (seat === mySeat) return 'あなた';
+  let comIdx = 0;
+  for (let i = 0; i < 5; i++) {
+    if (i === mySeat) continue;
+    comIdx++;
+    if (i === seat) return `COM ${comIdx}`;
+  }
+  return `COM ${seat}`;
 }
 
-// IDからカテゴリを推測
-function inferCategory(id) {
-  if (typeof id !== 'string') return '';
-  if (id.includes('-')) return id.split('-')[0];
+export function openQuizScreen() {
+  const screen = document.getElementById('quiz-screen');
+  if (!screen) return;
+  document.querySelectorAll('#app > section').forEach(s => s.classList.add('hidden'));
+  screen.classList.remove('hidden');
+  if (!_bound) _bound = true;
+  loadProgress();
+}
+
+async function loadProgress() {
+  if (!sessionToken()) return renderAuthRequired();
+  try {
+    const res = await authFetch('/api/quiz/progress');
+    const data = await res.json();
+    if (!res.ok) return renderAuthRequired(data.error);
+    renderProgress(data);
+    if (data.nextQuestionId) loadQuestion(data.nextQuestionId);
+    else renderAllDone();
+  } catch { renderError('通信に失敗しました'); }
+}
+async function refreshProgress() {
+  try {
+    const res = await authFetch('/api/quiz/progress');
+    if (!res.ok) return;
+    renderProgress(await res.json());
+  } catch {}
+}
+function renderProgress(p) {
+  const el = $('quiz-progress'); if (!el) return;
+  const pct = p.total ? Math.round(p.answered / p.total * 100) : 0;
+  el.innerHTML = `
+    <div class="quiz-progress-track"><div class="quiz-progress-fill" style="width:${pct}%"></div></div>
+    <div class="quiz-progress-meta">${p.answered} / ${p.total}問（${pct}%）</div>
+    <div class="quiz-cat-chips">${Object.entries(p.perCategory).map(([c, v]) => `<span class="quiz-cat-chip">${QUIZ_LABELS[c] || c}: ${v.answered}/${v.total}</span>`).join('')}</div>`;
+}
+async function loadQuestion(id) {
+  renderLoading();
+  try {
+    const res = await authFetch('/api/quiz/q/' + encodeURIComponent(id));
+    const data = await res.json();
+    if (!res.ok) return renderError(data.error || '読み込み失敗');
+    renderGameReplica(data, id); // IDを渡してカテゴリ判定を堅牢化
+    refreshProgress();
+  } catch (e) { console.error(e); renderError('通信失敗'); }
+}
+async function loadNext() {
+  try {
+    const res = await authFetch('/api/quiz/progress');
+    const data = await res.json();
+    if (!res.ok) return;
+    if (!data.nextQuestionId) return renderAllDone();
+    loadQuestion(data.nextQuestionId);
+  } catch {}
+}
+
+function resolveCategory(q, fallbackId = '') {
+  if (q && q.category) return q.category;
+  if (q && q.inputMode) return q.inputMode;
+  const id = (q && q.id) ? q.id : fallbackId;
+  if (typeof id === 'string' && id.includes('-')) return id.split('-')[0];
   return '';
 }
 
-export async function handleQuizRequest(request, env, url) {
-  // GET /api/quiz/progress
-  if (url.pathname === '/api/quiz/progress' && request.method === 'GET') {
-    const userId = await getSessionUser(request, env);
-    if (!userId) return Response.json({ error: 'auth required' }, { status: 401 });
-    try {
-      const { results } = await env.DB.prepare("SELECT question_id FROM quiz_answers WHERE user_id=?").bind(userId).all();
-      const answeredIds = new Set((results || []).map(r => r.question_id));
-      const perCategory = {};
-      let nextId = null;
-      for (const c of QUIZ_CATEGORIES) {
-        let answered = 0;
-        for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
-          const id = `${c}-${String(i + 1).padStart(4, '0')}`;
-          if (answeredIds.has(id)) answered++;
-          else if (!nextId) nextId = id;
-        }
-        perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
-      }
-      return Response.json({ total: totalQuestionCount(), answered: answeredIds.size, perCategory, nextQuestionId: nextId });
-    } catch (e) { return Response.json({ error: e.message }, { status: 500 }); }
+function getMySeat(q, category) {
+  if (category === 'bid') return q.scenario?.mySeat ?? 0;
+  if (category === 'call') return q.scenario?.contract?.seat ?? 0;
+  if (category === 'discard') return q.scenario?.contract?.seat ?? 0;
+  if (category === 'play') return q.scenario?.seat ?? 0;
+  return 0;
+}
+
+function renderGameReplica(q, fallbackId = '') {
+  const shell = $('quiz-shell'); if (!shell) return;
+  const category = resolveCategory(q, fallbackId);
+  
+  // bid以外でoptionsが空ならエラー
+  if (category !== 'bid' && (!q.options || !q.options.length)) {
+    return renderError('問題データが不正です（Options missing）');
   }
 
-  // GET /api/quiz/q/:id
-  const mQ = /^\/api\/quiz\/q\/([a-z]+-\d{1,4})$/.exec(url.pathname);
-  if (mQ && request.method === 'GET') {
-    const userId = await getSessionUser(request, env);
-    let question = getQuestion(mQ[1]);
-    
-    // 万が一 getQuestion が null を返してもIDからカテゴリを判定して最小限のオブジェクトを作る
-    if (!question) {
-      const cat = inferCategory(mQ[1]);
-      if (!cat) return Response.json({ error: 'not found' }, { status: 404 });
-      question = { id: mQ[1], category: cat, title: '不明', scenario: {}, options: [], aiAnswerIndex: 0, explanation: '' };
-    }
+  const mySeat = getMySeat(q, category);
+  const disp = actual => (actual - mySeat + 5) % 5;
+  const contract = q.scenario?.contract;
+  const isPlay = category === 'play';
+  const isCall = category === 'call';
+  const isDiscard = category === 'discard';
+  const isBid = category === 'bid';
 
-    const category = question.category || inferCategory(question.id);
-    const isBid = question.inputMode === 'bid' || category === 'bid';
-
-    let myAnswer = null;
-    try {
-      if (userId) {
-        const row = await env.DB.prepare("SELECT choice_index FROM quiz_answers WHERE user_id=? AND question_id=?").bind(userId, question.id).first();
-        myAnswer = row ? Number(row.choice_index) : null;
+  // bid入力モードの初期化
+  if (isBid && !q.reveal) {
+    const high = q.scenario?.high || { num: 12, suit: '' };
+    let num = Math.max(13, high.num);
+    let suit = '♠';
+    if (high.num >= 13) {
+      if (num === high.num && SV[suit] <= SV[high.suit]) {
+        const candidates = ['NT', '♠', '♥', '♦', '♣'];
+        const found = candidates.find(s => SV[s] > SV[high.suit]);
+        if (found) suit = found;
+        else num = Math.min(20, high.num + 1);
       }
-    } catch {}
-    const reveal = myAnswer !== null;
-
-    // === bid の場合は自由入力モードで返す ===
-    if (isBid) {
-      let distribution = null;
-      let totalAnswers = 0;
-      if (reveal) {
-        try {
-          const { results } = await env.DB.prepare(
-            "SELECT choice_index, COUNT(*) AS c FROM quiz_answers WHERE question_id=? GROUP BY choice_index"
-          ).bind(question.id).all();
-          const rows = (results || []).map(r => {
-            const decoded = decodeBid(Number(r.choice_index));
-            return { encoded: Number(r.choice_index), ...decoded, count: Number(r.c) };
-          });
-          rows.sort((a, b) => b.count - a.count);
-          distribution = rows;
-          totalAnswers = rows.reduce((n, r) => n + r.count, 0);
-        } catch {}
-      }
-      return Response.json({
-        id: question.id, 
-        category: 'bid',
-        inputMode: 'bid',
-        title: question.title || '競り：何で立つ？',
-        scenario: question.scenario || {},
-        options: [],
-        myAnswer, reveal,
-        aiAnswerIndex: reveal ? (question.aiAnswerIndex ?? 0) : null,
-        distribution,
-        totalAnswers: reveal ? totalAnswers : null,
-        explanation: reveal ? (question.explanation || '') : null
-      });
     }
-
-    // === その他カテゴリ（従来通り） ===
-    let stats = [], totalAnswers = 0;
-    if (reveal) {
-      try {
-        const { results } = await env.DB.prepare("SELECT choice_index, COUNT(*) AS c FROM quiz_answers WHERE question_id=? GROUP BY choice_index").bind(question.id).all();
-        const map = new Map((results || []).map(r => [Number(r.choice_index), Number(r.c)]));
-        stats = (question.options || []).map(o => ({ index: o.index, count: map.get(o.index) || 0 }));
-        totalAnswers = stats.reduce((n, s) => n + s.count, 0);
-      } catch {}
-    }
-    return Response.json({
-      id: question.id, 
-      category: category,
-      title: question.title || '',
-      scenario: question.scenario || {}, 
-      options: question.options || [],
-      myAnswer, reveal,
-      stats: reveal ? stats : null,
-      totalAnswers: reveal ? totalAnswers : null,
-      aiAnswerIndex: reveal ? (question.aiAnswerIndex ?? 0) : null,
-      explanation: reveal ? (question.explanation || '') : null
-    });
+    _bidInput = { suit, num, solo: false };
   }
 
-  // POST /api/quiz/answer
-  if (url.pathname === '/api/quiz/answer' && request.method === 'POST') {
-    const userId = await getSessionUser(request, env);
-    if (!userId) return Response.json({ error: 'auth required' }, { status: 401 });
-    let body;
-    try { body = await request.json(); } catch { return Response.json({ error: 'invalid' }, { status: 400 }); }
-    const questionId = String(body.questionId || '');
-    const choice = Number(body.choiceIndex);
-    
-    const question = getQuestion(questionId);
-    const category = question ? (question.category || inferCategory(questionId)) : inferCategory(questionId);
-    const isBid = (question && question.inputMode === 'bid') || category === 'bid';
-
-    if (isBid) {
-      if (!Number.isInteger(choice) || choice < 0 || choice > 81) {
-        return Response.json({ error: 'invalid choice' }, { status: 400 });
-      }
+  let messageText = '';
+  if (isBid) {
+    const high = q.scenario?.high;
+    if (high && high.num >= 13) {
+      messageText = `現在の宣言: ${getSeatName(high.player, mySeat)} の ${high.num}${high.suit} ／ あなたの番です`;
     } else {
-      if (!Number.isInteger(choice) || choice < 0 || (question && question.options && choice >= question.options.length)) {
-        return Response.json({ error: 'invalid choice' }, { status: 400 });
-      }
+      messageText = '宣言なし。最初の宣言をしてください。';
     }
+  } else if (isCall) messageText = '副官に指名するカードを選んでください';
+  else if (isDiscard) messageText = '手札12枚から2枚を選んで捨ててください';
+  else if (isPlay) messageText = q.scenario?.trick?.length ? 'あなたの番です。場札に続けてください' : 'あなたが先攻です。カードを出してください';
 
-    try {
-      await env.DB.prepare("INSERT INTO quiz_answers(user_id, question_id, choice_index) VALUES(?,?,?)").bind(userId, questionId, choice).run();
-    } catch (e) {
-      const msg = String(e.message || '').toLowerCase();
-      if (msg.includes('unique') || msg.includes('primary key')) return Response.json({ error: 'already answered' }, { status: 409 });
-      return Response.json({ error: e.message }, { status: 500 });
+  let contractInfoHTML = '';
+  if (contract) {
+    const parts = [`<strong class="contract-bid">宣言 ${contract.num}${contract.suit}${contract.solo ? '（ソロ）' : ''}</strong>`];
+    const callId = q.scenario?.call?.id || null;
+    if (callId && !isDiscard) parts.push(`<span class="contract-call-label">副官札</span><div class="contract-kitty-cards">${cardElHTML(callId, 'contract-kitty-card')}</div>`);
+    const discarded = q.scenario?.discarded || [];
+    if (discarded.length && !isDiscard) parts.push(`<span class="contract-call-label">捨て札</span><div class="contract-kitty-cards">${discarded.map(id => cardElHTML(id, 'contract-kitty-card')).join('')}</div>`);
+    if (contract.solo && contract.revealedCall) parts.push('<span class="contract-call-label">ひとり立ち</span>');
+    contractInfoHTML = `<div class="contract-info">${parts.join('')}</div>`;
+  }
+  if (isBid && q.scenario?.high && q.scenario.high.num >= 13) {
+    const h = q.scenario.high;
+    const bidder = getSeatName(h.player, mySeat);
+    contractInfoHTML = `<div class="contract-info">
+      <strong class="contract-bid">現在の宣言 ${h.num}${h.suit}</strong>
+      <span class="contract-call-label">${escapeHTML(bidder)} による</span>
+    </div>`;
+  }
+
+  const nap = contract?.nap ?? -1;
+  const deputy = contract?.deputy ?? -1;
+  const revealed = contract?.revealedCall ?? false;
+  let activeSeat = -1;
+  if (isBid) activeSeat = mySeat;
+  if (isCall || isDiscard) activeSeat = contract?.nap ?? -1;
+  if (isPlay) activeSeat = q.scenario?.seat ?? -1;
+
+  const seatNames = {};
+  seatNames[mySeat] = 'あなた';
+  let comIdx = 1;
+  for (let i = 0; i < 5; i++) if (i !== mySeat) seatNames[i] = `COM ${comIdx++}`;
+
+  const seatEls = [];
+  for (let actual = 0; actual < 5; actual++) {
+    const pos = disp(actual);
+    let role = '';
+    if (!isBid && nap >= 0) {
+      if (actual === nap) role = 'ナポレオン';
+      else if (revealed && actual === deputy) role = '副官';
+      else if (revealed) role = '連合軍';
     }
-    return Response.json({ ok: true, myAnswer: choice });
+    seatEls.push(`<div class="player-seat player-color-${pos} pos-${pos} ${actual===mySeat?'me':''} ${activeSeat===actual?'active':''} ${role==='副官'?'deputy-seat':''}">
+      <div class="seat-name">${escapeHTML(seatNames[actual])}</div>
+      <div class="seat-role ${role==='副官'?'deputy-status':''}">${escapeHTML(role)}</div>
+    </div>`);
   }
 
-  // GET /api/quiz/insights
-  if (url.pathname === '/api/quiz/insights' && request.method === 'GET') {
-    try {
-      const { results } = await env.DB.prepare(`SELECT question_id, choice_index, COUNT(*) AS c FROM quiz_answers GROUP BY question_id, choice_index`).all();
-      const byQ = new Map();
-      for (const r of (results || [])) {
-        if (!byQ.has(r.question_id)) byQ.set(r.question_id, []);
-        byQ.get(r.question_id).push({ index: Number(r.choice_index), count: Number(r.c) });
-      }
-      const out = [];
-      for (const [qid, dist] of byQ) {
-        const total = dist.reduce((n, d) => n + d.count, 0);
-        if (total < 5) continue;
-        const question = getQuestion(qid);
-        if (!question) continue;
-        const sorted = dist.slice().sort((a, b) => b.count - a.count);
-        const majorityIdx = sorted[0].index;
-        const agreement = sorted[0].count / total;
-        out.push({
-          questionId: qid, category: question.category, title: question.title, total, majorityIdx, agreement,
-          aiAnswerIndex: question.aiAnswerIndex, aiAgrees: majorityIdx === question.aiAnswerIndex,
-          distribution: (question.options || []).map((o, i) => ({ index: i, label: o.label, count: dist.find(d => d.index === i)?.count || 0, isAI: i === question.aiAnswerIndex }))
-        });
-      }
-      out.sort((a, b) => b.total - a.total);
-      return Response.json({ all: out.slice(0, 50), disagreements: out.filter(o => !o.aiAgrees && o.agreement >= 0.5) });
-    } catch (e) { return Response.json({ error: e.message }, { status: 500 }); }
+  let trickCardsHTML = '';
+  if (isPlay && q.scenario?.trick?.length) {
+    trickCardsHTML = q.scenario.trick.map(e => {
+      const pos = disp(e.seat);
+      const suit = e.card[0], rank = e.card.slice(1);
+      const red = suit === '♦' || suit === '♥';
+      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
+    }).join('');
   }
 
-  // GET /api/quiz/questions
-  if (url.pathname === '/api/quiz/questions' && request.method === 'GET') {
-    const category = url.searchParams.get('category') || null;
-    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
-    const userId = await getSessionUser(request, env);
-    const list = listQuestions({ category, offset, limit });
-    let answeredIds = new Set();
-    try {
-      if (userId && list.length) {
-        const ids = list.map(q => q.id);
-        const ph = ids.map(() => '?').join(',');
-        const { results } = await env.DB.prepare(`SELECT question_id FROM quiz_answers WHERE user_id=? AND question_id IN (${ph})`).bind(userId, ...ids).all();
-        answeredIds = new Set((results || []).map(r => r.question_id));
-      }
-    } catch {}
-    return Response.json({ total: totalQuestionCount(), items: list.map(q => ({ ...q, answered: answeredIds.has(q.id) })) });
+  let kittyHTML = isBid ? `<span class="open-label">オープン</span>${cardElHTML(null)}${cardElHTML(null)}` : '';
+
+  const handCards = q.scenario?.hand || [];
+  const handMode = isDiscard ? 'discard-mode' : '';
+  const legalIds = isPlay && !q.reveal ? new Set((q.options || []).map(o => o.value || o.label)) : new Set();
+  const handHTML = handCards.map(id => cardElHTML(id, legalIds.has(id) ? 'playable' : '')).join('');
+
+  const panelHTML = renderQuestionPanel(q, mySeat, category);
+
+  shell.innerHTML = `
+    <div class="game-screen quiz-game ${isDiscard ? 'discarding' : ''}">
+      <div class="game-head">
+        <button class="back-button" id="quiz-inner-back">← メニュー</button>
+        <div class="game-meta"><span>${escapeHTML((q.id || fallbackId).toUpperCase())}</span><span class="mode-tag">${QUIZ_LABELS[category]}</span></div>
+        <div class="phase-label">${CATEGORY_PHASE[category]}</div>
+      </div>
+      ${contractInfoHTML}
+      <div class="table-message">${escapeHTML(messageText)}</div>
+      <div class="table-area">
+        <div class="players-ring">${seatEls.join('')}</div>
+        ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
+        <div class="center-table">
+          <div class="center-caption">場札</div>
+          ${kittyHTML ? `<div class="kitty-view">${kittyHTML}</div>` : ''}
+        </div>
+        <div class="quiz-panel">${panelHTML}</div>
+      </div>
+      <div class="hand-dock">
+        <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span></div>
+        <div class="hand ${handMode}">${handHTML}</div>
+      </div>
+    </div>`;
+
+  const innerBack = $('quiz-inner-back');
+  if (innerBack) innerBack.onclick = () => {
+    $('quiz-screen').classList.add('hidden');
+    $('mode-select-screen').classList.remove('hidden');
+  };
+  bindOptionClicks(q);
+  if (isBid && !q.reveal) bindBidInput(q);
+  if (isPlay && !q.reveal) bindPlayCardClicks(q);
+  if (isDiscard && !q.reveal) bindDiscardCardClicks(q);
+}
+
+function renderQuestionPanel(q, mySeat, category) {
+  const isReveal = q.reveal;
+  
+  if (category === 'bid') {
+    return isReveal ? renderBidReveal(q, mySeat) : renderBidInput(q, mySeat);
   }
 
-  return null;
+  if (category === 'call') {
+    const opts = (q.options || []).map(o => {
+      const id = o.value?.id || o.label;
+      const isAI = isReveal && q.aiAnswerIndex === o.index;
+      const isMine = q.myAnswer === o.index;
+      const stat = isReveal ? (q.stats?.find(s => s.index === o.index)?.count || 0) : 0;
+      const total = q.totalAnswers || 0;
+      const pct = total ? Math.round(stat / total * 100) : 0;
+      return `<button class="quiz-call-card-btn ${isMine ? 'is-mine' : ''} ${isAI ? 'is-ai' : ''}" data-choice="${o.index}" ${isReveal ? 'disabled' : ''}>
+        ${cardElHTML(id)}
+        ${isReveal ? `<div class="quiz-card-stat-bar"><div class="quiz-card-stat-fill" style="height:${pct}%"></div></div><span class="quiz-card-pct">${pct}%</span><small>${stat}人</small>` : ''}
+        ${isAI ? '<span class="quiz-card-tag-ai">AI</span>' : ''}
+        ${isMine ? '<span class="quiz-card-tag-mine">あなた</span>' : ''}
+      </button>`;
+    }).join('');
+    return `<div class="quiz-panel-title">副官に指名するカードを選んでください</div>
+      <div class="quiz-call-grid">${opts}</div>
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+  }
+
+  if (category === 'discard') {
+    const opts = (q.options || []).map(o => {
+      const ids = o.value || [];
+      const isAI = isReveal && q.aiAnswerIndex === o.index;
+      const isMine = q.myAnswer === o.index;
+      const stat = isReveal ? (q.stats?.find(s => s.index === o.index)?.count || 0) : 0;
+      const total = q.totalAnswers || 0;
+      const pct = total ? Math.round(stat / total * 100) : 0;
+      return `<button class="quiz-discard-pair-btn ${isMine ? 'is-mine' : ''} ${isAI ? 'is-ai' : ''}" data-choice="${o.index}" ${isReveal ? 'disabled' : ''}>
+        <div class="quiz-discard-pair-cards">${ids.map(id => cardElHTML(id)).join('')}</div>
+        ${isReveal ? `<span class="quiz-bid-stat"><span class="quiz-bid-bar" style="width:${pct}%"></span><span class="quiz-bid-pct">${stat}人 ${pct}%</span></span>` : ''}
+        ${isAI ? '<span class="quiz-tag-ai">AI</span>' : ''}
+        ${isMine ? '<span class="quiz-tag-mine">あなた</span>' : ''}
+      </button>`;
+    }).join('');
+    return `<div class="quiz-panel-title">捨てる組み合わせを選ぶ（手札を2枚クリックでもOK）</div>
+      <div class="quiz-discard-grid">${opts}</div>
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+  }
+
+  if (category === 'play') {
+    const opts = (q.options || []).map(o => {
+      const id = o.value || o.label;
+      const isAI = isReveal && q.aiAnswerIndex === o.index;
+      const isMine = q.myAnswer === o.index;
+      const stat = isReveal ? (q.stats?.find(s => s.index === o.index)?.count || 0) : 0;
+      const total = q.totalAnswers || 0;
+      const pct = total ? Math.round(stat / total * 100) : 0;
+      return `<button class="quiz-play-card-btn ${isMine ? 'is-mine' : ''} ${isAI ? 'is-ai' : ''}" data-choice="${o.index}" ${isReveal ? 'disabled' : ''}>
+        ${cardElHTML(id)}
+        ${isReveal ? `<div class="quiz-card-stat-bar"><div class="quiz-card-stat-fill" style="height:${pct}%"></div></div><span class="quiz-card-pct">${pct}%</span><small>${stat}人</small>` : ''}
+        ${isAI ? '<span class="quiz-card-tag-ai">AI</span>' : ''}
+        ${isMine ? '<span class="quiz-card-tag-mine">あなた</span>' : ''}
+      </button>`;
+    }).join('');
+    return `<div class="quiz-panel-title">出すカードを選んでください（手札のハイライトからもOK）</div>
+      <div class="quiz-play-grid">${opts}</div>
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+  }
+  return '';
+}
+
+// ===== 立ち履歴 =====
+function renderBidHistory(q, mySeat) {
+  const history = q.scenario?.bidHistory || [];
+  if (history.length === 0) return '';
+  const rows = history.map((b, i) => {
+    const pos = (b.seat - mySeat + 5) % 5;
+    const isHigh = (i === history.length - 1);
+    return `<div class="quiz-bid-history-row player-color-${pos} ${isHigh ? 'is-high' : ''}">
+      <span class="bid-player">${escapeHTML(getSeatName(b.seat, mySeat))}</span>
+      <strong>${b.num}${b.suit}</strong>
+    </div>`;
+  }).join('');
+  return `<div class="quiz-bid-history">
+    <div class="quiz-bid-history-title">この競りの立ち履歴</div>
+    <div class="quiz-bid-history-list">${rows}</div>
+  </div>`;
+}
+
+// ===== bid 入力 =====
+function renderBidInput(q, mySeat) {
+  const high = q.scenario?.high || { num: 12, suit: '', player: -1 };
+  const state = _bidInput;
+  const isValid = high.num < 13 || (state.num > high.num) || (state.num === high.num && high.suit && SV[state.suit] > SV[high.suit]);
+
+  const titleText = high.num >= 13
+    ? `現在の宣言: ${getSeatName(high.player, mySeat)} の ${high.num}${high.suit} ／ 何で立つ？`
+    : '宣言なし ／ 最初の宣言をしてください';
+
+  const suitBtns = BID_SUITS.map(s =>
+    `<button class="quiz-input-btn quiz-suit-btn ${state.suit === s ? 'selected' : ''}" data-bid-suit="${s}">${s}</button>`
+  ).join('');
+
+  const numBtns = [13, 14, 15, 16, 17, 18, 19, 20].map(n =>
+    `<button class="quiz-input-btn quiz-num-btn ${state.num === n ? 'selected' : ''}" data-bid-num="${n}">${n}</button>`
+  ).join('');
+
+  return `<div class="quiz-panel-title">${escapeHTML(titleText)}</div>
+    ${renderBidHistory(q, mySeat)}
+    <div class="quiz-input-section">
+      <div class="quiz-input-label">スート</div>
+      <div class="quiz-input-row">${suitBtns}</div>
+    </div>
+    <div class="quiz-input-section">
+      <div class="quiz-input-label">枚数</div>
+      <div class="quiz-input-row">${numBtns}</div>
+    </div>
+    <div class="quiz-input-section">
+      <label class="quiz-solo-label"><input type="checkbox" id="quiz-solo" ${state.solo ? 'checked' : ''}> ソロで立つ</label>
+    </div>
+    <div class="quiz-input-preview">
+      あなたの宣言: <strong>${state.num}${state.suit}${state.solo ? '（ソロ）' : ''}</strong>
+      ${!isValid ? '<span class="quiz-input-warning">※現在の宣言より強くしてください</span>' : ''}
+    </div>
+    <div class="quiz-input-actions">
+      <button class="small-action pass" id="quiz-pass">パス（降りる）</button>
+      <button class="primary-button" id="quiz-submit-bid" ${!isValid ? 'disabled' : ''}>決定</button>
+    </div>`;
+}
+
+function bindBidInput(q) {
+  const state = _bidInput;
+  document.querySelectorAll('[data-bid-suit]').forEach(btn => {
+    btn.onclick = () => { state.suit = btn.dataset.bidSuit; rerenderBidPanel(q); };
+  });
+  document.querySelectorAll('[data-bid-num]').forEach(btn => {
+    btn.onclick = () => { state.num = Number(btn.dataset.bidNum); rerenderBidPanel(q); };
+  });
+  const soloCb = $('quiz-solo');
+  if (soloCb) soloCb.onchange = () => { state.solo = soloCb.checked; rerenderBidPanel(q); };
+  const passBtn = $('quiz-pass');
+  if (passBtn) passBtn.onclick = () => submitAnswer(q.id, 0);
+  const submitBtn = $('quiz-submit-bid');
+  if (submitBtn) submitBtn.onclick = () => {
+    const encoded = encodeBid({ num: state.num, suit: state.suit, solo: state.solo });
+    if (encoded === 0) return;
+    submitAnswer(q.id, encoded);
+  };
+}
+
+function rerenderBidPanel(q) {
+  const panel = document.querySelector('.quiz-panel');
+  if (!panel) return;
+  const mySeat = getMySeat(q, 'bid');
+  panel.innerHTML = renderBidInput(q, mySeat);
+  bindBidInput(q);
+}
+
+// ===== bid 結果表示 =====
+function renderBidReveal(q, mySeat) {
+  const dist = q.distribution || [];
+  const total = q.totalAnswers || 0;
+  const myEncoded = q.myAnswer;
+  const aiEncoded = q.aiAnswerIndex;
+
+  let distHTML;
+  if (dist.length === 0) {
+    distHTML = '<div class="quiz-dist-empty">まだ他の人の回答がありません</div>';
+  } else {
+    distHTML = dist.map(d => {
+      const pct = total ? Math.round(d.count / total * 100) : 0;
+      const isMine = d.encoded === myEncoded;
+      const isAI = d.encoded === aiEncoded;
+      return `<div class="quiz-dist-row ${isMine ? 'is-mine' : ''} ${isAI ? 'is-ai' : ''}">
+        <span class="quiz-dist-label">${escapeHTML(d.label)}</span>
+        <div class="quiz-dist-bar-wrap"><div class="quiz-dist-bar" style="width:${pct}%"></div></div>
+        <span class="quiz-dist-count">${d.count}人 ${pct}%</span>
+        <span class="quiz-dist-tags">
+          ${isMine ? '<span class="quiz-tag-mine">あなた</span>' : ''}
+          ${isAI ? '<span class="quiz-tag-ai">AI</span>' : ''}
+        </span>
+      </div>`;
+    }).join('');
+  }
+
+  const aiLabel = aiEncoded != null ? (dist.find(d => d.encoded === aiEncoded)?.label || (aiEncoded === 0 ? 'パス' : '—')) : '—';
+  const myLabel = myEncoded != null ? (dist.find(d => d.encoded === myEncoded)?.label || (myEncoded === 0 ? 'パス' : '—')) : '—';
+
+  return `<div class="quiz-panel-title">みんなの回答（全 ${total} 人）</div>
+    ${renderBidHistory(q, mySeat)}
+    <div class="quiz-bid-answers-summary">
+      <div class="quiz-answer-pill is-mine">あなた: <strong>${escapeHTML(myLabel)}</strong></div>
+      <div class="quiz-answer-pill is-ai">AI: <strong>${escapeHTML(aiLabel)}</strong></div>
+    </div>
+    <div class="quiz-dist-list">${distHTML}</div>
+    <div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>`;
+}
+
+function bindOptionClicks(q) {
+  document.querySelectorAll('.quiz-panel button[data-choice]').forEach(btn => {
+    btn.onclick = () => submitAnswer(q.id, Number(btn.dataset.choice));
+  });
+  const next = $('quiz-next');
+  if (next) next.onclick = () => loadNext();
+}
+function bindPlayCardClicks(q) {
+  const hand = document.querySelector('.quiz-game .hand'); if (!hand) return;
+  const legalIds = new Set((q.options || []).map(o => o.value || o.label));
+  const handCards = q.scenario?.hand || [];
+  hand.querySelectorAll('.card').forEach((el, idx) => {
+    const id = handCards[idx];
+    if (!legalIds.has(id)) return;
+    el.onclick = () => { const opt = (q.options || []).find(o => (o.value || o.label) === id); if (opt) submitAnswer(q.id, opt.index); };
+  });
+}
+function bindDiscardCardClicks(q) {
+  const hand = document.querySelector('.quiz-game .hand'); if (!hand) return;
+  const handCards = q.scenario?.hand || [];
+  const cards = hand.querySelectorAll('.card');
+  const selected = new Set();
+  cards.forEach((el, idx) => {
+    const id = handCards[idx];
+    el.onclick = () => {
+      if (selected.has(id)) { selected.delete(id); el.classList.remove('selected'); }
+      else if (selected.size < 2) { selected.add(id); el.classList.add('selected'); }
+      if (selected.size === 2) {
+        const chosen = [...selected].sort();
+        const opt = (q.options || []).find(o => { const ids = (o.value || []).slice().sort(); return ids.length === 2 && ids[0] === chosen[0] && ids[1] === chosen[1]; });
+        if (opt) submitAnswer(q.id, opt.index);
+        else {
+          cards.forEach(c => c.classList.remove('selected'));
+          selected.clear();
+          const msg = document.querySelector('.quiz-game .table-message');
+          if (msg) { const orig = msg.textContent; msg.textContent = 'その組み合わせは選択肢にありません'; setTimeout(() => { msg.textContent = orig; }, 1600); }
+        }
+      }
+    };
+  });
+}
+async function submitAnswer(questionId, choiceIndex) {
+  document.querySelectorAll('.quiz-panel button, .quiz-panel input').forEach(b => b.disabled = true);
+  try {
+    const res = await authFetch('/api/quiz/answer', { method: 'POST', body: JSON.stringify({ questionId, choiceIndex }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 409) return loadQuestion(questionId);
+      alert(data.error || '回答の保存に失敗しました');
+      return;
+    }
+    loadQuestion(questionId);
+  } catch { alert('回答の送信に失敗しました'); loadQuestion(questionId); }
+}
+function renderLoading() { const s = $('quiz-shell'); if (s) s.innerHTML = '<div class="quiz-loading">読み込み中…</div>'; }
+function renderError(msg) { const s = $('quiz-shell'); if (s) s.innerHTML = `<div class="quiz-error">${escapeHTML(msg)}</div>`; }
+function renderAllDone() {
+  const s = $('quiz-shell');
+  if (s) s.innerHTML = `<div class="quiz-done"><div class="eyebrow">COMPLETE</div><h2>全ての問題に回答しました</h2><p>引き続きデータが集まるとAI戦略に反映されます。</p><button class="primary-button" id="quiz-go-select" style="margin-top:16px;">モード選択へ戻る</button></div>`;
+  const b = $('quiz-go-select'); if (b) b.onclick = () => { $('quiz-screen').classList.add('hidden'); $('mode-select-screen').classList.remove('hidden'); };
+}
+function renderAuthRequired(msg) {
+  const s = $('quiz-shell'); if (!s) return;
+  s.innerHTML = `<div class="quiz-auth-required"><div class="eyebrow">QUIZ</div><h2>プレイヤー登録が必要です</h2><p>${escapeHTML(msg || '何切る問題集は1アカウント1回の回答を保証するため、ログインが必要です。')}</p><button class="primary-button" id="quiz-go-register">プレイヤー登録へ</button></div>`;
+  const b = $('quiz-go-register');
+  if (b) b.onclick = () => { $('quiz-screen').classList.add('hidden'); $('profile-screen').classList.remove('hidden'); };
 }
