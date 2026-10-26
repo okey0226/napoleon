@@ -51,15 +51,16 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-function simulateOnePlayScenario(localRng) {
-  const deck = shuffleWithRng(buildDeck(), localRng);
+// 指定されたターン・トリックが来た瞬間にスナップショットを返す
+function simulateUntilTarget(rng, targetTurn, targetTrick) {
+  const deck = shuffleWithRng(buildDeck(), rng);
   const hands = [];
   for (let i = 0; i < 5; i++) { hands.push(deck.splice(0, 10)); sortHand(hands[i]); }
   const kitty = deck.splice(0, 2);
   const params = defaultStrategy();
-  const nap = Math.floor(localRng() * 5);
-  const suit = SUITS.concat(['NT'])[Math.floor(localRng() * 5)];
-  const num = 13 + Math.floor(localRng() * 4);
+  const nap = Math.floor(rng() * 5);
+  const suit = SUITS.concat(['NT'])[Math.floor(rng() * 5)];
+  const num = 13 + Math.floor(rng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
   
   const discarded = chooseDiscard(hands[nap], suit);
@@ -74,13 +75,11 @@ function simulateOnePlayScenario(localRng) {
   const voids = [{}, {}, {}, {}, {}];
   const seatPoints = [0, 0, 0, 0, 0];
   const seatTaken = [[], [], [], [], []];
-  
   const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
   
   const mySeat = 0;
   let active = nap;
   let trickNo = 0;
-  const allSnaps = [];
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -90,8 +89,9 @@ function simulateOnePlayScenario(localRng) {
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       
-      if (seat === mySeat) {
-        allSnaps.push({
+      // ★ 狙った手番とトリックが来たら即座にスナップショットを返す
+      if (seat === mySeat && trick.length === targetTurn && trickNo === targetTrick) {
+        return {
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
@@ -104,7 +104,7 @@ function simulateOnePlayScenario(localRng) {
           discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
           points: seatPoints.slice(),
           taken: seatTaken.map(arr => arr.slice())
-        });
+        };
       }
       
       const ctx = { hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy, discardedKitty: discarded, isRevealed: contract.revealedCall, params, call, currentNapPoints: 0, experience: null };
@@ -126,33 +126,31 @@ function simulateOnePlayScenario(localRng) {
     const allyPtsRaw = seatPoints.reduce((n, p, i) => n + (i !== nap && (solo || i !== deputy) ? p : 0), 0);
     const allyPts = allyPtsRaw + kittyPoints;
     
+    // 早期終了したら、以降のトリックは存在しない
     if (napPts >= num && (num === 20 || allyPts >= 1)) break;
     if (allyPts > 20 - num) break;
     
     active = w.seat; 
     trickNo++;
   }
-  return allSnaps;
+  return null; // 指定条件の局面が見つからなかった
 }
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
   
-  // 問題番号(idx)から、狙う手番(0-4)とトリック(0-9)を決定論的に決める
-  const desiredTurnIndex = idx % 5;
-  const desiredTrick = Math.floor(idx / 5) % 10;
+  // 問題番号(idx)から、狙う手番(0-4)とトリック(0-9)を決定
+  let desiredTurnIndex = idx % 5;
+  let desiredTrick = Math.floor(idx / 5) % 10;
   
-  for (let attempt = 0; attempt < 100; attempt++) {
-    // 試行ごとにシードを固定してシミュレーション
-    const localRng = mulberry32(idx * 777 + attempt * 13);
-    const allSnaps = simulateOnePlayScenario(localRng);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    // 試行が進むにつれて、ターゲットをずらす（どうしても見つからない場合のフォールバック）
+    const targetTurn = (desiredTurnIndex + attempt) % 5;
+    const targetTrick = (desiredTrick + Math.floor(attempt / 5)) % 10;
     
-    let validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex);
-    if (!validSnaps.length) continue;
-    
-    // 狙ったトリックに一番近いものを選ぶ
-    validSnaps.sort((a, b) => Math.abs(a.trickNo - desiredTrick) - Math.abs(b.trickNo - desiredTrick));
-    const cap = validSnaps[0];
+    const localRng = mulberry32(idx * 999 + attempt * 111);
+    const cap = simulateUntilTarget(localRng, targetTurn, targetTrick);
+    if (!cap) continue;
 
     const hand = cap.hand.map(cardFromId);
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
