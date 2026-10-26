@@ -51,6 +51,7 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
+// 1試合をシミュレートし、自分の手番のスナップショットをすべて記録して返す
 function simulateOnePlayScenario(rng) {
   const deck = shuffleWithRng(buildDeck(), rng);
   const hands = [];
@@ -61,6 +62,7 @@ function simulateOnePlayScenario(rng) {
   const suit = SUITS.concat(['NT'])[Math.floor(rng() * 5)];
   const num = 13 + Math.floor(rng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
+  
   const discarded = chooseDiscard(hands[nap], suit);
   hands[nap] = hands[nap].filter(c => !discarded.some(d => d.id === c.id)); sortHand(hands[nap]);
   const call = chooseDeputyCall(hands[nap], discarded, suit, 3, num, params, null);
@@ -68,25 +70,18 @@ function simulateOnePlayScenario(rng) {
   for (let i = 0; i < 5; i++) if (i !== nap && hands[i].some(c => c.id === call.id)) { deputy = i; break; }
   const solo = deputy < 0; if (solo) deputy = nap;
   const contract = { nap, num, suit, deputy, solo, call, revealedCall: false };
+  
   const playedCards = [];
   const voids = [{}, {}, {}, {}, {}];
-  
-  // 座席ごとの得点と獲得カードを追跡
   const seatPoints = [0, 0, 0, 0, 0];
   const seatTaken = [[], [], [], [], []];
-
+  
   const mySeat = 0;
-  const targetTrick = 1 + Math.floor(rng() * 5);
-  
-  // 自分の手番（0=リード, 1=2人目, 2=3人目, 3=4人目, 4=最後）をランダムに決定
-  const targetTurnIndex = Math.floor(rng() * 5);
-  // ターン開始位置を逆算して調整
-  let active = (mySeat - targetTurnIndex + 5) % 5;
-  
+  let active = nap;
   let trickNo = 0;
-  let captured = null;
+  const snapshots = [];
 
-  while (trickNo <= targetTrick && !captured) {
+  while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
       const seat = (active + i) % 5;
@@ -94,53 +89,65 @@ function simulateOnePlayScenario(rng) {
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       
-      // 狙ったトリックで、かつ自分の手番が回ってきたらキャプチャ
-      if (trickNo === targetTrick && seat === mySeat) {
-        captured = {
+      // 自分の手番の時、スナップショットを撮る
+      if (seat === mySeat) {
+        snapshots.push({
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
-          trickNo, playedCards: playedCards.slice(), voids: JSON.parse(JSON.stringify(voids)),
-          seat: mySeat, call: { suit: call.suit, rank: call.rank, id: call.id },
-          // 捨て札は得点札のみ公開
+          trickNo,
+          turnIndex: trick.length, // 0=リード, 1=2人目, 2=3人目, 3=4人目, 4=最後
+          playedCards: playedCards.slice(),
+          voids: JSON.parse(JSON.stringify(voids)),
+          seat: mySeat, 
+          call: { suit: call.suit, rank: call.rank, id: call.id },
           discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
           points: seatPoints.slice(),
           taken: seatTaken.map(arr => arr.slice())
-        };
-        break;
+        });
       }
+      
       const ctx = { hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy, discardedKitty: discarded, isRevealed: contract.revealedCall, params, call, currentNapPoints: 0, experience: null };
       const chosen = chooseCardToPlay(ctx) || legal[0];
+      
       if (led && chosen.suit !== led) { if (!voids[seat]) voids[seat] = {}; voids[seat][led] = true; }
       playedCards.push({ id: chosen.id, suit: chosen.suit, rank: chosen.rank, seat });
       if (chosen.id === call.id) contract.revealedCall = true;
       trick.push({ seat, card: chosen });
       hands[seat] = hand.filter(c => c.id !== chosen.id);
     }
-    if (captured) break;
+    
     const w = winningEntry(contract, trickNo, trick);
     const taken = trick.filter(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank)).map(e => e.card);
-    
-    // 獲得カードと得点を記録
     seatPoints[w.seat] += taken.length;
     seatTaken[w.seat].push(...taken.map(c => c.id));
     
-    active = w.seat; trickNo++;
+    active = w.seat; 
+    trickNo++;
   }
-  return captured;
+  return snapshots;
 }
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
+  // 問題番号に応じて 0(リード) 〜 4(最後) の手番をローテーションして指定
+  const desiredTurnIndex = idx % 5;
+  
   for (let attempt = 0; attempt < 50; attempt++) {
-    const cap = simulateOnePlayScenario(rng);
-    if (!cap) continue;
+    const snapshots = simulateOnePlayScenario(rng);
+    // 狙った手番のスナップショットだけを抽出
+    const validSnaps = snapshots.filter(s => s.turnIndex === desiredTurnIndex);
+    if (!validSnaps.length) continue;
+    
+    // 複数ある場合はランダムに1つ選ぶ
+    const cap = validSnaps[Math.floor(rng() * validSnaps.length)];
 
     const hand = cap.hand.map(cardFromId);
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
     const led = trick[0]?.card.suit;
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
     if (legal.length < 2) continue;
+    
     const ctx = { hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract, playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat, deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall, params, call: cap.contract.call, currentNapPoints: 0, experience: null };
     const aiChoice = chooseCardToPlay(ctx);
     if (!aiChoice) continue;
