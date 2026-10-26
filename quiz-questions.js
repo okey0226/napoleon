@@ -24,7 +24,6 @@ export function parseQuestionId(id) {
   return { category, index };
 }
 
-// --- 決定論的乱数（Mulberry32） ---
 function mulberry32(seed) {
   let s = seed | 0;
   return function () {
@@ -52,7 +51,6 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// ============ play ============
 function simulateOnePlayScenario(rng) {
   const deck = shuffleWithRng(buildDeck(), rng);
   const hands = [];
@@ -72,10 +70,18 @@ function simulateOnePlayScenario(rng) {
   const contract = { nap, num, suit, deputy, solo, call, revealedCall: false };
   const playedCards = [];
   const voids = [{}, {}, {}, {}, {}];
-  let active = nap, trickNo = 0;
+  
+  const mySeat = 0;
   const targetTrick = 1 + Math.floor(rng() * 5);
-  const targetSeat = Math.floor(rng() * 5);
+  
+  // 自分の手番（0=リード, 1=2人目, 2=3人目, 3=4人目, 4=最後）をランダムに決定
+  const targetTurnIndex = Math.floor(rng() * 5);
+  // ターン開始位置を逆算して調整
+  let active = (mySeat - targetTurnIndex + 5) % 5;
+  
+  let trickNo = 0;
   let captured = null;
+
   while (trickNo <= targetTrick && !captured) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
@@ -83,13 +89,15 @@ function simulateOnePlayScenario(rng) {
       const hand = hands[seat];
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
-      if (trickNo === targetTrick && seat === targetSeat) {
+      
+      // 狙ったトリックで、かつ自分の手番が回ってきたらキャプチャ
+      if (trickNo === targetTrick && seat === mySeat) {
         captured = {
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
           trickNo, playedCards: playedCards.slice(), voids: JSON.parse(JSON.stringify(voids)),
-          seat: targetSeat, call: { suit: call.suit, rank: call.rank, id: call.id },
+          seat: mySeat, call: { suit: call.suit, rank: call.rank, id: call.id },
           discarded: discarded.map(c => c.id)
         };
         break;
@@ -113,7 +121,8 @@ function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
   for (let attempt = 0; attempt < 50; attempt++) {
     const cap = simulateOnePlayScenario(rng);
-    if (!cap || !cap.trick.length) continue;
+    if (!cap) continue;
+
     const hand = cap.hand.map(cardFromId);
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
     const led = trick[0]?.card.suit;
@@ -122,12 +131,14 @@ function genPlayQuestion(rng, idx) {
     const ctx = { hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract, playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat, deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall, params, call: cap.contract.call, currentNapPoints: 0, experience: null };
     const aiChoice = chooseCardToPlay(ctx);
     if (!aiChoice) continue;
+    
     const options = legal.map((c, i) => ({ index: i, label: c.id, value: c.id }));
     const correctIdx = legal.findIndex(c => c.id === aiChoice.id);
     let roleLabel = '連合軍';
     if (cap.seat === cap.contract.nap) roleLabel = 'ナポレオン';
     else if (cap.seat === cap.contract.deputy && cap.contract.revealedCall) roleLabel = '副官';
     else if (hand.some(c => c.id === cap.contract.call.id)) roleLabel = '副官（未公開）';
+    
     return {
       id: makeQuestionId('play', idx), category: 'play',
       title: `第${cap.trickNo + 1}トリック：何を出す？（${roleLabel}）`,
@@ -145,7 +156,6 @@ function genPlayQuestion(rng, idx) {
   return null;
 }
 
-// ============ public API ============
 const _cache = new Map();
 export function getQuestion(id) {
   if (_cache.has(id)) return _cache.get(id);
