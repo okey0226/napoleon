@@ -126,7 +126,6 @@ function generateBidHistory(rng, high, mySeat, numPlayers = 5) {
 
 // ============ 1) bid ============
 function genBidQuestion(rng, idx) {
-  // ★ 問題生成のロジックを一新（オープン2枚を確定で含める）
   const deck = shuffleWithRng(buildDeck(), rng);
   const hand10 = deck.splice(0, 10); sortHand(hand10);
   const open2 = deck.splice(0, 2); sortHand(open2);
@@ -151,8 +150,15 @@ function genBidQuestion(rng, idx) {
   }
 
   const historyForAI = bidHistory.map(b => ({ round: 1, seat: b.seat, num: b.num, suit: b.suit }));
-  // AIには12枚（10+2）を渡す
-  const aiBid = shouldBid(hand12, high, 13, params, historyForAI, mySeat, null);
+  
+  let aiBid = null;
+  try {
+    // AIには12枚（10+2）を渡す
+    aiBid = shouldBid(hand12, high, 13, params, historyForAI, mySeat, null);
+  } catch (e) {
+    console.error('shouldBid error:', e);
+  }
+  
   const aiEncoded = aiBid ? encodeBid({ num: aiBid.num, suit: aiBid.suit, solo: !!aiBid.solo }) : 0;
 
   return {
@@ -162,7 +168,7 @@ function genBidQuestion(rng, idx) {
     inputMode: 'bid',
     scenario: {
       hand: hand10.map(c => c.id),
-      kitty: open2.map(c => c.id), // ★オープン2枚をデータに含める
+      kitty: open2.map(c => c.id),
       high: { num: high.num, suit: high.suit, player: high.player },
       bidHistory,
       mySeat,
