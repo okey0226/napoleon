@@ -917,3 +917,77 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .quiz-bid-history-row { font-size: 10px; padding: 3px 6px; }
   .quiz-bid-history-row.is-high strong { font-size: 11px; }
 }
+/* ===== 何切る：立ち履歴 ===== */
+.quiz-bid-history{margin:6px auto 10px;max-width:360px;padding:8px 10px;border:1px solid rgba(225,188,112,.22);border-radius:8px;background:rgba(0,0,0,.28);text-align:left}
+.quiz-bid-history-title{font-size:9px;color:#9bb0a4;letter-spacing:.08em;margin-bottom:5px;text-align:left;text-transform:uppercase}
+.quiz-bid-history-list{display:flex;flex-direction:column;gap:2px;max-height:140px;overflow-y:auto}
+.quiz-bid-history-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;font-size:11px;color:#c4d0c8;background:rgba(255,255,255,.025)}
+.quiz-bid-history-row .bid-player{color:var(--player-color,#f2f5ef);font-weight:600}
+.quiz-bid-history-row strong{color:#f3d48e;font-variant-numeric:tabular-nums;font-weight:700}
+.quiz-bid-history-row.is-high{background:rgba(225,188,112,.14);border:1px solid rgba(225,188,112,.4)}
+.quiz-bid-history-row.is-high strong{color:#f8e5a8;font-size:12px}
+
+/* ===== 何切る：bid 自由入力 ===== */
+.quiz-input-section{margin:8px 0;text-align:left}
+.quiz-input-label{font-size:10px;letter-spacing:.08em;color:#9bb0a4;margin-bottom:4px;font-weight:700}
+.quiz-input-row{display:flex;flex-wrap:wrap;gap:5px;justify-content:center}
+.quiz-input-btn{padding:8px 10px;border:1px solid rgba(226,239,230,.15);border-radius:7px;background:rgba(14,36,30,.85);color:#f2f5ef;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;min-width:44px;touch-action:manipulation}
+.quiz-input-btn:hover{border-color:rgba(225,188,112,.5);background:rgba(20,48,39,.9)}
+.quiz-input-btn.selected{border-color:rgba(225,188,112,.85);background:linear-gradient(135deg,rgba(225,188,112,.22),rgba(14,36,30,.9));color:#f8e5a8;box-shadow:0 0 12px rgba(225,188,112,.3)}
+.quiz-suit-btn{font-size:16px;min-width:48px;padding:8px}
+.quiz-num-btn{font-variant-numeric:tabular-nums}
+.quiz-solo-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#d3ded6;cursor:pointer;user-select:none;padding:6px 10px;border:1px solid rgba(226,239,230,.15);border-radius:6px;background:rgba(14,36,30,.6)}
+.quiz-solo-label input{width:16px;height:16px;cursor:pointer;accent-color:#e1bc70}
+.quiz-input-preview{margin:8px 0 4px;padding:8px 10px;border:1px solid rgba(225,188,112,.3);border-radius:8px;background:rgba(0,0,0,.28);font-size:13px;color:#c4d0c8;text-align:center}
+.quiz-input-preview strong{color:#f8e5a8;font-size:18px;font-weight:800;margin-left:4px;font-variant-numeric:tabular-nums}
+.quiz-input-warning{display:block;margin-top:4px;font-size:10px;color:#e89685}
+.quiz-input-actions{display:flex;gap:8px;justify-content:center;margin-top:8px}
+.quiz-input-actions button{flex:1;min-height:44px;max-width:180px}
+
+/* ===== 何切る：bid 結果 ===== */
+.quiz-bid-answers-summary{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:8px 0}
+.quiz-answer-pill{padding:6px 12px;border-radius:99px;font-size:11px;border:1px solid;background:rgba(0,0,0,.3)}
+.quiz-answer-pill.is-mine{border-color:rgba(143,200,160,.7);color:#a9d2ae}
+.quiz-answer-pill.is-ai{border-color:rgba(225,188,112,.75);color:#f3d48e}
+.quiz-answer-pill strong{font-weight:800;margin-left:2px}
+.quiz-dist-list{display:flex;flex-direction:column;gap:4px;margin:6px 0;max-height:220px;overflow-y:auto;text-align:left}
+.quiz-dist-row{display:grid;grid-template-columns:60px 1fr 76px auto;align-items:center;gap:6px;padding:5px 8px;border:1px solid rgba(226,239,230,.08);border-radius:6px;background:rgba(14,36,30,.6);font-size:11px}
+.quiz-dist-row.is-mine{border-color:rgba(143,200,160,.55);background:rgba(30,60,50,.7)}
+.quiz-dist-row.is-ai{border-color:rgba(225,188,112,.6);background:rgba(50,45,25,.7)}
+.quiz-dist-row.is-mine.is-ai{border-color:rgba(225,188,112,.8);background:linear-gradient(135deg,rgba(143,200,160,.12),rgba(225,188,112,.12))}
+.quiz-dist-label{font-weight:700;color:#f3d48e;font-variant-numeric:tabular-nums;white-space:nowrap}
+.quiz-dist-bar-wrap{position:relative;height:12px;background:rgba(0,0,0,.35);border-radius:3px;overflow:hidden}
+.quiz-dist-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(225,188,112,.4),rgba(225,188,112,.7));border-radius:3px;transition:width .4s}
+.quiz-dist-count{font-size:10px;color:#c4d0c8;font-variant-numeric:tabular-nums;text-align:right}
+.quiz-dist-tags{display:flex;gap:3px;flex-shrink:0}
+.quiz-dist-empty{padding:16px;text-align:center;color:#8fa69a;font-size:11px}
+
+/* ===== 何切る：次へボタン強調 ===== */
+.quiz-next-btn{width:100%;margin-top:12px;min-height:48px;font-size:14px;font-weight:800;letter-spacing:.05em;background:linear-gradient(135deg,#b79a60,#d5b365);color:#17211a;box-shadow:0 4px 16px rgba(225,188,112,.35);transition:transform .15s,box-shadow .15s}
+.quiz-next-btn:hover{transform:translateY(-2px);box-shadow:0 6px 22px rgba(225,188,112,.5)}
+
+@media(max-width:760px){
+  .quiz-bid-history{margin:4px auto 8px;padding:6px 8px}
+  .quiz-bid-history-list{max-height:100px}
+  .quiz-bid-history-row{font-size:10px;padding:3px 6px}
+  .quiz-bid-history-row.is-high strong{font-size:11px}
+  .quiz-input-row{gap:4px}
+  .quiz-input-btn{padding:10px 8px;font-size:14px;min-width:46px;min-height:46px}
+  .quiz-suit-btn{min-width:50px;min-height:50px;font-size:18px}
+  .quiz-solo-label{padding:8px 12px;font-size:13px;min-height:44px}
+  .quiz-input-preview{padding:8px;font-size:12px}
+  .quiz-input-preview strong{font-size:17px}
+  .quiz-input-actions button{min-height:48px;font-size:14px}
+  .quiz-dist-list{max-height:180px}
+  .quiz-dist-row{grid-template-columns:52px 1fr 60px;font-size:10px;padding:4px 6px}
+  .quiz-dist-tags{grid-column:1/-1;justify-content:flex-end;margin-top:2px}
+  .quiz-next-btn{min-height:52px;font-size:15px;margin-top:10px}
+  .quiz-bid-answers-summary{gap:6px}
+  .quiz-answer-pill{font-size:10px;padding:5px 10px}
+}
+
+@media(max-width:400px){
+  .quiz-input-btn{min-width:42px;padding:8px 6px;font-size:13px}
+  .quiz-suit-btn{min-width:44px;font-size:16px}
+  .quiz-dist-row{grid-template-columns:48px 1fr 54px}
+}
