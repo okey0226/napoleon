@@ -262,7 +262,8 @@ function renderGameReplica(q, fallbackId = '') {
 
 function renderQuestionPanel(q, mySeat, category) {
   const isReveal = q.reveal;
-  
+  const nextBtn = `<button class="primary-button quiz-next-btn" id="quiz-next">次の問題へ →</button>`;
+
   if (category === 'bid') {
     return isReveal ? renderBidReveal(q, mySeat) : renderBidInput(q, mySeat);
   }
@@ -284,7 +285,7 @@ function renderQuestionPanel(q, mySeat, category) {
     }).join('');
     return `<div class="quiz-panel-title">副官に指名するカードを選んでください</div>
       <div class="quiz-call-grid">${opts}</div>
-      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>${nextBtn}` : ''}`;
   }
 
   if (category === 'discard') {
@@ -304,7 +305,7 @@ function renderQuestionPanel(q, mySeat, category) {
     }).join('');
     return `<div class="quiz-panel-title">捨てる組み合わせを選ぶ（手札を2枚クリックでもOK）</div>
       <div class="quiz-discard-grid">${opts}</div>
-      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>${nextBtn}` : ''}`;
   }
 
   if (category === 'play') {
@@ -324,7 +325,7 @@ function renderQuestionPanel(q, mySeat, category) {
     }).join('');
     return `<div class="quiz-panel-title">出すカードを選んでください（手札のハイライトからもOK）</div>
       <div class="quiz-play-grid">${opts}</div>
-      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>` : ''}`;
+      ${isReveal ? `<div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>${nextBtn}` : ''}`;
   }
   return '';
 }
@@ -453,7 +454,8 @@ function renderBidReveal(q, mySeat) {
       <div class="quiz-answer-pill is-ai">AI: <strong>${escapeHTML(aiLabel)}</strong></div>
     </div>
     <div class="quiz-dist-list">${distHTML}</div>
-    <div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>`;
+    <div class="quiz-explanation">${escapeHTML(q.explanation || '')}</div>
+    <button class="primary-button quiz-next-btn" id="quiz-next">次の問題へ →</button>`;
 }
 
 function bindOptionClicks(q) {
