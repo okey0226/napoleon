@@ -899,7 +899,42 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 .quiz-dist-tags{display:flex;gap:3px;flex-shrink:0}
 .quiz-dist-empty{padding:16px;text-align:center;color:#8fa69a;font-size:11px}
 
-/* ===== 何切る：bid 特化レイアウト ===== */
+/* ===== 何切る：bid 特化レイアウト（オープン2枚を上部に強制表示） ===== */
+.quiz-open-kitty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 8px 0;
+  z-index: 20;
+  position: relative;
+}
+.quiz-open-kitty-wrap .open-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 4px;
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+.quiz-open-cards {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+.quiz-open-cards .card {
+  width: 48px;
+  height: 68px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border: 1px solid rgba(226,229,223,.9);
+  background: #fbfaf6;
+}
+.quiz-open-cards .card .rank { font-size: 16px; left: 4px; top: 4px; font-weight:800; }
+.quiz-open-cards .card .suit { font-size: 14px; left: 6px; top: 22px; }
+
 .quiz-bid-history-wrapper {
   flex-shrink: 0;
   width: 100%;
@@ -943,9 +978,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   z-index: 30;
   overflow-y: auto;
 }
-.quiz-game-bid .center-table {
-  top: 40%;
-}
 .quiz-bid-controls {
   display: flex;
   align-items: center;
@@ -983,6 +1015,24 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 
 @media(max-width: 760px){
+  .quiz-open-kitty-wrap {
+    margin: 4px 0;
+  }
+  .quiz-open-cards .card {
+    width: 40px !important;
+    height: 58px !important;
+  }
+  .quiz-open-cards .card .rank {
+    font-size: 13px !important;
+    left: 3px !important;
+    top: 3px !important;
+  }
+  .quiz-open-cards .card .suit {
+    font-size: 12px !important;
+    left: 4px !important;
+    top: 18px !important;
+  }
+
   .quiz-bid-history-wrapper {
     margin-bottom: 2px;
   }
@@ -1004,9 +1054,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
     border-left: none !important;
     border-right: none !important;
     border-bottom: none !important;
-  }
-  .quiz-game-bid .center-table {
-    top: 35% !important;
   }
   .quiz-bid-controls {
     margin-top: 6px;
