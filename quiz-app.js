@@ -261,6 +261,7 @@ function renderGameReplica(q, fallbackId = '') {
         <div class="bid-input-area">
           ${panelHTML}
         </div>
+        <div class="quiz-bid-spacer"></div>
         <div class="hand-dock">
           <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span> + オープン 2枚</div>
           <div class="hand ${handMode}">${handHTML}</div>
