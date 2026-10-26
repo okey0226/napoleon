@@ -1279,3 +1279,43 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .quiz-game .trick-card.played-seat-3 { left: 30% !important; top: 35% !important; }
   .quiz-game .trick-card.played-seat-4 { left: 30% !important; top: 60% !important; }
 }
+/* ===== 何切る：切り札カウンター ===== */
+.trump-counter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 4px auto;
+  padding: 4px 12px;
+  border: 1px solid rgba(225,188,112,.25);
+  border-radius: 8px;
+  background: rgba(0,0,0,.4);
+  font-size: 11px;
+  color: #dce8df;
+  width: fit-content;
+}
+.trump-counter .trump-suit {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--gold);
+}
+.trump-counter span b {
+  color: #f3d48e;
+  font-size: 13px;
+  margin-left: 2px;
+}
+
+@media (max-width: 760px) {
+  .trump-counter {
+    margin: 2px auto;
+    padding: 2px 8px;
+    gap: 8px;
+    font-size: 10px;
+  }
+  .trump-counter .trump-suit {
+    font-size: 14px;
+  }
+  .trump-counter span b {
+    font-size: 12px;
+  }
+}
