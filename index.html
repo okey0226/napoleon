@@ -9,8 +9,17 @@
   <link rel="stylesheet" href="/style.css">
   <script>
     window.NAPOLEON_WS_URL = 'wss://napoleon-4ufm.onrender.com/ws';
+    
+    // エラーを画面に表示するデバッグ用リスナー
+    window.addEventListener('error', function(e) {
+      const errDiv = document.createElement('div');
+      errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;z-index:99999;padding:10px;font-size:12px;word-break:break-all;';
+      errDiv.textContent = 'Error: ' + e.message + ' at ' + (e.filename || '').split('/').pop() + ':' + e.lineno;
+      document.body.appendChild(errDiv);
+    });
   </script>
-  <script type="module" src="/app.js"></script>
+  <!-- ★ キャッシュ回避のため ?v=3 を追加 -->
+  <script type="module" src="/app.js?v=3"></script>
 </head>
 <body>
   <header class="topbar">
