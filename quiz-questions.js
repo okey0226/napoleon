@@ -14,6 +14,31 @@ export const QUIZ_LABELS = {
   play: '何を出す？'
 };
 
+// ===== bid の自由入力エンコード =====
+export const BID_SUITS = ['♣', '♦', '♥', '♠', 'NT'];
+export function encodeBid(bid) {
+  if (!bid || bid.pass) return 0;
+  const suitIdx = BID_SUITS.indexOf(bid.suit);
+  if (suitIdx < 0) return 0;
+  const numIdx = bid.num - 13;
+  if (numIdx < 0 || numIdx > 7) return 0;
+  return 1 + numIdx * 10 + suitIdx + (bid.solo ? 5 : 0);
+}
+export function decodeBid(encoded) {
+  const e = Number(encoded);
+  if (!Number.isFinite(e) || e <= 0) return { pass: true, num: null, suit: null, solo: false, label: 'パス' };
+  const v = e - 1;
+  const numIdx = Math.floor(v / 10);
+  const rem = v % 10;
+  const solo = rem >= 5;
+  const suitIdx = rem - (solo ? 5 : 0);
+  if (numIdx < 0 || numIdx > 7 || suitIdx < 0 || suitIdx > 4) {
+    return { pass: true, num: null, suit: null, solo: false, label: 'パス' };
+  }
+  const num = 13 + numIdx, suit = BID_SUITS[suitIdx];
+  return { pass: false, num, suit, solo, label: `${num}${suit}${solo ? '（ソロ）' : ''}` };
+}
+
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
@@ -58,16 +83,13 @@ function buildDeck() {
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 function SV(s) { return { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 }[s] || 0; }
 
-// =========================================================
-// 立ち履歴の生成：現在の high に至るまでの合法的な競り履歴
-// =========================================================
+// ============ 立ち履歴の生成 ============
 function generateBidHistory(rng, high, mySeat, numPlayers = 5) {
   if (high.num < 13) return [];
   const suitPool = SUITS.concat(['NT']);
   const otherSeats = [];
   for (let i = 0; i < numPlayers; i++) if (i !== mySeat) otherSeats.push(i);
 
-  // high より厳密に弱い合法ビッドを列挙
   const allBids = [];
   for (let n = 13; n <= high.num; n++) {
     for (const s of suitPool) {
@@ -79,7 +101,6 @@ function generateBidHistory(rng, high, mySeat, numPlayers = 5) {
     return [{ seat: high.player, num: high.num, suit: high.suit }];
   }
 
-  // 中間ビッドを 0〜3 個選ぶ
   const numIntermediate = Math.floor(rng() * 4);
   let finalPicked = [];
   if (numIntermediate > 0) {
@@ -113,14 +134,13 @@ function genBidQuestion(rng, idx) {
   const mySeat = 0;
   const suitPool = SUITS.concat(['NT']);
 
-  // 70% の確率で「現在の最高宣言」が存在する状況
   const hasHighBid = rng() < 0.7;
   let high, bidHistory;
 
   if (hasHighBid) {
-    const highNum = 13 + Math.floor(rng() * 5); // 13〜17
+    const highNum = 13 + Math.floor(rng() * 5);
     const highSuit = suitPool[Math.floor(rng() * suitPool.length)];
-    const highPlayer = 1 + Math.floor(rng() * 4); // 席1〜4（自分以外）
+    const highPlayer = 1 + Math.floor(rng() * 4);
     high = { num: highNum, suit: highSuit, player: highPlayer, solo: false };
     bidHistory = generateBidHistory(rng, high, mySeat, 5);
   } else {
@@ -128,80 +148,24 @@ function genBidQuestion(rng, idx) {
     bidHistory = [];
   }
 
-  const minNext = Math.max(13, high.num + 1);
-  const candidates = [];
-  for (let num = minNext; num <= 20; num++) {
-    for (const suit of suitPool) {
-      if (num === high.num && high.suit && SV(suit) <= SV(high.suit)) continue;
-      const strength = suit === 'NT' ? ntHandStrength(hand, params) : colorStrength(hand, suit, params);
-      const p = estimatedWinRate(strength, num);
-      if (p < 0.05) continue;
-      candidates.push({ num, suit, solo: false, p, score: p * num });
-    }
-  }
-  for (const suit of SUITS) {
-    const trumps = hand.filter(c => c.suit === suit);
-    if (trumps.length < 4) continue;
-    const hasMighty = hand.some(c => c.id === '♠A');
-    const ss = handStrength(hand) + trumps.length * 0.5 + (hasMighty ? 1.5 : 0);
-    if (ss < 15.5) continue;
-    for (let num = minNext; num <= 20; num++) {
-      const p = estimatedWinRate(ss, num);
-      if (p < 0.25) continue;
-      candidates.push({ num, suit, solo: true, p, score: p * num * 1.2 });
-    }
-  }
-
-  // 立ち履歴を AI に渡して、相手の動向を考慮した判断をさせる
   const historyForAI = bidHistory.map(b => ({ round: 1, seat: b.seat, num: b.num, suit: b.suit }));
   const aiBid = shouldBid(hand, high, 13, params, historyForAI, mySeat, null);
-
-  candidates.sort((a, b) => b.score - a.score);
-  const picked = [], seen = new Set();
-  if (aiBid) {
-    const key = `${aiBid.num}-${aiBid.suit}-${!!aiBid.solo}`;
-    picked.push({ num: aiBid.num, suit: aiBid.suit, solo: !!aiBid.solo, isAI: true });
-    seen.add(key);
-  }
-  for (const c of candidates) {
-    if (picked.length >= 4) break;
-    const key = `${c.num}-${c.suit}-${!!c.solo}`;
-    if (seen.has(key)) continue;
-    picked.push({ num: c.num, suit: c.suit, solo: !!c.solo });
-    seen.add(key);
-  }
-  // 最低2択を保証
-  for (const fallback of [{ num: 13, suit: '♣', solo: false }, { num: 13, suit: '♠', solo: false }, { num: 14, suit: '♣', solo: false }]) {
-    if (picked.length >= 4) break;
-    const key = `${fallback.num}-${fallback.suit}-false`;
-    if (seen.has(key)) continue;
-    picked.push(fallback); seen.add(key);
-  }
-  picked.push({ num: 0, suit: '', solo: false, pass: true });
-
-  const displayed = shuffleWithRng(picked, rng);
-  const labels = displayed.map(o => o.pass ? 'パス（降りる）' : `${o.num}${o.suit}${o.solo ? '（ソロ）' : ''}`);
-  const correctIdx = displayed.findIndex(o => aiBid
-    ? (o.num === aiBid.num && o.suit === aiBid.suit && !!o.solo === !!aiBid.solo)
-    : o.pass);
+  const aiEncoded = aiBid ? encodeBid({ num: aiBid.num, suit: aiBid.suit, solo: !!aiBid.solo }) : 0;
 
   return {
     id: makeQuestionId('bid', idx),
     category: 'bid',
     title: '競り：何で立つ？',
+    inputMode: 'bid',
     scenario: {
       hand: hand.map(c => c.id),
       high: { num: high.num, suit: high.suit, player: high.player },
-      bidHistory,   // ← 立ち履歴を追加
+      bidHistory,
       mySeat,
       minBid: 13
     },
-    options: displayed.map((o, i) => ({
-      index: i,
-      label: labels[i],
-      value: o.pass ? null : { num: o.num, suit: o.suit, solo: o.solo }
-    })),
-    aiAnswerIndex: correctIdx >= 0 ? correctIdx : displayed.length - 1,
+    options: [],
+    aiAnswerIndex: aiEncoded,
     explanation: aiBid
       ? `AIは ${aiBid.num}${aiBid.suit}${aiBid.solo ? '（ソロ）' : ''} を選択。`
       : 'AIはパスを選択。'
