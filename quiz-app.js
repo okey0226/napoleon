@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { bid: '何で立つ？', call: '誰を指名する？', discard: '何を切る？', play: '何を出す？' };
 const CATEGORY_PHASE = { bid: '競り', call: '副官指名', discard: '浮き札の交換', play: 'カードプレイ' };
 const BID_SUITS = ['♣', '♦', '♥', '♠', 'NT'];
+// ★ オブジェクトとして定義
 const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 };
 
 let _bound = false;
@@ -149,7 +150,8 @@ function renderGameReplica(q, fallbackId = '') {
     if (high.num >= 13) {
       if (num === high.num && SV[suit] <= SV[high.suit]) {
         const candidates = ['NT', '♠', '♥', '♦', '♣'];
-        const found = candidates.find(s => SV(s) > SV[high.suit]);
+        // ★ 修正: SV(s) ではなく SV[s]
+        const found = candidates.find(s => SV[s] > SV[high.suit]);
         if (found) suit = found;
         else num = Math.min(20, high.num + 1);
       }
@@ -374,6 +376,7 @@ function renderBidHistory(q, mySeat) {
 function renderBidInput(q, mySeat) {
   const high = q.scenario?.high || { num: 12, suit: '', player: -1 };
   const state = _bidInput;
+  // ★ 修正: SV[suit] を使用
   const isValid = high.num < 13 || (state.num > high.num) || (state.num === high.num && high.suit && SV[state.suit] > SV[high.suit]);
 
   const titleText = high.num >= 13
