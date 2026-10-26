@@ -71,6 +71,10 @@ function simulateOnePlayScenario(rng) {
   const playedCards = [];
   const voids = [{}, {}, {}, {}, {}];
   
+  // 座席ごとの得点と獲得カードを追跡
+  const seatPoints = [0, 0, 0, 0, 0];
+  const seatTaken = [[], [], [], [], []];
+
   const mySeat = 0;
   const targetTrick = 1 + Math.floor(rng() * 5);
   
@@ -98,7 +102,10 @@ function simulateOnePlayScenario(rng) {
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
           trickNo, playedCards: playedCards.slice(), voids: JSON.parse(JSON.stringify(voids)),
           seat: mySeat, call: { suit: call.suit, rank: call.rank, id: call.id },
-          discarded: discarded.map(c => c.id)
+          // 捨て札は得点札のみ公開
+          discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
+          points: seatPoints.slice(),
+          taken: seatTaken.map(arr => arr.slice())
         };
         break;
       }
@@ -112,6 +119,12 @@ function simulateOnePlayScenario(rng) {
     }
     if (captured) break;
     const w = winningEntry(contract, trickNo, trick);
+    const taken = trick.filter(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank)).map(e => e.card);
+    
+    // 獲得カードと得点を記録
+    seatPoints[w.seat] += taken.length;
+    seatTaken[w.seat].push(...taken.map(c => c.id));
+    
     active = w.seat; trickNo++;
   }
   return captured;
@@ -147,7 +160,9 @@ function genPlayQuestion(rng, idx) {
         seat: cap.seat, hand: cap.hand, trick: cap.trick, trickNo: cap.trickNo,
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
-        discarded: cap.discarded
+        discarded: cap.discarded,
+        points: cap.points,
+        taken: cap.taken
       },
       options, aiAnswerIndex: correctIdx >= 0 ? correctIdx : 0,
       explanation: `AIは ${aiChoice.id} を選択。`
