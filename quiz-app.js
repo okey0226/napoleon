@@ -92,14 +92,29 @@ function renderProgress(p) {
   const pct = p.total ? Math.round(p.answered / p.total * 100) : 0;
   el.innerHTML = `
     <div class="quiz-progress-track"><div class="quiz-progress-fill" style="width:${pct}%"></div></div>
-    <div class="quiz-progress-meta">${p.answered} / ${p.total}問（${pct}%）</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+      <button id="quiz-reset-btn" style="background:none; border:none; color:#e89685; font-size:10px; text-decoration:underline; cursor:pointer;">最初からやり直す</button>
+      <div class="quiz-progress-meta" style="margin:0;">${p.answered} / ${p.total}問（${pct}%）</div>
+    </div>
     <div class="quiz-cat-chips">${Object.entries(p.perCategory).map(([c, v]) => `<span class="quiz-cat-chip">${QUIZ_LABELS[c] || c}: ${v.answered}/${v.total}</span>`).join('')}</div>`;
+  
+  const resetBtn = $('quiz-reset-btn');
+  if (resetBtn) {
+    resetBtn.onclick = async () => {
+      if (!confirm('回答履歴をすべて削除して、最初からやり直しますか？')) return;
+      try {
+        await authFetch('/api/quiz/reset', { method: 'POST' });
+        loadProgress();
+      } catch (e) {
+        alert('リセットに失敗しました');
+      }
+    };
+  }
 }
 
 async function loadQuestion(id) {
   renderLoading();
   try {
-    // ★ キャッシュ破棄のためタイムスタンプを付与
     const res = await authFetch('/api/quiz/q/' + encodeURIComponent(id) + '?t=' + Date.now());
     const text = await res.text();
     let data;
@@ -147,7 +162,7 @@ function renderGameReplica(q, fallbackId = '') {
   const points = q.scenario?.points || [0,0,0,0,0];
   const taken = q.scenario?.taken || [[],[],[],[],[]];
 
-  // ★ 切り札カウンター
+  // 切り札カウンター
   let trumpInfoHTML = '';
   if (contract && contract.suit && contract.suit !== 'NT') {
     const trumpSuit = contract.suit;
