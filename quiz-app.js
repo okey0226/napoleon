@@ -2,6 +2,8 @@
 const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { play: '何を出す？' };
 const CATEGORY_PHASE = { play: 'カードプレイ' };
+const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 };
+const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
 let _bound = false;
 
@@ -30,6 +32,33 @@ function getSeatName(seat, mySeat) {
     if (i === seat) return `COM ${comIdx}`;
   }
   return `COM ${seat}`;
+}
+
+// 獲得したカードを表示する関数
+function addTakenCards(seatEl, cards) {
+  if (!cards || !cards.length) return;
+  const row = document.createElement('div');
+  row.className = 'taken-cards';
+  
+  const label = document.createElement('span');
+  label.className = 'taken-label';
+  label.textContent = '獲得 ' + cards.length;
+  row.append(label);
+  
+  cards.slice().sort((a, b) => {
+    const sa = a[0], ra = a.slice(1);
+    const sb = b[0], rb = b.slice(1);
+    return SV[sa] - SV[sb] || RANKS.indexOf(ra) - RANKS.indexOf(rb);
+  }).forEach(id => {
+    const suit = id[0], rank = id.slice(1);
+    const isRed = suit === '♦' || suit === '♥';
+    const tag = document.createElement('span');
+    tag.className = 'taken-card ' + (isRed ? 'red' : '');
+    tag.textContent = suit + rank;
+    row.append(tag);
+  });
+  
+  seatEl.append(row);
 }
 
 export function openQuizScreen() {
@@ -113,6 +142,8 @@ function renderGameReplica(q, fallbackId = '') {
   const mySeat = getMySeat(q);
   const disp = actual => (actual - mySeat + 5) % 5;
   const contract = q.scenario?.contract;
+  const points = q.scenario?.points || [0,0,0,0,0];
+  const taken = q.scenario?.taken || [[],[],[],[],[]];
 
   let messageText = q.scenario?.trick?.length ? 'あなたの番です。場札に続けてください' : 'あなたが先攻です。カードを出してください';
 
@@ -146,10 +177,11 @@ function renderGameReplica(q, fallbackId = '') {
       else if (revealed && actual === deputy) role = '副官';
       else if (revealed) role = '連合軍';
     }
-    seatEls.push(`<div class="player-seat player-color-${pos} pos-${pos} ${actual===mySeat?'me':''} ${activeSeat===actual?'active':''} ${role==='副官'?'deputy-seat':''}">
+    const seatHtml = `<div class="player-seat player-color-${pos} pos-${pos} ${actual===mySeat?'me':''} ${activeSeat===actual?'active':''} ${role==='副官'?'deputy-seat':''}">
       <div class="seat-name">${escapeHTML(seatNames[actual])}</div>
       <div class="seat-role ${role==='副官'?'deputy-status':''}">${escapeHTML(role)}</div>
-    </div>`);
+    </div>`;
+    seatEls.push(seatHtml);
   }
 
   let trickCardsHTML = '';
@@ -193,6 +225,13 @@ function renderGameReplica(q, fallbackId = '') {
         <div class="hand">${handHTML}</div>
       </div>
     </div>`;
+
+  // 座席に獲得カードを追加
+  document.querySelectorAll('.quiz-game .player-seat').forEach((el, i) => {
+    // posクラスから元の座席を特定
+    const actualSeat = (mySeat + i) % 5;
+    addTakenCards(el, taken[actualSeat]);
+  });
 
   const innerBack = $('quiz-inner-back');
   if (innerBack) innerBack.onclick = () => {
