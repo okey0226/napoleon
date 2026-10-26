@@ -34,7 +34,6 @@ function getSeatName(seat, mySeat) {
   return `COM ${seat}`;
 }
 
-// 獲得したカードを表示する関数
 function addTakenCards(seatEl, cards) {
   if (!cards || !cards.length) return;
   const row = document.createElement('div');
@@ -200,7 +199,6 @@ function renderGameReplica(q, fallbackId = '') {
 
   const panelHTML = renderQuestionPanel(q, mySeat);
 
-  // 回答前の play ではパネルを出さない
   const isPlayAndNotReveal = (category === 'play' && !q.reveal);
 
   shell.innerHTML = `
@@ -226,9 +224,7 @@ function renderGameReplica(q, fallbackId = '') {
       </div>
     </div>`;
 
-  // 座席に獲得カードを追加
   document.querySelectorAll('.quiz-game .player-seat').forEach((el, i) => {
-    // posクラスから元の座席を特定
     const actualSeat = (mySeat + i) % 5;
     addTakenCards(el, taken[actualSeat]);
   });
