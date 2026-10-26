@@ -17,13 +17,6 @@ async function getSessionUser(request, env) {
   } catch { return null; }
 }
 
-function inferCategory(id) {
-  if (typeof id !== 'string') return '';
-  if (id.includes('-')) return id.split('-')[0];
-  return '';
-}
-
-// キャッシュを無効化するラッパー
 function noCacheJson(data, init = {}) {
   const headers = Object.assign({}, init.headers || {}, {
     'content-type': 'application/json',
@@ -67,14 +60,9 @@ export async function handleQuizRequest(request, env, url) {
       return noCacheJson({ error: '問題生成エラー: ' + e.message }, { status: 500 });
     }
 
-    if (!question) {
-      const cat = inferCategory(mQ[1]);
-      if (!cat) return noCacheJson({ error: 'not found' }, { status: 404 });
-      question = { id: mQ[1], category: cat, title: '不明', scenario: {}, options: [], aiAnswerIndex: 0, explanation: '' };
-    }
+    if (!question) return noCacheJson({ error: 'not found' }, { status: 404 });
 
-    const category = question.category || inferCategory(question.id);
-
+    const category = question.category;
     let myAnswer = null;
     try {
       if (userId) {
@@ -132,33 +120,16 @@ export async function handleQuizRequest(request, env, url) {
     return noCacheJson({ ok: true, myAnswer: choice });
   }
 
-  // GET /api/quiz/insights
-  if (url.pathname === '/api/quiz/insights' && request.method === 'GET') {
+  // POST /api/quiz/reset (履歴リセット)
+  if (url.pathname === '/api/quiz/reset' && request.method === 'POST') {
+    const userId = await getSessionUser(request, env);
+    if (!userId) return noCacheJson({ error: 'auth required' }, { status: 401 });
     try {
-      const { results } = await env.DB.prepare(`SELECT question_id, choice_index, COUNT(*) AS c FROM quiz_answers GROUP BY question_id, choice_index`).all();
-      const byQ = new Map();
-      for (const r of (results || [])) {
-        if (!byQ.has(r.question_id)) byQ.set(r.question_id, []);
-        byQ.get(r.question_id).push({ index: Number(r.choice_index), count: Number(r.c) });
-      }
-      const out = [];
-      for (const [qid, dist] of byQ) {
-        const total = dist.reduce((n, d) => n + d.count, 0);
-        if (total < 5) continue;
-        const question = getQuestion(qid);
-        if (!question) continue;
-        const sorted = dist.slice().sort((a, b) => b.count - a.count);
-        const majorityIdx = sorted[0].index;
-        const agreement = sorted[0].count / total;
-        out.push({
-          questionId: qid, category: question.category, title: question.title, total, majorityIdx, agreement,
-          aiAnswerIndex: question.aiAnswerIndex, aiAgrees: majorityIdx === question.aiAnswerIndex,
-          distribution: (question.options || []).map((o, i) => ({ index: i, label: o.label, count: dist.find(d => d.index === i)?.count || 0, isAI: i === question.aiAnswerIndex }))
-        });
-      }
-      out.sort((a, b) => b.total - a.total);
-      return noCacheJson({ all: out.slice(0, 50), disagreements: out.filter(o => !o.aiAgrees && o.agreement >= 0.5) });
-    } catch (e) { return noCacheJson({ error: e.message }, { status: 500 }); }
+      await env.DB.prepare("DELETE FROM quiz_answers WHERE user_id=?").bind(userId).run();
+      return noCacheJson({ ok: true });
+    } catch (e) {
+      return noCacheJson({ error: e.message }, { status: 500 });
+    }
   }
 
   return null;
