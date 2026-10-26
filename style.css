@@ -1322,3 +1322,250 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .quiz-game-bid .hand .card .rank { font-size: 13px !important; top: 3px !important; left: 3px !important; }
   .quiz-game-bid .hand .card .suit { font-size: 12px !important; top: 18px !important; left: 4px !important; }
 }
+/* ===== 何切る：bid 専用レイアウト（モバイルスクロールレス・手札拡大） ===== */
+@media (max-width: 760px) {
+  /* 画面全体のスクロールと進捗バーを消して高さを完全確保 */
+  .quiz-screen:has(.quiz-game-bid) {
+    height: calc(100dvh - 48px) !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+  .quiz-screen:has(.quiz-game-bid) .quiz-progress {
+    display: none !important;
+  }
+  .quiz-shell {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  /* ゲーム画面をflex縦並びに */
+  .quiz-shell .game-screen.quiz-game-bid {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #0b2620 !important;
+  }
+
+  .quiz-game-bid .game-head {
+    height: 32px !important;
+    flex-shrink: 0 !important;
+    border-bottom: 1px solid rgba(225,188,112,.15) !important;
+  }
+  .quiz-game-bid .contract-info {
+    height: 28px !important;
+    flex-shrink: 0 !important;
+    border-radius: 0 !important;
+    border-left: none !important;
+    border-right: none !important;
+    margin: 0 !important;
+  }
+
+  /* オープンと履歴を横並びに */
+  .quiz-game-bid .bid-info-area {
+    flex-direction: row !important;
+    justify-content: space-between !important;
+    padding: 4px 8px !important;
+    margin: 0 !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+    background: rgba(0,0,0,.2) !important;
+    border-bottom: 1px solid rgba(225,188,112,.1) !important;
+  }
+  .quiz-game-bid .quiz-open-kitty-wrap {
+    margin: 0 !important;
+    flex-direction: row !important;
+    width: auto !important;
+    gap: 6px !important;
+  }
+  .quiz-game-bid .quiz-open-kitty-wrap .open-label {
+    font-size: 9px !important;
+    margin: 0 !important;
+    writing-mode: vertical-rl !important;
+    letter-spacing: 1px !important;
+  }
+  .quiz-game-bid .quiz-open-cards {
+    width: auto !important;
+    gap: 4px !important;
+  }
+  .quiz-game-bid .quiz-open-cards .card {
+    width: 34px !important;
+    height: 48px !important;
+  }
+  .quiz-game-bid .quiz-open-cards .card .rank {
+    font-size: 11px !important;
+    left: 2px !important;
+    top: 2px !important;
+  }
+  .quiz-game-bid .quiz-open-cards .card .suit {
+    font-size: 10px !important;
+    left: 3px !important;
+    top: 15px !important;
+  }
+
+  /* 立ち履歴を右側に横スクロールでコンパクトに */
+  .quiz-game-bid .quiz-bid-history-wrapper {
+    margin: 0 !important;
+    width: 100% !important;
+    flex: 1 !important;
+    justify-content: flex-end !important;
+  }
+  .quiz-game-bid .quiz-bid-history {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .quiz-game-bid .quiz-bid-history-title {
+    display: none !important;
+  }
+  .quiz-game-bid .quiz-bid-history-list {
+    max-height: 52px !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap !important;
+    gap: 4px !important;
+  }
+  .quiz-game-bid .quiz-bid-history-row {
+    display: inline-flex !important;
+    padding: 2px 6px !important;
+    font-size: 10px !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    border-radius: 4px !important;
+    background: rgba(0,0,0,.3) !important;
+  }
+  .quiz-game-bid .quiz-bid-history-row.is-high {
+    border-color: rgba(225,188,112,.5) !important;
+    background: rgba(225,188,112,.1) !important;
+  }
+
+  /* 入力パネル */
+  .quiz-game-bid .bid-input-area {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    flex-shrink: 0 !important;
+    background: rgba(9,26,22,.98) !important;
+    border-top: 1px solid rgba(225,188,112,.3) !important;
+    padding: 4px 8px !important;
+    margin: 0 !important;
+    z-index: 10 !important;
+  }
+
+  /* パネル内の余白を極限まで削る */
+  .quiz-game-bid .quiz-panel {
+    position: relative !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .quiz-game-bid .quiz-panel-title {
+    font-size: 10px !important;
+    margin-bottom: 2px !important;
+    color: #e8d7a9 !important;
+    text-align: center !important;
+  }
+  .quiz-game-bid .quiz-input-section {
+    margin: 2px 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+  .quiz-game-bid .quiz-input-row {
+    gap: 2px !important;
+  }
+  .quiz-game-bid .quiz-input-btn {
+    flex: 1 !important;
+    min-width: 0 !important;
+    padding: 2px 0 !important;
+    height: 28px !important;
+    font-size: 11px !important;
+    border-radius: 4px !important;
+  }
+  .quiz-game-bid .quiz-suit-btn {
+    font-size: 13px !important;
+    height: 30px !important;
+  }
+  .quiz-game-bid .quiz-bid-controls {
+    margin: 2px 0 !important;
+    gap: 4px !important;
+  }
+  .quiz-game-bid .quiz-solo-label {
+    font-size: 10px !important;
+    padding: 2px 4px !important;
+  }
+  .quiz-game-bid .quiz-input-preview {
+    font-size: 10px !important;
+    padding: 0 !important;
+  }
+  .quiz-game-bid .quiz-input-preview strong {
+    font-size: 13px !important;
+  }
+  .quiz-game-bid .quiz-input-warning {
+    font-size: 8px !important;
+  }
+  .quiz-game-bid .quiz-input-actions {
+    gap: 4px !important;
+    margin-top: 2px !important;
+  }
+  .quiz-game-bid .quiz-input-actions button {
+    min-height: 32px !important;
+    font-size: 12px !important;
+    padding: 0 !important;
+  }
+
+  /* 余白を吸収するスペーサー */
+  .quiz-bid-spacer {
+    flex: 1 !important;
+    min-height: 10px !important;
+  }
+
+  /* 手札エリアを下部に大きく表示 */
+  .quiz-game-bid .hand-dock {
+    height: auto !important;
+    min-height: 120px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+    padding-top: 14px !important;
+    padding-bottom: 10px !important;
+    border-top: 1px solid rgba(225,188,112,.1) !important;
+    background: rgba(3,16,13,.5) !important;
+  }
+  .quiz-game-bid .hand {
+    height: auto !important;
+    padding: 0 10px 0 !important;
+  }
+  .quiz-game-bid .hand .card {
+    width: 54px !important;
+    height: 78px !important;
+    margin-left: -16px !important;
+  }
+  .quiz-game-bid .hand .card .rank {
+    font-size: 16px !important;
+    top: 4px !important;
+    left: 4px !important;
+  }
+  .quiz-game-bid .hand .card .suit {
+    font-size: 14px !important;
+    top: 22px !important;
+    left: 5px !important;
+  }
+}
