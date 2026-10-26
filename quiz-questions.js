@@ -122,17 +122,12 @@ function simulateOnePlayScenario(rng) {
     seatPoints[w.seat] += taken.length;
     seatTaken[w.seat].push(...taken.map(c => c.id));
     
-    // 早期終了判定
     const napPts = seatPoints[nap] + (solo ? 0 : seatPoints[deputy]);
     const allyPtsRaw = seatPoints.reduce((n, p, i) => n + (i !== nap && (solo || i !== deputy) ? p : 0), 0);
     const allyPts = allyPtsRaw + kittyPoints;
     
-    if (napPts >= num && (num === 20 || allyPts >= 1)) {
-      break;
-    }
-    if (allyPts > 20 - num) {
-      break;
-    }
+    if (napPts >= num && (num === 20 || allyPts >= 1)) break;
+    if (allyPts > 20 - num) break;
     
     active = w.seat; 
     trickNo++;
@@ -143,20 +138,18 @@ function simulateOnePlayScenario(rng) {
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
   
-  const desiredTurnIndex = idx % 5;
-  const desiredTrick = Math.floor(idx / 5) % 10;
+  // ★ ランダムに手番（0=リード 〜 4=最後）を決定
+  const desiredTurnIndex = Math.floor(rng() * 5);
+  const desiredTrick = Math.floor(rng() * 10); // トリックもランダム
   
   for (let attempt = 0; attempt < 100; attempt++) {
     const allSnaps = simulateOnePlayScenario(rng);
     
-    let validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && s.trickNo === desiredTrick);
+    let validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex);
     
+    // 見つからない場合はトリックを近いものに緩和
     if (!validSnaps.length) {
-      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && Math.abs(s.trickNo - desiredTrick) <= 2);
-    }
-    
-    if (!validSnaps.length) {
-      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex);
+      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && Math.abs(s.trickNo - desiredTrick) <= 3);
     }
     
     if (!validSnaps.length) continue;
