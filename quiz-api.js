@@ -1,5 +1,5 @@
 // quiz-api.js — 何切るAPI（worker.jsから呼ばれる）
-import { getQuestion, listQuestions, QUIZ_CATEGORIES, QUIZ_COUNTS, totalQuestionCount, decodeBid } from './quiz-questions.js';
+import { getQuestion, listQuestions, QUIZ_CATEGORIES, QUIZ_COUNTS, totalQuestionCount } from './quiz-questions.js';
 
 export const quizSchema = [
   "CREATE TABLE IF NOT EXISTS quiz_answers (user_id TEXT NOT NULL, question_id TEXT NOT NULL, choice_index INTEGER NOT NULL, answered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, question_id))",
@@ -17,18 +17,26 @@ async function getSessionUser(request, env) {
   } catch { return null; }
 }
 
-// IDからカテゴリを推測するフォールバック
 function inferCategory(id) {
   if (typeof id !== 'string') return '';
   if (id.includes('-')) return id.split('-')[0];
   return '';
 }
 
+// キャッシュを無効化するラッパー
+function noCacheJson(data, init = {}) {
+  const headers = Object.assign({}, init.headers || {}, {
+    'content-type': 'application/json',
+    'cache-control': 'no-store, max-age=0'
+  });
+  return new Response(JSON.stringify(data), Object.assign({}, init, { headers }));
+}
+
 export async function handleQuizRequest(request, env, url) {
   // GET /api/quiz/progress
   if (url.pathname === '/api/quiz/progress' && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
-    if (!userId) return Response.json({ error: 'auth required' }, { status: 401 });
+    if (!userId) return noCacheJson({ error: 'auth required' }, { status: 401 });
     try {
       const { results } = await env.DB.prepare("SELECT question_id FROM quiz_answers WHERE user_id=?").bind(userId).all();
       const answeredIds = new Set((results || []).map(r => r.question_id));
@@ -43,25 +51,29 @@ export async function handleQuizRequest(request, env, url) {
         }
         perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
       }
-      return Response.json({ total: totalQuestionCount(), answered: answeredIds.size, perCategory, nextQuestionId: nextId });
-    } catch (e) { return Response.json({ error: e.message }, { status: 500 }); }
+      return noCacheJson({ total: totalQuestionCount(), answered: answeredIds.size, perCategory, nextQuestionId: nextId });
+    } catch (e) { return noCacheJson({ error: e.message }, { status: 500 }); }
   }
 
   // GET /api/quiz/q/:id
   const mQ = /^\/api\/quiz\/q\/([a-z]+-\d{1,4})$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
-    let question = getQuestion(mQ[1]);
     
-    // 万が一 getQuestion が null を返してもIDからカテゴリを判定して最小限のオブジェクトを作る
+    let question = null;
+    try {
+      question = getQuestion(mQ[1]);
+    } catch (e) {
+      return noCacheJson({ error: '問題生成エラー: ' + e.message }, { status: 500 });
+    }
+
     if (!question) {
       const cat = inferCategory(mQ[1]);
-      if (!cat) return Response.json({ error: 'not found' }, { status: 404 });
+      if (!cat) return noCacheJson({ error: 'not found' }, { status: 404 });
       question = { id: mQ[1], category: cat, title: '不明', scenario: {}, options: [], aiAnswerIndex: 0, explanation: '' };
     }
 
     const category = question.category || inferCategory(question.id);
-    const isBid = question.inputMode === 'bid' || category === 'bid';
 
     let myAnswer = null;
     try {
@@ -72,40 +84,6 @@ export async function handleQuizRequest(request, env, url) {
     } catch {}
     const reveal = myAnswer !== null;
 
-    // === bid の場合は自由入力モードで返す ===
-    if (isBid) {
-      let distribution = null;
-      let totalAnswers = 0;
-      if (reveal) {
-        try {
-          const { results } = await env.DB.prepare(
-            "SELECT choice_index, COUNT(*) AS c FROM quiz_answers WHERE question_id=? GROUP BY choice_index"
-          ).bind(question.id).all();
-          const rows = (results || []).map(r => {
-            const decoded = decodeBid(Number(r.choice_index));
-            return { encoded: Number(r.choice_index), ...decoded, count: Number(r.c) };
-          });
-          rows.sort((a, b) => b.count - a.count);
-          distribution = rows;
-          totalAnswers = rows.reduce((n, r) => n + r.count, 0);
-        } catch {}
-      }
-      return Response.json({
-        id: question.id, 
-        category: 'bid',
-        inputMode: 'bid',
-        title: question.title || '競り：何で立つ？',
-        scenario: question.scenario || {},
-        options: [],
-        myAnswer, reveal,
-        aiAnswerIndex: reveal ? (question.aiAnswerIndex ?? 0) : null,
-        distribution,
-        totalAnswers: reveal ? totalAnswers : null,
-        explanation: reveal ? (question.explanation || '') : null
-      });
-    }
-
-    // === その他カテゴリ（従来通り） ===
     let stats = [], totalAnswers = 0;
     if (reveal) {
       try {
@@ -115,7 +93,7 @@ export async function handleQuizRequest(request, env, url) {
         totalAnswers = stats.reduce((n, s) => n + s.count, 0);
       } catch {}
     }
-    return Response.json({
+    return noCacheJson({
       id: question.id, 
       category: category,
       title: question.title || '',
@@ -132,34 +110,26 @@ export async function handleQuizRequest(request, env, url) {
   // POST /api/quiz/answer
   if (url.pathname === '/api/quiz/answer' && request.method === 'POST') {
     const userId = await getSessionUser(request, env);
-    if (!userId) return Response.json({ error: 'auth required' }, { status: 401 });
+    if (!userId) return noCacheJson({ error: 'auth required' }, { status: 401 });
     let body;
-    try { body = await request.json(); } catch { return Response.json({ error: 'invalid' }, { status: 400 }); }
+    try { body = await request.json(); } catch { return noCacheJson({ error: 'invalid' }, { status: 400 }); }
     const questionId = String(body.questionId || '');
     const choice = Number(body.choiceIndex);
     
     const question = getQuestion(questionId);
-    const category = question ? (question.category || inferCategory(questionId)) : inferCategory(questionId);
-    const isBid = (question && question.inputMode === 'bid') || category === 'bid';
-
-    if (isBid) {
-      if (!Number.isInteger(choice) || choice < 0 || choice > 81) {
-        return Response.json({ error: 'invalid choice' }, { status: 400 });
-      }
-    } else {
-      if (!Number.isInteger(choice) || choice < 0 || (question && question.options && choice >= question.options.length)) {
-        return Response.json({ error: 'invalid choice' }, { status: 400 });
-      }
+    if (!question) return noCacheJson({ error: 'question not found' }, { status: 404 });
+    if (!Number.isInteger(choice) || choice < 0 || choice >= (question.options?.length || 0)) {
+      return noCacheJson({ error: 'invalid choice' }, { status: 400 });
     }
 
     try {
       await env.DB.prepare("INSERT INTO quiz_answers(user_id, question_id, choice_index) VALUES(?,?,?)").bind(userId, questionId, choice).run();
     } catch (e) {
       const msg = String(e.message || '').toLowerCase();
-      if (msg.includes('unique') || msg.includes('primary key')) return Response.json({ error: 'already answered' }, { status: 409 });
-      return Response.json({ error: e.message }, { status: 500 });
+      if (msg.includes('unique') || msg.includes('primary key')) return noCacheJson({ error: 'already answered' }, { status: 409 });
+      return noCacheJson({ error: e.message }, { status: 500 });
     }
-    return Response.json({ ok: true, myAnswer: choice });
+    return noCacheJson({ ok: true, myAnswer: choice });
   }
 
   // GET /api/quiz/insights
@@ -187,27 +157,8 @@ export async function handleQuizRequest(request, env, url) {
         });
       }
       out.sort((a, b) => b.total - a.total);
-      return Response.json({ all: out.slice(0, 50), disagreements: out.filter(o => !o.aiAgrees && o.agreement >= 0.5) });
-    } catch (e) { return Response.json({ error: e.message }, { status: 500 }); }
-  }
-
-  // GET /api/quiz/questions
-  if (url.pathname === '/api/quiz/questions' && request.method === 'GET') {
-    const category = url.searchParams.get('category') || null;
-    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
-    const userId = await getSessionUser(request, env);
-    const list = listQuestions({ category, offset, limit });
-    let answeredIds = new Set();
-    try {
-      if (userId && list.length) {
-        const ids = list.map(q => q.id);
-        const ph = ids.map(() => '?').join(',');
-        const { results } = await env.DB.prepare(`SELECT question_id FROM quiz_answers WHERE user_id=? AND question_id IN (${ph})`).bind(userId, ...ids).all();
-        answeredIds = new Set((results || []).map(r => r.question_id));
-      }
-    } catch {}
-    return Response.json({ total: totalQuestionCount(), items: list.map(q => ({ ...q, answered: answeredIds.has(q.id) })) });
+      return noCacheJson({ all: out.slice(0, 50), disagreements: out.filter(o => !o.aiAgrees && o.agreement >= 0.5) });
+    } catch (e) { return noCacheJson({ error: e.message }, { status: 500 }); }
   }
 
   return null;
