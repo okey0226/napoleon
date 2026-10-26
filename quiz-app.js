@@ -3,7 +3,6 @@ const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { bid: '何で立つ？', call: '誰を指名する？', discard: '何を切る？', play: '何を出す？' };
 const CATEGORY_PHASE = { bid: '競り', call: '副官指名', discard: '浮き札の交換', play: 'カードプレイ' };
 const BID_SUITS = ['♣', '♦', '♥', '♠', 'NT'];
-// ★ オブジェクトとして定義
 const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, NT: 5 };
 
 let _bound = false;
@@ -150,7 +149,6 @@ function renderGameReplica(q, fallbackId = '') {
     if (high.num >= 13) {
       if (num === high.num && SV[suit] <= SV[high.suit]) {
         const candidates = ['NT', '♠', '♥', '♦', '♣'];
-        // ★ 修正: SV(s) ではなく SV[s]
         const found = candidates.find(s => SV[s] > SV[high.suit]);
         if (found) suit = found;
         else num = Math.min(20, high.num + 1);
@@ -228,7 +226,7 @@ function renderGameReplica(q, fallbackId = '') {
     }).join('');
   }
 
-  // ★オープン2枚は center-table ではなく、画面上部（履歴の下）に独立して表示
+  // ★オープン2枚（bid用）
   let openKittyHTML = '';
   if (isBid) {
     const openCards = (q.scenario?.kitty || []).map(id => cardElHTML(id));
@@ -246,30 +244,53 @@ function renderGameReplica(q, fallbackId = '') {
   const panelHTML = renderQuestionPanel(q, mySeat, category);
   const bidHistoryOutside = (isBid && !q.reveal) ? renderBidHistory(q, mySeat) : '';
 
-  shell.innerHTML = `
-    <div class="game-screen quiz-game ${isDiscard ? 'discarding' : ''} ${isBid ? 'quiz-game-bid' : ''}">
-      <div class="game-head">
-        <button class="back-button" id="quiz-inner-back">← メニュー</button>
-        <div class="game-meta"><span>${escapeHTML((q.id || fallbackId).toUpperCase())}</span><span class="mode-tag">${QUIZ_LABELS[category]}</span></div>
-        <div class="phase-label">${CATEGORY_PHASE[category]}</div>
-      </div>
-      ${contractInfoHTML}
-      <div class="table-message">${escapeHTML(messageText)}</div>
-      ${bidHistoryOutside}
-      ${openKittyHTML}
-      <div class="table-area">
-        <div class="players-ring">${seatEls.join('')}</div>
-        ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
-        <div class="center-table">
-          ${!isBid ? '<div class="center-caption">場札</div>' : ''}
+  // ★ bidの時は縦積み専用レイアウト
+  if (isBid) {
+    shell.innerHTML = `
+      <div class="game-screen quiz-game quiz-game-bid">
+        <div class="game-head">
+          <button class="back-button" id="quiz-inner-back">← メニュー</button>
+          <div class="game-meta"><span>${escapeHTML((q.id || fallbackId).toUpperCase())}</span><span class="mode-tag">${QUIZ_LABELS[category]}</span></div>
+          <div class="phase-label">${CATEGORY_PHASE[category]}</div>
         </div>
-        <div class="quiz-panel">${panelHTML}</div>
-      </div>
-      <div class="hand-dock">
-        <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span> ${isBid ? '+ オープン 2枚' : ''}</div>
-        <div class="hand ${handMode}">${handHTML}</div>
-      </div>
-    </div>`;
+        ${contractInfoHTML}
+        <div class="bid-info-area">
+          ${openKittyHTML}
+          ${bidHistoryOutside}
+        </div>
+        <div class="bid-input-area">
+          ${panelHTML}
+        </div>
+        <div class="hand-dock">
+          <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span> + オープン 2枚</div>
+          <div class="hand ${handMode}">${handHTML}</div>
+        </div>
+      </div>`;
+  } else {
+    // 既存のレイアウト（play, call, discard）
+    shell.innerHTML = `
+      <div class="game-screen quiz-game ${isDiscard ? 'discarding' : ''}">
+        <div class="game-head">
+          <button class="back-button" id="quiz-inner-back">← メニュー</button>
+          <div class="game-meta"><span>${escapeHTML((q.id || fallbackId).toUpperCase())}</span><span class="mode-tag">${QUIZ_LABELS[category]}</span></div>
+          <div class="phase-label">${CATEGORY_PHASE[category]}</div>
+        </div>
+        ${contractInfoHTML}
+        <div class="table-message">${escapeHTML(messageText)}</div>
+        <div class="table-area">
+          <div class="players-ring">${seatEls.join('')}</div>
+          ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
+          <div class="center-table">
+            <div class="center-caption">場札</div>
+          </div>
+          <div class="quiz-panel">${panelHTML}</div>
+        </div>
+        <div class="hand-dock">
+          <div class="hand-label">あなたの手札 <span>${handCards.length}枚</span></div>
+          <div class="hand ${handMode}">${handHTML}</div>
+        </div>
+      </div>`;
+  }
 
   const innerBack = $('quiz-inner-back');
   if (innerBack) innerBack.onclick = () => {
@@ -376,7 +397,6 @@ function renderBidHistory(q, mySeat) {
 function renderBidInput(q, mySeat) {
   const high = q.scenario?.high || { num: 12, suit: '', player: -1 };
   const state = _bidInput;
-  // ★ 修正: SV[suit] を使用
   const isValid = high.num < 13 || (state.num > high.num) || (state.num === high.num && high.suit && SV[state.suit] > SV[high.suit]);
 
   const titleText = high.num >= 13
@@ -430,7 +450,7 @@ function bindBidInput(q) {
 }
 
 function rerenderBidPanel(q) {
-  const panel = document.querySelector('.quiz-panel');
+  const panel = document.querySelector('.bid-input-area');
   if (!panel) return;
   const mySeat = getMySeat(q, 'bid');
   panel.innerHTML = renderBidInput(q, mySeat);
@@ -478,7 +498,7 @@ function renderBidReveal(q, mySeat) {
 }
 
 function bindOptionClicks(q) {
-  document.querySelectorAll('.quiz-panel button[data-choice]').forEach(btn => {
+  document.querySelectorAll('.quiz-panel button[data-choice], .bid-input-area button[data-choice]').forEach(btn => {
     btn.onclick = () => submitAnswer(q.id, Number(btn.dataset.choice));
   });
   const next = $('quiz-next');
@@ -519,7 +539,7 @@ function bindDiscardCardClicks(q) {
   });
 }
 async function submitAnswer(questionId, choiceIndex) {
-  document.querySelectorAll('.quiz-panel button, .quiz-panel input').forEach(b => b.disabled = true);
+  document.querySelectorAll('.quiz-panel button, .bid-input-area button, .quiz-panel input, .bid-input-area input').forEach(b => b.disabled = true);
   try {
     const res = await authFetch('/api/quiz/answer', { method: 'POST', body: JSON.stringify({ questionId, choiceIndex }) });
     const data = await res.json().catch(() => ({}));
