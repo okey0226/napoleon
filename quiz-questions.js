@@ -51,15 +51,15 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-function simulateOnePlayScenario(rng) {
-  const deck = shuffleWithRng(buildDeck(), rng);
+function simulateOnePlayScenario(localRng) {
+  const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
   for (let i = 0; i < 5; i++) { hands.push(deck.splice(0, 10)); sortHand(hands[i]); }
   const kitty = deck.splice(0, 2);
   const params = defaultStrategy();
-  const nap = Math.floor(rng() * 5);
-  const suit = SUITS.concat(['NT'])[Math.floor(rng() * 5)];
-  const num = 13 + Math.floor(rng() * 4);
+  const nap = Math.floor(localRng() * 5);
+  const suit = SUITS.concat(['NT'])[Math.floor(localRng() * 5)];
+  const num = 13 + Math.floor(localRng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
   
   const discarded = chooseDiscard(hands[nap], suit);
@@ -138,23 +138,21 @@ function simulateOnePlayScenario(rng) {
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
   
-  // ★ ランダムに手番（0=リード 〜 4=最後）を決定
-  const desiredTurnIndex = Math.floor(rng() * 5);
-  const desiredTrick = Math.floor(rng() * 10); // トリックもランダム
+  // 問題番号(idx)から、狙う手番(0-4)とトリック(0-9)を決定論的に決める
+  const desiredTurnIndex = idx % 5;
+  const desiredTrick = Math.floor(idx / 5) % 10;
   
   for (let attempt = 0; attempt < 100; attempt++) {
-    const allSnaps = simulateOnePlayScenario(rng);
+    // 試行ごとにシードを固定してシミュレーション
+    const localRng = mulberry32(idx * 777 + attempt * 13);
+    const allSnaps = simulateOnePlayScenario(localRng);
     
     let validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex);
-    
-    // 見つからない場合はトリックを近いものに緩和
-    if (!validSnaps.length) {
-      validSnaps = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && Math.abs(s.trickNo - desiredTrick) <= 3);
-    }
-    
     if (!validSnaps.length) continue;
     
-    const cap = validSnaps[Math.floor(rng() * validSnaps.length)];
+    // 狙ったトリックに一番近いものを選ぶ
+    validSnaps.sort((a, b) => Math.abs(a.trickNo - desiredTrick) - Math.abs(b.trickNo - desiredTrick));
+    const cap = validSnaps[0];
 
     const hand = cap.hand.map(cardFromId);
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
