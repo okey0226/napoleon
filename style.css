@@ -1225,3 +1225,37 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
     margin-top: 8px !important;
   }
 }
+/* ===== 何切る：場札の配置調整 ===== */
+/* 場札を中央に寄せる */
+.quiz-game .trick-cards {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 5 !important;
+  pointer-events: none !important;
+}
+
+.quiz-game .trick-card {
+  position: absolute !important;
+  transform: translate(-50%, -50%) !important;
+  width: 48px !important;
+  height: 68px !important;
+  margin: 0 !important;
+  box-shadow: 0 4px 8px rgba(0,0,0,.4) !important;
+}
+
+/* 座席ごとの場札の位置（自分=0, COM1=1, COM2=2, COM3=3, COM4=4） */
+.quiz-game .trick-card.played-seat-3 { left: 30% !important; top: 30% !important; } /* 左上 */
+.quiz-game .trick-card.played-seat-2 { left: 70% !important; top: 30% !important; } /* 右上 */
+.quiz-game .trick-card.played-seat-4 { left: 30% !important; top: 65% !important; } /* 左下 */
+.quiz-game .trick-card.played-seat-1 { left: 70% !important; top: 65% !important; } /* 右下 */
+.quiz-game .trick-card.played-seat-0 { left: 50% !important; top: 75% !important; } /* 下（自分） */
+
+/* モバイル用の微調整 */
+@media (max-width: 760px) {
+  .quiz-game .trick-card { width: 40px !important; height: 58px !important; }
+  .quiz-game .trick-card.played-seat-3 { left: 25% !important; top: 28% !important; }
+  .quiz-game .trick-card.played-seat-2 { left: 75% !important; top: 28% !important; }
+  .quiz-game .trick-card.played-seat-4 { left: 25% !important; top: 60% !important; }
+  .quiz-game .trick-card.played-seat-1 { left: 75% !important; top: 60% !important; }
+  .quiz-game .trick-card.played-seat-0 { left: 50% !important; top: 70% !important; }
+}
