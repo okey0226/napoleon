@@ -1478,3 +1478,55 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .trick-history-item { padding: 1px 4px; font-size: 9px; gap: 3px; }
   .th-suit { font-size: 11px; }
 }
+/* ===== 何切る：トリック履歴 ===== */
+.trick-history {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 4px auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(225,188,112,.2);
+  border-radius: 8px;
+  background: rgba(0,0,0,.4);
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  flex-shrink: 0;
+  z-index: 10;
+  white-space: nowrap;
+  scrollbar-width: none; /* Firefox */
+  height: 30px; /* 高さを固定 */
+}
+.trick-history::-webkit-scrollbar { display: none; } /* Safari/Chrome */
+
+.th-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgba(255,255,255,.08);
+  border-radius: 4px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.th-no { color: #8fa69a; }
+.th-suit { font-weight: 800; font-size: 12px; }
+.th-suit.red { color: #e89685; }
+.th-suit:not(.red) { color: #dce8df; }
+.th-winner { color: #f3d48e; font-weight: 700; }
+.th-pts { color: #a9d2ae; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .trick-history {
+    height: 26px;
+    padding: 2px 6px;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .th-item {
+    padding: 1px 4px;
+    font-size: 9px;
+    gap: 3px;
+  }
+  .th-suit { font-size: 11px; }
+}
