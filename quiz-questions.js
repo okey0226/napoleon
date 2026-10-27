@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v27）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v28）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -9,16 +9,16 @@ export const QUIZ_CATEGORIES = ['play'];
 export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
-// ★ IDフォーマットを変更（v27）して既存の回答履歴を完全に無効化
+// ★ IDフォーマットをv28に更新（既存の履歴と区別）
 export function makeQuestionId(category, index) {
-  return `${category}-v27-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v28-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v27-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v28-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -52,7 +52,7 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// ★ 1局を最後までシミュレートし、自分の手番のスナップショットをすべて記録して返す
+// 1局を最後までシミュレートし、自分の手番のスナップショットをすべて記録
 function simulateOneMatch(localRng) {
   const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
@@ -91,7 +91,6 @@ function simulateOneMatch(localRng) {
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       
-      // ★ 自分の手番が来るたびにスナップショットを保存
       if (seat === mySeat) {
         allSnaps.push({
           contract: JSON.parse(JSON.stringify(contract)),
@@ -140,8 +139,7 @@ function simulateOneMatch(localRng) {
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
-  // idx 0,5,10,… → 1番手 / 1,6,11,… → 2番手 / 2,7,12,… → 3番手 / 3,8,13,… → 4番手 / 4,9,14,… → 5番手
-  const desiredTurnIndex = idx % 5;
+  const desiredTurnIndex = idx % 5; // idx 0,5→1番手 / 1,6→2番手 ...
 
   const buildQuestion = (cap) => {
     const hand = cap.hand.map(cardFromId);
@@ -170,7 +168,6 @@ function genPlayQuestion(rng, idx) {
 
     return {
       id: makeQuestionId('play', idx), category: 'play',
-      // ★ タイトルに「何番目」を明示
       title: `第${cap.trickNo + 1}トリック・${cap.turnIndex + 1}番目：何を出す？（${roleLabel}）`,
       scenario: {
         contract: {
@@ -178,7 +175,7 @@ function genPlayQuestion(rng, idx) {
           solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall,
           nap: cap.contract.nap, deputy: cap.contract.deputy
         },
-        seat: cap.seat, hand: cap.hand, trick: cap.trick, trickNo: cap.trickNo,
+        seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo, // ★ 変換済みのtrickを渡す
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
         discarded: cap.discarded, points: cap.points, taken: cap.taken
@@ -188,41 +185,31 @@ function genPlayQuestion(rng, idx) {
     };
   };
 
-  // ① 狙った手番のスナップショットを探す（試行回数を 100→500 に増加）
-  for (let attempt = 0; attempt < 500; attempt++) {
+  // ★ 複数回シミュレーションしてプールを作成（確実に手番を揃えるため）
+  const pool = [];
+  for (let attempt = 0; attempt < 200; attempt++) {
     const localRng = mulberry32(idx * 7919 + attempt * 9973);
-    const allSnaps = simulateOneMatch(localRng);
-    const valid = allSnaps.filter(s =>
-      s.turnIndex === desiredTurnIndex &&
-      s.legalCount >= 2 &&
-      s.trickNo < 9                 // 最終トリックは必ず1枚しかないので除外
-    );
-    if (!valid.length) continue;
-    const cap = valid[Math.floor(localRng() * valid.length)];
-    const q = buildQuestion(cap);
-    if (q) return q;
+    pool.push(...simulateOneMatch(localRng));
   }
 
-  // ② フォールバック：見つからない場合、非1番手を優先して別の手番で代用
-  //    （404 で詰まらせないため）
-  for (let attempt = 0; attempt < 500; attempt++) {
-    const localRng = mulberry32(idx * 7919 + attempt * 9973 + 999983);
-    const allSnaps = simulateOneMatch(localRng);
-    let valid = allSnaps.filter(s => s.legalCount >= 2 && s.trickNo < 9);
-    if (!valid.length) continue;
-    if (desiredTurnIndex > 0) {
-      const preferred = valid.filter(s => s.turnIndex > 0);
-      if (preferred.length) valid = preferred;
-    }
-    const cap = valid[Math.floor(localRng() * valid.length)];
-    const q = buildQuestion(cap);
-    if (q) return q;
+  // 狙った手番を抽出
+  let valid = pool.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2 && s.trickNo < 9);
+  
+  // フォールバック（1番手以外優先）
+  if (valid.length === 0 && desiredTurnIndex > 0) {
+    valid = pool.filter(s => s.turnIndex > 0 && s.legalCount >= 2 && s.trickNo < 9);
   }
+  // 最終フォールバック
+  if (valid.length === 0) {
+    valid = pool.filter(s => s.legalCount >= 2 && s.trickNo < 9);
+  }
+  if (valid.length === 0) return null;
 
-  return null;
+  const pickRng = mulberry32(idx * 9973);
+  const cap = valid[Math.floor(pickRng() * valid.length)];
+  return buildQuestion(cap);
 }
 
-// ★ サーバー側のキャッシュ(_cache)を完全に廃止
 export function getQuestion(id) {
   const parsed = parseQuestionId(id);
   if (!parsed) return null;
@@ -237,12 +224,14 @@ export function getQuestion(id) {
   }
   return q;
 }
+
 export function listQuestions({ category = null, offset = 0, limit = 20 } = {}) {
   const cats = category ? [category] : QUIZ_CATEGORIES;
   const out = [];
   for (const c of cats) for (let i = 0; i < QUIZ_COUNTS[c]; i++) out.push({ id: makeQuestionId(c, i), category: c });
   return out.slice(offset, offset + limit);
 }
+
 export function allQuestionIds() {
   const out = [];
   for (const c of QUIZ_CATEGORIES) for (let i = 0; i < QUIZ_COUNTS[c]; i++) out.push(makeQuestionId(c, i));
