@@ -1319,25 +1319,104 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
     font-size: 12px;
   }
 }
-/* ===== 何切る：場札の強制表示 ===== */
-.quiz-game .trick-cards {
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 50 !important; /* 最前面に強制 */
-  pointer-events: none !important;
-  display: block !important;
-}
 
-.quiz-game .trick-card {
-  position: absolute !important;
-  transform: translate(-50%, -50%) !important;
-  width: 48px !important;
-  height: 68px !important;
-  margin: 0 !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,.6) !important;
-  border: 1px solid rgba(226,229,223,.9) !important;
-  border-radius: 6px !important;
-  background: #fbfaf6 !important;
-  z-index: 51 !important;
-  display: block !important;
+/* ============================================================
+   ▼ モバイル用：何切る画面の完全固定レイアウト（v37 修正）
+   ============================================================ */
+@media(max-width: 760px) {
+  /* クイズ画面表示中は背面のスクロールを完全に禁止 */
+  body:has(#quiz-screen:not(.hidden)) {
+    overflow: hidden !important;
+    position: fixed !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+  }
+
+  /* クイズ画面自体を画面全体に固定（hiddenの時は絶対に表示しない） */
+  #quiz-screen:not(.hidden) {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100dvh !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 9999 !important;
+    background: #0b2620 !important;
+  }
+
+  #quiz-progress {
+    flex-shrink: 0 !important;
+    margin: 4px !important;
+  }
+
+  /* シェルを画面全体に広げる */
+  .quiz-shell {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important; /* Flexboxで高さを制限するために必須 */
+  }
+
+  /* ゲーム画面コンテナ */
+  .quiz-shell .game-screen.quiz-game {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  /* 中央のテーブルエリア（ここが自動で伸び縮みする） */
+  .quiz-game .table-area {
+    flex: 1 !important;
+    min-height: 0 !important;
+    position: relative !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* 手札ドック（下部固定） */
+  .quiz-game .hand-dock {
+    flex-shrink: 0 !important;
+    height: auto !important;
+    min-height: 130px !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+    margin: 0 !important;
+    background: rgba(3, 16, 13, 0.95) !important;
+    z-index: 100 !important;
+  }
+
+  /* 手札のカードサイズ調整 */
+  .quiz-game .hand {
+    padding: 0 10px !important;
+  }
+  .quiz-game .hand .card {
+    width: 52px !important;
+    height: 74px !important;
+    margin-left: -16px !important;
+  }
+
+  /* 場札の強制表示設定 */
+  .quiz-game .trick-cards {
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 50 !important;
+    pointer-events: none !important;
+  }
+  .quiz-game .trick-card {
+    position: absolute !important;
+    transform: translate(-50%, -50%) !important;
+    width: 46px !important;
+    height: 66px !important;
+    background: #fff !important;
+    border: 1px solid #ccc !important;
+    border-radius: 6px !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,.5) !important;
+  }
 }
