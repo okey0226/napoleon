@@ -1,4 +1,4 @@
-// quiz-app.js — 何切る問題集（play特化 / v37）
+// quiz-app.js — 何切る問題集（play特化 / v41）
 const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { play: '何を出す？' };
 const CATEGORY_PHASE = { play: 'カードプレイ' };
@@ -60,7 +60,6 @@ function addTakenCards(seatEl, cards) {
 }
 
 export function openQuizScreen() {
-  // ★ 最強の画面切り替え処理：他の要素をインラインスタイルで完全に隠す
   const screens = ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'];
   screens.forEach(id => {
     const el = $(id);
@@ -73,7 +72,6 @@ export function openQuizScreen() {
   const screen = $('quiz-screen');
   if (!screen) return;
   
-  // クイズ画面を最前面に固定表示
   screen.classList.remove('hidden');
   screen.style.setProperty('display', 'flex', 'important');
   screen.style.setProperty('position', 'fixed', 'important');
@@ -242,6 +240,7 @@ function renderGameReplica(q, fallbackId = '') {
     seatEls.push(seatHtml);
   }
 
+  // 場札を各座席の方向から出す
   let trickCardsHTML = '';
   if (q.scenario?.trick?.length) {
     trickCardsHTML = q.scenario.trick.map((e, i) => {
@@ -310,7 +309,6 @@ function renderGameReplica(q, fallbackId = '') {
 
   const innerBack = $('quiz-inner-back');
   if (innerBack) innerBack.onclick = () => {
-    // メニューへ戻る際もすべての画面をリセット
     $('quiz-screen').classList.add('hidden');
     $('quiz-screen').style.setProperty('display', 'none', 'important');
     $('mode-select-screen').classList.remove('hidden');
