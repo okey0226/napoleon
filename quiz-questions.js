@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v41）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v42）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -10,14 +10,14 @@ export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v41-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v42-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v41-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v42-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -54,7 +54,6 @@ function cardFromId(id) {
   return { suit: safeId[0], rank: safeId.slice(1), id: safeId }; 
 }
 
-// ★ 修正: startSeat から時計回り（下 -> 左下 -> 左上 -> 右上 -> 右下）に進む
 function simulateOneMatch(localRng, startSeat) {
   const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
@@ -80,15 +79,17 @@ function simulateOneMatch(localRng, startSeat) {
   const seatTaken = [[], [], [], [], []];
   const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
   
+  // ★ トリック履歴の保存用
+  const trickHistory = [];
+
   const mySeat = 0;
-  let active = startSeat; // 強制開始席
+  let active = startSeat;
   let trickNo = 0;
   const allSnaps = [];
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
-      // ★ 時計回り: active, active-1, active-2... (下 -> 左下 -> 左上 -> 右上 -> 右下)
       const seat = (active - i + 5) % 5;
       const hand = hands[seat];
       const led = trick.length ? trick[0].card.suit : null;
@@ -108,7 +109,8 @@ function simulateOneMatch(localRng, startSeat) {
           call: { suit: call.suit, rank: call.rank, id: call.id },
           discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
           points: seatPoints.slice(),
-          taken: seatTaken.map(arr => arr.slice())
+          taken: seatTaken.map(arr => arr.slice()),
+          trickHistory: JSON.parse(JSON.stringify(trickHistory)) // ★追加
         });
       }
       
@@ -124,6 +126,15 @@ function simulateOneMatch(localRng, startSeat) {
     
     const w = winningEntry(contract, trickNo, trick);
     const taken = trick.filter(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank)).map(e => e.card);
+    
+    // ★ トリック結果を履歴に追加
+    trickHistory.push({
+      trickNo,
+      leadSuit: trick[0].card.suit,
+      winner: w.seat,
+      points: taken.length
+    });
+
     seatPoints[w.seat] += taken.length;
     seatTaken[w.seat].push(...taken.map(c => c.id));
     
@@ -189,19 +200,14 @@ function genPlayQuestion(rng, idx) {
         seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo,
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
-        discarded: cap.discarded, points: cap.points, taken: cap.taken
+        discarded: cap.discarded, points: cap.points, taken: cap.taken,
+        trickHistory: cap.trickHistory || [] // ★追加
       },
       options, aiAnswerIndex: correctIdx,
       explanation: `AIは ${aiChoice.id} を選択。`
     };
   };
 
-  // ★ 狙った手番になるように、最初に切る人（startSeat）を固定
-  // idx 0 -> 自分(0)から -> 自分は1番目
-  // idx 1 -> 右下(1)から -> 自分は2番目
-  // idx 2 -> 右上(2)から -> 自分は3番目
-  // idx 3 -> 左上(3)から -> 自分は4番目
-  // idx 4 -> 左下(4)から -> 自分は5番目
   const targetStartSeat = desiredTurnIndex;
 
   let valid = [];
