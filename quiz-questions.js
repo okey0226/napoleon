@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v42）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v44）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -10,14 +10,14 @@ export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v42-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v44-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v42-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v44-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -79,7 +79,6 @@ function simulateOneMatch(localRng, startSeat) {
   const seatTaken = [[], [], [], [], []];
   const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
   
-  // ★ トリック履歴の保存用
   const trickHistory = [];
 
   const mySeat = 0;
@@ -110,7 +109,7 @@ function simulateOneMatch(localRng, startSeat) {
           discarded: discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).map(c => c.id),
           points: seatPoints.slice(),
           taken: seatTaken.map(arr => arr.slice()),
-          trickHistory: JSON.parse(JSON.stringify(trickHistory)) // ★追加
+          trickHistory: JSON.parse(JSON.stringify(trickHistory))
         });
       }
       
@@ -127,7 +126,6 @@ function simulateOneMatch(localRng, startSeat) {
     const w = winningEntry(contract, trickNo, trick);
     const taken = trick.filter(e => ["10", "J", "Q", "K", "A"].includes(e.card.rank)).map(e => e.card);
     
-    // ★ トリック結果を履歴に追加
     trickHistory.push({
       trickNo,
       leadSuit: trick[0].card.suit,
@@ -201,7 +199,7 @@ function genPlayQuestion(rng, idx) {
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
         discarded: cap.discarded, points: cap.points, taken: cap.taken,
-        trickHistory: cap.trickHistory || [] // ★追加
+        trickHistory: cap.trickHistory || []
       },
       options, aiAnswerIndex: correctIdx,
       explanation: `AIは ${aiChoice.id} を選択。`
