@@ -1,4 +1,4 @@
-// quiz-app.js — 何切る問題集（play特化）
+// quiz-app.js — 何切る問題集（play特化 / v37）
 const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { play: '何を出す？' };
 const CATEGORY_PHASE = { play: 'カードプレイ' };
@@ -60,10 +60,28 @@ function addTakenCards(seatEl, cards) {
 }
 
 export function openQuizScreen() {
-  const screen = document.getElementById('quiz-screen');
+  // ★ 最強の画面切り替え処理：他の要素をインラインスタイルで完全に隠す
+  const screens = ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'];
+  screens.forEach(id => {
+    const el = $(id);
+    if (el) {
+      el.classList.add('hidden');
+      el.style.setProperty('display', 'none', 'important');
+    }
+  });
+  
+  const screen = $('quiz-screen');
   if (!screen) return;
-  document.querySelectorAll('#app > section').forEach(s => s.classList.add('hidden'));
+  
+  // クイズ画面を最前面に固定表示
   screen.classList.remove('hidden');
+  screen.style.setProperty('display', 'flex', 'important');
+  screen.style.setProperty('position', 'fixed', 'important');
+  screen.style.setProperty('inset', '0', 'important');
+  screen.style.setProperty('z-index', '99999', 'important');
+  screen.style.setProperty('background', '#0b2620', 'important');
+  screen.style.setProperty('flex-direction', 'column', 'important');
+  
   if (!_bound) _bound = true;
   loadProgress();
 }
@@ -234,24 +252,22 @@ function renderGameReplica(q, fallbackId = '') {
       else if (e.card && typeof e.card === 'object') cardId = e.card.id || '';
       else if (e.card) cardId = String(e.card);
       
-      // もしIDが取れなくてもエラーにせず「? ?」を表示
-      if (!cardId || cardId.length < 2) cardId = '? ?';
-      
-      const suit = cardId[0], rank = cardId.slice(1);
+      const safeId = String(cardId || '??').padEnd(2, '?');
+      const suit = safeId[0], rank = safeId.slice(1);
       const red = suit === '♦' || suit === '♥';
       
-      const styles = {
-        0: 'left: 50%; top: 70%;',
-        1: 'left: 75%; top: 62%;',
-        2: 'left: 75%; top: 38%;',
-        3: 'left: 25%; top: 38%;',
-        4: 'left: 25%; top: 62%;'
-      }[pos] || 'left: 50%; top: 50%;';
+      const positions = {
+        0: { x: '50%', y: '70%' },
+        1: { x: '75%', y: '62%' },
+        2: { x: '75%', y: '38%' },
+        3: { x: '25%', y: '38%' },
+        4: { x: '25%', y: '62%' }
+      };
+      const p = positions[pos] || { x: '50%', y: '50%' };
       
-      // 絶対に最前面に表示させるための超強力なインラインスタイル
-      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}" style="position: absolute !important; transform: translate(-50%, -50%) !important; ${styles} z-index: 2147483647 !important; width: 48px !important; height: 68px !important; background: #fff !important; color: #000 !important; display: block !important; visibility: visible !important; border-radius: 6px; border: 2px solid #ccc; box-shadow: 0 4px 12px rgba(0,0,0,.6); pointer-events: none;">
-        <span class="rank" style="position:absolute; left:4px; top:4px; font-size:16px; font-weight:800;">${rank}</span>
-        <span class="suit" style="position:absolute; left:6px; top:22px; font-size:15px;">${suit}</span>
+      return `<div class="card ${red ? 'red ' : ''}" style="position: absolute !important; left: ${p.x} !important; top: ${p.y} !important; transform: translate(-50%, -50%) !important; z-index: 2147483647 !important; width: 48px !important; height: 68px !important; background: #fff !important; border-radius: 6px !important; border: 1px solid #999 !important; box-shadow: 0 4px 10px rgba(0,0,0,0.5) !important; pointer-events: none !important;">
+        <span style="position:absolute; left:4px; top:4px; font-size:16px; font-weight:800; line-height:1; color:${red?'#c6453f':'#19251f'};">${rank}</span>
+        <span style="position:absolute; left:5px; top:22px; font-size:15px; line-height:1; color:${red?'#c6453f':'#19251f'};">${suit}</span>
       </div>`;
     }).join('');
   }
@@ -273,9 +289,9 @@ function renderGameReplica(q, fallbackId = '') {
       ${contractInfoHTML}
       ${trumpInfoHTML}
       <div class="table-message">${escapeHTML(messageText)}</div>
-      <div class="table-area">
+      <div class="table-area" style="position: relative !important; overflow: visible !important;">
+        ${trickCardsHTML}
         <div class="players-ring">${seatEls.join('')}</div>
-        ${trickCardsHTML ? `<div class="trick-cards" style="position: absolute; inset: 0; z-index: 50;">${trickCardsHTML}</div>` : ''}
         <div class="center-table">
           <div class="center-caption">場札</div>
         </div>
@@ -294,8 +310,11 @@ function renderGameReplica(q, fallbackId = '') {
 
   const innerBack = $('quiz-inner-back');
   if (innerBack) innerBack.onclick = () => {
+    // メニューへ戻る際もすべての画面をリセット
     $('quiz-screen').classList.add('hidden');
+    $('quiz-screen').style.setProperty('display', 'none', 'important');
     $('mode-select-screen').classList.remove('hidden');
+    $('mode-select-screen').style.removeProperty('display');
   };
   bindOptionClicks(q);
   if (!q.reveal) bindPlayCardClicks(q);
@@ -376,11 +395,21 @@ function renderError(msg) { const s = $('quiz-shell'); if (s) s.innerHTML = `<di
 function renderAllDone() {
   const s = $('quiz-shell');
   if (s) s.innerHTML = `<div class="quiz-done"><div class="eyebrow">COMPLETE</div><h2>全ての問題に回答しました</h2><p>引き続きデータが集まるとAI戦略に反映されます。</p><button class="primary-button" id="quiz-go-select" style="margin-top:16px;">モード選択へ戻る</button></div>`;
-  const b = $('quiz-go-select'); if (b) b.onclick = () => { $('quiz-screen').classList.add('hidden'); $('mode-select-screen').classList.remove('hidden'); };
+  const b = $('quiz-go-select'); if (b) b.onclick = () => { 
+    $('quiz-screen').classList.add('hidden'); 
+    $('quiz-screen').style.setProperty('display', 'none', 'important');
+    $('mode-select-screen').classList.remove('hidden'); 
+    $('mode-select-screen').style.removeProperty('display');
+  };
 }
 function renderAuthRequired(msg) {
   const s = $('quiz-shell'); if (!s) return;
   s.innerHTML = `<div class="quiz-auth-required"><div class="eyebrow">QUIZ</div><h2>プレイヤー登録が必要です</h2><p>${escapeHTML(msg || '何切る問題集は1アカウント1回の回答を保証するため、ログインが必要です。')}</p><button class="primary-button" id="quiz-go-register">プレイヤー登録へ</button></div>`;
   const b = $('quiz-go-register');
-  if (b) b.onclick = () => { $('quiz-screen').classList.add('hidden'); $('profile-screen').classList.remove('hidden'); };
+  if (b) b.onclick = () => { 
+    $('quiz-screen').classList.add('hidden'); 
+    $('quiz-screen').style.setProperty('display', 'none', 'important');
+    $('profile-screen').classList.remove('hidden'); 
+    $('profile-screen').style.removeProperty('display');
+  };
 }
