@@ -211,9 +211,14 @@ function renderGameReplica(q, fallbackId = '') {
   let trickCardsHTML = '';
   if (q.scenario?.trick?.length) {
     trickCardsHTML = q.scenario.trick.map(e => {
-      const pos = disp(e.seat);
-      const cardId = typeof e.card === 'string' ? e.card : (e.card?.id || '');
-      if (!cardId) return '';
+      const seat = e.seat !== undefined ? e.seat : 0;
+      const pos = disp(seat);
+      let cardId = '';
+      if (typeof e.card === 'string') cardId = e.card;
+      else if (e.card && typeof e.card === 'object') cardId = e.card.id || '';
+      
+      if (!cardId || cardId.length < 2) return '';
+      
       const suit = cardId[0], rank = cardId.slice(1);
       const red = suit === '♦' || suit === '♥';
       return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
