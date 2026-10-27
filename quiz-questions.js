@@ -140,50 +140,85 @@ function simulateOneMatch(localRng) {
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
-  // ★ idx に応じて手番を完全固定 (0=1人目, 1=2人目, 2=3人目, 3=4人目, 4=5人目)
+  // idx 0,5,10,… → 1番手 / 1,6,11,… → 2番手 / 2,7,12,… → 3番手 / 3,8,13,… → 4番手 / 4,9,14,… → 5番手
   const desiredTurnIndex = idx % 5;
-  
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const localRng = mulberry32(idx * 7919 + attempt * 9973);
-    const allSnaps = simulateOneMatch(localRng);
-    // 狙った手番 かつ 出せるカードが2枚以上のものを抽出
-    const valid = allSnaps.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2);
-    if (!valid.length) continue;
-    
-    const cap = valid[Math.floor(localRng() * valid.length)];
 
+  const buildQuestion = (cap) => {
     const hand = cap.hand.map(cardFromId);
     const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
     const led = trick[0]?.card.suit;
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
-    
-    const ctx = { hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract, playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat, deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall, params, call: cap.contract.call, currentNapPoints: 0, experience: null };
+    if (legal.length < 2) return null;
+
+    const ctx = {
+      hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract,
+      playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
+      deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
+      params, call: cap.contract.call, currentNapPoints: 0, experience: null
+    };
     const aiChoice = chooseCardToPlay(ctx);
-    if (!aiChoice) continue;
-    
+    if (!aiChoice) return null;
+
     const options = legal.map((c, i) => ({ index: i, label: c.id, value: c.id }));
     const correctIdx = legal.findIndex(c => c.id === aiChoice.id);
+    if (correctIdx < 0) return null;
+
     let roleLabel = '連合軍';
     if (cap.seat === cap.contract.nap) roleLabel = 'ナポレオン';
     else if (cap.seat === cap.contract.deputy && cap.contract.revealedCall) roleLabel = '副官';
     else if (hand.some(c => c.id === cap.contract.call.id)) roleLabel = '副官（未公開）';
-    
+
     return {
       id: makeQuestionId('play', idx), category: 'play',
-      title: `第${cap.trickNo + 1}トリック：何を出す？（${roleLabel}）`,
+      // ★ タイトルに「何番目」を明示
+      title: `第${cap.trickNo + 1}トリック・${cap.turnIndex + 1}番目：何を出す？（${roleLabel}）`,
       scenario: {
-        contract: { num: cap.contract.num, suit: cap.contract.suit, solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall, nap: cap.contract.nap, deputy: cap.contract.deputy },
+        contract: {
+          num: cap.contract.num, suit: cap.contract.suit,
+          solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall,
+          nap: cap.contract.nap, deputy: cap.contract.deputy
+        },
         seat: cap.seat, hand: cap.hand, trick: cap.trick, trickNo: cap.trickNo,
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
-        discarded: cap.discarded,
-        points: cap.points,
-        taken: cap.taken
+        discarded: cap.discarded, points: cap.points, taken: cap.taken
       },
-      options, aiAnswerIndex: correctIdx >= 0 ? correctIdx : 0,
+      options, aiAnswerIndex: correctIdx,
       explanation: `AIは ${aiChoice.id} を選択。`
     };
+  };
+
+  // ① 狙った手番のスナップショットを探す（試行回数を 100→500 に増加）
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const localRng = mulberry32(idx * 7919 + attempt * 9973);
+    const allSnaps = simulateOneMatch(localRng);
+    const valid = allSnaps.filter(s =>
+      s.turnIndex === desiredTurnIndex &&
+      s.legalCount >= 2 &&
+      s.trickNo < 9                 // 最終トリックは必ず1枚しかないので除外
+    );
+    if (!valid.length) continue;
+    const cap = valid[Math.floor(localRng() * valid.length)];
+    const q = buildQuestion(cap);
+    if (q) return q;
   }
+
+  // ② フォールバック：見つからない場合、非1番手を優先して別の手番で代用
+  //    （404 で詰まらせないため）
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const localRng = mulberry32(idx * 7919 + attempt * 9973 + 999983);
+    const allSnaps = simulateOneMatch(localRng);
+    let valid = allSnaps.filter(s => s.legalCount >= 2 && s.trickNo < 9);
+    if (!valid.length) continue;
+    if (desiredTurnIndex > 0) {
+      const preferred = valid.filter(s => s.turnIndex > 0);
+      if (preferred.length) valid = preferred;
+    }
+    const cap = valid[Math.floor(localRng() * valid.length)];
+    const q = buildQuestion(cap);
+    if (q) return q;
+  }
+
   return null;
 }
 
