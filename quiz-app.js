@@ -211,8 +211,7 @@ function renderGameReplica(q, fallbackId = '') {
   let trickCardsHTML = '';
   if (q.scenario?.trick?.length) {
     trickCardsHTML = q.scenario.trick.map(e => {
-      const seat = e.seat !== undefined ? e.seat : 0;
-      const pos = disp(seat);
+      const pos = disp(e.seat);
       let cardId = '';
       if (typeof e.card === 'string') cardId = e.card;
       else if (e.card && typeof e.card === 'object') cardId = e.card.id || '';
@@ -221,7 +220,20 @@ function renderGameReplica(q, fallbackId = '') {
       
       const suit = cardId[0], rank = cardId.slice(1);
       const red = suit === '♦' || suit === '♥';
-      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
+      
+      // CSSを完全に無視してインラインスタイルで強制描画
+      const styles = {
+        0: 'left: 50%; top: 70%;',
+        1: 'left: 75%; top: 62%;',
+        2: 'left: 75%; top: 38%;',
+        3: 'left: 25%; top: 38%;',
+        4: 'left: 25%; top: 62%;'
+      }[pos] || 'left: 50%; top: 50%;';
+      
+      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}" style="position: absolute !important; transform: translate(-50%, -50%) !important; ${styles} z-index: 9999 !important; width: 48px !important; height: 68px !important; background: #fff !important; color: #000 !important; display: block !important; visibility: visible !important; border-radius: 6px; border: 1px solid #ccc; box-shadow: 0 4px 12px rgba(0,0,0,.6);">
+        <span class="rank" style="position:absolute; left:4px; top:4px; font-size:16px; font-weight:800;">${rank}</span>
+        <span class="suit" style="position:absolute; left:6px; top:22px; font-size:15px;">${suit}</span>
+      </div>`;
     }).join('');
   }
 
@@ -244,7 +256,7 @@ function renderGameReplica(q, fallbackId = '') {
       <div class="table-message">${escapeHTML(messageText)}</div>
       <div class="table-area">
         <div class="players-ring">${seatEls.join('')}</div>
-        ${trickCardsHTML ? `<div class="trick-cards">${trickCardsHTML}</div>` : ''}
+        ${trickCardsHTML ? `<div class="trick-cards" style="position: absolute; inset: 0; z-index: 50;">${trickCardsHTML}</div>` : ''}
         <div class="center-table">
           <div class="center-caption">場札</div>
         </div>
