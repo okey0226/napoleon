@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v28）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v29）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -9,16 +9,15 @@ export const QUIZ_CATEGORIES = ['play'];
 export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
-// ★ IDフォーマットをv28に更新（既存の履歴と区別）
 export function makeQuestionId(category, index) {
-  return `${category}-v28-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v29-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v28-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v29-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -50,9 +49,8 @@ function buildDeck() {
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
   return d;
 }
-function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// 1局を最後までシミュレートし、自分の手番のスナップショットをすべて記録
+// 1局を最後までシミュレート
 function simulateOneMatch(localRng) {
   const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
@@ -95,6 +93,7 @@ function simulateOneMatch(localRng) {
         allSnaps.push({
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
+          // トリックのカードは文字列のIDにする
           trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
           trickNo,
           turnIndex: trick.length,
@@ -139,17 +138,18 @@ function simulateOneMatch(localRng) {
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
-  const desiredTurnIndex = idx % 5; // idx 0,5→1番手 / 1,6→2番手 ...
+  const desiredTurnIndex = idx % 5;
 
   const buildQuestion = (cap) => {
-    const hand = cap.hand.map(cardFromId);
-    const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
-    const led = trick[0]?.card.suit;
+    const hand = cap.hand.map(id => ({ suit: id[0], rank: id.slice(1), id }));
+    const trick = cap.trick.map(e => ({ seat: e.seat, card: e.card })); // e.card は文字列ID
+    const led = trick[0]?.card[0];
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
     if (legal.length < 2) return null;
 
     const ctx = {
-      hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract,
+      hand, legal, trick: trick.map(e => ({ seat: e.seat, card: { suit: e.card[0], rank: e.card.slice(1), id: e.card } })), 
+      trickNo: cap.trickNo, contract: cap.contract,
       playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
       deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
       params, call: cap.contract.call, currentNapPoints: 0, experience: null
@@ -175,7 +175,7 @@ function genPlayQuestion(rng, idx) {
           solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall,
           nap: cap.contract.nap, deputy: cap.contract.deputy
         },
-        seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo, // ★ 変換済みのtrickを渡す
+        seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo,
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
         discarded: cap.discarded, points: cap.points, taken: cap.taken
@@ -185,21 +185,17 @@ function genPlayQuestion(rng, idx) {
     };
   };
 
-  // ★ 複数回シミュレーションしてプールを作成（確実に手番を揃えるため）
   const pool = [];
   for (let attempt = 0; attempt < 200; attempt++) {
     const localRng = mulberry32(idx * 7919 + attempt * 9973);
     pool.push(...simulateOneMatch(localRng));
   }
 
-  // 狙った手番を抽出
   let valid = pool.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2 && s.trickNo < 9);
   
-  // フォールバック（1番手以外優先）
   if (valid.length === 0 && desiredTurnIndex > 0) {
     valid = pool.filter(s => s.turnIndex > 0 && s.legalCount >= 2 && s.trickNo < 9);
   }
-  // 最終フォールバック
   if (valid.length === 0) {
     valid = pool.filter(s => s.legalCount >= 2 && s.trickNo < 9);
   }
