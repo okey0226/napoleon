@@ -162,7 +162,6 @@ function renderGameReplica(q, fallbackId = '') {
   const points = q.scenario?.points || [0,0,0,0,0];
   const taken = q.scenario?.taken || [[],[],[],[],[]];
 
-  // 切り札カウンター（NTの時は非表示）
   let trumpInfoHTML = '';
   if (contract && contract.suit && contract.suit !== 'NT') {
     const trumpSuit = contract.suit;
@@ -224,7 +223,9 @@ function renderGameReplica(q, fallbackId = '') {
   if (q.scenario?.trick?.length) {
     trickCardsHTML = q.scenario.trick.map(e => {
       const pos = disp(e.seat);
-      const suit = e.card[0], rank = e.card.slice(1);
+      const cardId = typeof e.card === 'string' ? e.card : (e.card?.id || '');
+      if (!cardId) return '';
+      const suit = cardId[0], rank = cardId.slice(1);
       const red = suit === '♦' || suit === '♥';
       return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
     }).join('');
