@@ -1573,14 +1573,13 @@ $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.
 // ★ キャッシュ破棄のため ?v=20 を追加
 $('open-quiz')?.addEventListener('click', async () => {
   try {
-    const mod = await import('./quiz-app.js?v=23');
+    const mod = await import('./quiz-app.js?v=26');
     mod.openQuizScreen();
   } catch (err) {
     console.error(err);
     alert('何切る問題集の読み込みに失敗しました: ' + err.message);
   }
 });
-
 const strategyBtn = $('open-strategy-lab');
 if (strategyBtn) strategyBtn.addEventListener('click', () => screen('strategy-screen'));
 
