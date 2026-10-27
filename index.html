@@ -10,7 +10,6 @@
   <script>
     window.NAPOLEON_WS_URL = 'wss://napoleon-4ufm.onrender.com/ws';
     
-    // エラーを画面に表示するデバッグ用リスナー
     window.addEventListener('error', function(e) {
       const errDiv = document.createElement('div');
       errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;z-index:99999;padding:10px;font-size:12px;word-break:break-all;';
@@ -18,8 +17,8 @@
       document.body.appendChild(errDiv);
     });
   </script>
-  <!-- キャッシュ破棄のため ?v=23 に更新 -->
-  <script type="module" src="/app.js?v=23"></script>
+  <!-- キャッシュ破棄のため ?v=26 に更新 -->
+  <script type="module" src="/app.js?v=26"></script>
 </head>
 <body>
   <header class="topbar">
