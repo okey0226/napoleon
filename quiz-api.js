@@ -1,5 +1,5 @@
 // quiz-api.js — 何切るAPI（worker.jsから呼ばれる）
-import { getQuestion, listQuestions, QUIZ_CATEGORIES, QUIZ_COUNTS, totalQuestionCount } from './quiz-questions.js';
+import { getQuestion, listQuestions, QUIZ_CATEGORIES, QUIZ_COUNTS, totalQuestionCount, makeQuestionId } from './quiz-questions.js';
 
 export const quizSchema = [
   "CREATE TABLE IF NOT EXISTS quiz_answers (user_id TEXT NOT NULL, question_id TEXT NOT NULL, choice_index INTEGER NOT NULL, answered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, question_id))",
@@ -38,7 +38,7 @@ export async function handleQuizRequest(request, env, url) {
       for (const c of QUIZ_CATEGORIES) {
         let answered = 0;
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
-          const id = `${c}-${String(i + 1).padStart(4, '0')}`;
+          const id = makeQuestionId(c, i);
           if (answeredIds.has(id)) answered++;
           else if (!nextId) nextId = id;
         }
@@ -49,7 +49,7 @@ export async function handleQuizRequest(request, env, url) {
   }
 
   // GET /api/quiz/q/:id
-  const mQ = /^\/api\/quiz\/q\/([a-z]+-\d{1,4})$/.exec(url.pathname);
+  const mQ = /^\/api\/quiz\/q\/([a-z0-9-]+)$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
     
