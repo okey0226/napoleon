@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v33）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v41）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -10,14 +10,14 @@ export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v33-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v41-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v33-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v41-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -54,7 +54,8 @@ function cardFromId(id) {
   return { suit: safeId[0], rank: safeId.slice(1), id: safeId }; 
 }
 
-function simulateOneMatch(localRng) {
+// ★ 修正: startSeat から時計回り（下 -> 左下 -> 左上 -> 右上 -> 右下）に進む
+function simulateOneMatch(localRng, startSeat) {
   const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
   for (let i = 0; i < 5; i++) { hands.push(deck.splice(0, 10)); sortHand(hands[i]); }
@@ -80,14 +81,15 @@ function simulateOneMatch(localRng) {
   const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
   
   const mySeat = 0;
-  let active = nap;
+  let active = startSeat; // 強制開始席
   let trickNo = 0;
   const allSnaps = [];
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
-      const seat = (active + i) % 5;
+      // ★ 時計回り: active, active-1, active-2... (下 -> 左下 -> 左上 -> 右上 -> 右下)
+      const seat = (active - i + 5) % 5;
       const hand = hands[seat];
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
@@ -145,7 +147,6 @@ function genPlayQuestion(rng, idx) {
   const buildQuestion = (cap) => {
     const hand = cap.hand.map(cardFromId);
     
-    // トリックデータを超安全に構築
     const trick = (cap.trick || []).map(e => {
       let cid = '';
       if (typeof e.card === 'string') cid = e.card;
@@ -195,27 +196,26 @@ function genPlayQuestion(rng, idx) {
     };
   };
 
+  // ★ 狙った手番になるように、最初に切る人（startSeat）を固定
+  // idx 0 -> 自分(0)から -> 自分は1番目
+  // idx 1 -> 右下(1)から -> 自分は2番目
+  // idx 2 -> 右上(2)から -> 自分は3番目
+  // idx 3 -> 左上(3)から -> 自分は4番目
+  // idx 4 -> 左下(4)から -> 自分は5番目
+  const targetStartSeat = desiredTurnIndex;
+
   let valid = [];
   for (let attempt = 0; attempt < 10; attempt++) {
     const localRng = mulberry32(idx * 7919 + attempt * 9973);
-    const snaps = simulateOneMatch(localRng);
+    const snaps = simulateOneMatch(localRng, targetStartSeat);
     valid = snaps.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2 && s.trickNo < 9);
     if (valid.length > 0) break;
-  }
-  
-  if (valid.length === 0 && desiredTurnIndex > 0) {
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const localRng = mulberry32(idx * 7919 + attempt * 9973 + 777);
-      const snaps = simulateOneMatch(localRng);
-      valid = snaps.filter(s => s.turnIndex > 0 && s.legalCount >= 2 && s.trickNo < 9);
-      if (valid.length > 0) break;
-    }
   }
   
   if (valid.length === 0) {
     for (let attempt = 0; attempt < 10; attempt++) {
       const localRng = mulberry32(idx * 7919 + attempt * 9973 + 999);
-      const snaps = simulateOneMatch(localRng);
+      const snaps = simulateOneMatch(localRng, targetStartSeat);
       valid = snaps.filter(s => s.legalCount >= 2 && s.trickNo < 9);
       if (valid.length > 0) break;
     }
