@@ -13,11 +13,21 @@ async function authFetch(url, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
   if (token) headers['x-session-token'] = token;
   if (opts.body && !headers['content-type']) headers['content-type'] = 'application/json';
-  return fetch(url, Object.assign({}, opts, { headers }));
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  
+  try {
+    const res = await fetch(url, Object.assign({}, opts, { headers, signal: controller.signal }));
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 function cardElHTML(id, extra = '') {
   if (!id) return `<div class="card card-back ${extra}"></div>`;
-  const suit = id[0], rank = id.slice(1);
+  const safeId = String(id);
+  const suit = safeId[0], rank = safeId.slice(1);
   const red = suit === '♦' || suit === '♥';
   return `<div class="card ${red ? 'red ' : ''}${extra}"><span class="rank">${rank}</span><span class="suit">${suit}</span></div>`;
 }
@@ -67,7 +77,10 @@ async function loadProgress() {
     renderProgress(data);
     if (data.nextQuestionId) loadQuestion(data.nextQuestionId);
     else renderAllDone();
-  } catch { renderError('通信に失敗しました'); }
+  } catch (e) { 
+    if (e.name === 'AbortError') renderError('通信がタイムアウトしました。再読み込みしてください。');
+    else renderError('通信に失敗しました'); 
+  }
 }
 async function refreshProgress() {
   try {
@@ -118,7 +131,8 @@ async function loadQuestion(id) {
     refreshProgress();
   } catch (e) { 
     console.error(e); 
-    renderError('通信失敗: ' + e.message); 
+    if (e.name === 'AbortError') renderError('読み込みがタイムアウトしました。ページを再読み込みしてください。');
+    else renderError('通信失敗: ' + e.message); 
   }
 }
 
@@ -129,7 +143,9 @@ async function loadNext() {
     if (!res.ok) return;
     if (!data.nextQuestionId) return renderAllDone();
     loadQuestion(data.nextQuestionId);
-  } catch {}
+  } catch {
+    renderError('次の問題の取得に失敗しました。');
+  }
 }
 
 function getMySeat(q) {
@@ -210,18 +226,20 @@ function renderGameReplica(q, fallbackId = '') {
 
   let trickCardsHTML = '';
   if (q.scenario?.trick?.length) {
-    trickCardsHTML = q.scenario.trick.map(e => {
-      const pos = disp(e.seat);
+    trickCardsHTML = q.scenario.trick.map((e, i) => {
+      const seat = e.seat !== undefined ? e.seat : 0;
+      const pos = disp(seat);
       let cardId = '';
       if (typeof e.card === 'string') cardId = e.card;
       else if (e.card && typeof e.card === 'object') cardId = e.card.id || '';
+      else if (e.card) cardId = String(e.card);
       
-      if (!cardId || cardId.length < 2) return '';
+      // もしIDが取れなくてもエラーにせず「? ?」を表示
+      if (!cardId || cardId.length < 2) cardId = '? ?';
       
       const suit = cardId[0], rank = cardId.slice(1);
       const red = suit === '♦' || suit === '♥';
       
-      // CSSを完全に無視してインラインスタイルで強制描画
       const styles = {
         0: 'left: 50%; top: 70%;',
         1: 'left: 75%; top: 62%;',
@@ -230,7 +248,8 @@ function renderGameReplica(q, fallbackId = '') {
         4: 'left: 25%; top: 62%;'
       }[pos] || 'left: 50%; top: 50%;';
       
-      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}" style="position: absolute !important; transform: translate(-50%, -50%) !important; ${styles} z-index: 9999 !important; width: 48px !important; height: 68px !important; background: #fff !important; color: #000 !important; display: block !important; visibility: visible !important; border-radius: 6px; border: 1px solid #ccc; box-shadow: 0 4px 12px rgba(0,0,0,.6);">
+      // 絶対に最前面に表示させるための超強力なインラインスタイル
+      return `<div class="card ${red ? 'red ' : ''}trick-card played-seat-${pos}" style="position: absolute !important; transform: translate(-50%, -50%) !important; ${styles} z-index: 2147483647 !important; width: 48px !important; height: 68px !important; background: #fff !important; color: #000 !important; display: block !important; visibility: visible !important; border-radius: 6px; border: 2px solid #ccc; box-shadow: 0 4px 12px rgba(0,0,0,.6); pointer-events: none;">
         <span class="rank" style="position:absolute; left:4px; top:4px; font-size:16px; font-weight:800;">${rank}</span>
         <span class="suit" style="position:absolute; left:6px; top:22px; font-size:15px;">${suit}</span>
       </div>`;
@@ -347,7 +366,10 @@ async function submitAnswer(questionId, choiceIndex) {
       return;
     }
     loadQuestion(questionId);
-  } catch { alert('回答の送信に失敗しました'); loadQuestion(questionId); }
+  } catch (e) { 
+    alert('回答の送信に失敗しました。通信環境を確認してください。'); 
+    loadQuestion(questionId); 
+  }
 }
 function renderLoading() { const s = $('quiz-shell'); if (s) s.innerHTML = '<div class="quiz-loading">読み込み中…</div>'; }
 function renderError(msg) { const s = $('quiz-shell'); if (s) s.innerHTML = `<div class="quiz-error">${escapeHTML(msg)}</div>`; }
