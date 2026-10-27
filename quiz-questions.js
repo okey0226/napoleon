@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v30）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v33）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -10,14 +10,14 @@ export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v30-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v33-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v30-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v33-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -49,7 +49,10 @@ function buildDeck() {
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
   return d;
 }
-function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
+function cardFromId(id) { 
+  const safeId = String(id || '♠A');
+  return { suit: safeId[0], rank: safeId.slice(1), id: safeId }; 
+}
 
 function simulateOneMatch(localRng) {
   const deck = shuffleWithRng(buildDeck(), localRng);
@@ -93,7 +96,7 @@ function simulateOneMatch(localRng) {
         allSnaps.push({
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
-          trick: trick.map(e => ({ seat: e.seat, card: e.card.id })), // 確実に文字列IDを渡す
+          trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
           trickNo,
           turnIndex: trick.length,
           legalCount: legal.length,
@@ -141,14 +144,22 @@ function genPlayQuestion(rng, idx) {
 
   const buildQuestion = (cap) => {
     const hand = cap.hand.map(cardFromId);
-    const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
+    
+    // トリックデータを超安全に構築
+    const trick = (cap.trick || []).map(e => {
+      let cid = '';
+      if (typeof e.card === 'string') cid = e.card;
+      else if (e.card && typeof e.card === 'object') cid = e.card.id;
+      else if (e.card) cid = String(e.card);
+      return { seat: e.seat, card: cardFromId(cid) };
+    });
+
     const led = trick[0]?.card.suit;
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
     if (legal.length < 2) return null;
 
     const ctx = {
-      hand, legal, trick: trick.map(e => ({ seat: e.seat, card: { suit: e.card.suit, rank: e.card.rank, id: e.card.id } })), 
-      trickNo: cap.trickNo, contract: cap.contract,
+      hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract,
       playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
       deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
       params, call: cap.contract.call, currentNapPoints: 0, experience: null
@@ -174,7 +185,7 @@ function genPlayQuestion(rng, idx) {
           solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall,
           nap: cap.contract.nap, deputy: cap.contract.deputy
         },
-        seat: cap.seat, hand: cap.hand, trick: cap.trick, trickNo: cap.trickNo, // cap.trick をそのまま渡す
+        seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo,
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
         discarded: cap.discarded, points: cap.points, taken: cap.taken
@@ -184,20 +195,32 @@ function genPlayQuestion(rng, idx) {
     };
   };
 
-  const pool = [];
-  for (let attempt = 0; attempt < 200; attempt++) {
+  let valid = [];
+  for (let attempt = 0; attempt < 10; attempt++) {
     const localRng = mulberry32(idx * 7919 + attempt * 9973);
-    pool.push(...simulateOneMatch(localRng));
+    const snaps = simulateOneMatch(localRng);
+    valid = snaps.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2 && s.trickNo < 9);
+    if (valid.length > 0) break;
   }
-
-  let valid = pool.filter(s => s.turnIndex === desiredTurnIndex && s.legalCount >= 2 && s.trickNo < 9);
   
   if (valid.length === 0 && desiredTurnIndex > 0) {
-    valid = pool.filter(s => s.turnIndex > 0 && s.legalCount >= 2 && s.trickNo < 9);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const localRng = mulberry32(idx * 7919 + attempt * 9973 + 777);
+      const snaps = simulateOneMatch(localRng);
+      valid = snaps.filter(s => s.turnIndex > 0 && s.legalCount >= 2 && s.trickNo < 9);
+      if (valid.length > 0) break;
+    }
   }
+  
   if (valid.length === 0) {
-    valid = pool.filter(s => s.legalCount >= 2 && s.trickNo < 9);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const localRng = mulberry32(idx * 7919 + attempt * 9973 + 999);
+      const snaps = simulateOneMatch(localRng);
+      valid = snaps.filter(s => s.legalCount >= 2 && s.trickNo < 9);
+      if (valid.length > 0) break;
+    }
   }
+  
   if (valid.length === 0) return null;
 
   const pickRng = mulberry32(idx * 9973);
