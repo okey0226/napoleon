@@ -1573,7 +1573,16 @@ $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.
 // ★ キャッシュ破棄のため ?v=20 を追加
 // ★ キャッシュ破棄のため ?v=28 を追加
 // ★ キャッシュ破棄のため ?v=29 を追加
+// ★ キャッシュ破棄のため ?v=29 を追加
 $('open-quiz')?.addEventListener('click', async () => {
+  try {
+    const mod = await import('./quiz-app.js?v=29');
+    mod.openQuizScreen();
+  } catch (err) {
+    console.error(err);
+    alert('何切る問題集の読み込みに失敗しました: ' + err.message);
+  }
+});
   try {
     const mod = await import('./quiz-app.js?v=29');
     mod.openQuizScreen();
