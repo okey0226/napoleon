@@ -1571,9 +1571,10 @@ $('show-record')?.addEventListener('click', records);
 $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.leaderboardExpanded; loadLeaderboard(); });
 
 // ★ キャッシュ破棄のため ?v=29 を追加
+// ★ キャッシュ破棄のため ?v=30 を追加
 $('open-quiz')?.addEventListener('click', async () => {
   try {
-    const mod = await import('./quiz-app.js?v=29');
+    const mod = await import('./quiz-app.js?v=30');
     mod.openQuizScreen();
   } catch (err) {
     console.error(err);
