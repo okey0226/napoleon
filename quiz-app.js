@@ -23,17 +23,6 @@ function cardElHTML(id, extra = '') {
 }
 function escapeHTML(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-function getSeatName(seat, mySeat) {
-  if (seat === mySeat) return 'あなた';
-  let comIdx = 0;
-  for (let i = 0; i < 5; i++) {
-    if (i === mySeat) continue;
-    comIdx++;
-    if (i === seat) return `COM ${comIdx}`;
-  }
-  return `COM ${seat}`;
-}
-
 function addTakenCards(seatEl, cards) {
   if (!cards || !cards.length) return;
   const row = document.createElement('div');
@@ -236,7 +225,6 @@ function renderGameReplica(q, fallbackId = '') {
   const handHTML = handCards.map(id => cardElHTML(id, legalIds.has(id) ? 'playable' : '')).join('');
 
   const panelHTML = renderQuestionPanel(q, mySeat);
-
   const isPlayAndNotReveal = (category === 'play' && !q.reveal);
 
   shell.innerHTML = `
