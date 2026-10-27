@@ -1,4 +1,4 @@
-// quiz-app.js — 何切る問題集（play特化 / v42）
+// quiz-app.js — 何切る問題集（play特化 / v44）
 const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { play: '何を出す？' };
 const CATEGORY_PHASE = { play: 'カードプレイ' };
@@ -240,28 +240,23 @@ function renderGameReplica(q, fallbackId = '') {
     seatEls.push(seatHtml);
   }
 
-  // ★ トリック履歴のHTML生成
   let historyHTML = '';
   if (q.scenario?.trickHistory?.length) {
     historyHTML = `
       <div class="trick-history">
-        <div class="trick-history-title">トリック履歴</div>
-        <div class="trick-history-list">
-          ${q.scenario.trickHistory.map(h => {
-            const isRed = h.leadSuit === '♦' || h.leadSuit === '♥';
-            const winnerName = seatNames[h.winner] || '?';
-            return `<div class="trick-history-item">
-              <span class="th-no">T${h.trickNo + 1}</span>
-              <span class="th-suit ${isRed ? 'red' : ''}">${h.leadSuit}</span>
-              <span class="th-winner">${winnerName}</span>
-              <span class="th-pts">${h.points > 0 ? h.points + 'pt' : '-'}</span>
-            </div>`;
-          }).join('')}
-        </div>
+        ${q.scenario.trickHistory.map(h => {
+          const isRed = h.leadSuit === '♦' || h.leadSuit === '♥';
+          const winnerName = seatNames[h.winner] || '?';
+          return `<span class="th-item">
+            <span class="th-no">T${h.trickNo + 1}</span>
+            <span class="th-suit ${isRed ? 'red' : ''}">${h.leadSuit}</span>
+            <span class="th-winner">${winnerName}</span>
+            <span class="th-pts">${h.points > 0 ? h.points + 'pt' : '-'}</span>
+          </span>`;
+        }).join('')}
       </div>`;
   }
 
-  // 場札を各座席の方向から出す
   let trickCardsHTML = '';
   if (q.scenario?.trick?.length) {
     trickCardsHTML = q.scenario.trick.map((e, i) => {
@@ -308,7 +303,7 @@ function renderGameReplica(q, fallbackId = '') {
       </div>
       ${contractInfoHTML}
       ${trumpInfoHTML}
-      ${historyHTML}  <!-- ★履歴を挿入 -->
+      ${historyHTML}
       <div class="table-message">${escapeHTML(messageText)}</div>
       <div class="table-area" style="position: relative !important; overflow: visible !important;">
         ${trickCardsHTML}
