@@ -1,4 +1,4 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v29）
+// quiz-questions.js — 何切る問題バンク（play特化 / 50問版 / v30）
 import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
@@ -10,14 +10,14 @@ export const QUIZ_COUNTS = { play: 50 };
 export const QUIZ_LABELS = { play: '何を出す？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v29-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v30-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v29-(\d{1,4})$/.exec(id);
+  const m = /^(play)-v30-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -49,8 +49,8 @@ function buildDeck() {
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
   return d;
 }
+function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// 1局を最後までシミュレート
 function simulateOneMatch(localRng) {
   const deck = shuffleWithRng(buildDeck(), localRng);
   const hands = [];
@@ -93,8 +93,7 @@ function simulateOneMatch(localRng) {
         allSnaps.push({
           contract: JSON.parse(JSON.stringify(contract)),
           hand: hand.map(c => c.id),
-          // トリックのカードは文字列のIDにする
-          trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
+          trick: trick.map(e => ({ seat: e.seat, card: e.card.id })), // 確実に文字列IDを渡す
           trickNo,
           turnIndex: trick.length,
           legalCount: legal.length,
@@ -141,14 +140,14 @@ function genPlayQuestion(rng, idx) {
   const desiredTurnIndex = idx % 5;
 
   const buildQuestion = (cap) => {
-    const hand = cap.hand.map(id => ({ suit: id[0], rank: id.slice(1), id }));
-    const trick = cap.trick.map(e => ({ seat: e.seat, card: e.card })); // e.card は文字列ID
-    const led = trick[0]?.card[0];
+    const hand = cap.hand.map(cardFromId);
+    const trick = cap.trick.map(e => ({ seat: e.seat, card: cardFromId(e.card) }));
+    const led = trick[0]?.card.suit;
     const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
     if (legal.length < 2) return null;
 
     const ctx = {
-      hand, legal, trick: trick.map(e => ({ seat: e.seat, card: { suit: e.card[0], rank: e.card.slice(1), id: e.card } })), 
+      hand, legal, trick: trick.map(e => ({ seat: e.seat, card: { suit: e.card.suit, rank: e.card.rank, id: e.card.id } })), 
       trickNo: cap.trickNo, contract: cap.contract,
       playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
       deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
@@ -175,7 +174,7 @@ function genPlayQuestion(rng, idx) {
           solo: !!cap.contract.solo, revealedCall: !!cap.contract.revealedCall,
           nap: cap.contract.nap, deputy: cap.contract.deputy
         },
-        seat: cap.seat, hand: cap.hand, trick: trick, trickNo: cap.trickNo,
+        seat: cap.seat, hand: cap.hand, trick: cap.trick, trickNo: cap.trickNo, // cap.trick をそのまま渡す
         playedCards: cap.playedCards, voids: cap.voids,
         call: cap.contract.call ? { suit: cap.contract.call.suit, rank: cap.contract.call.rank, id: cap.contract.call.id } : null,
         discarded: cap.discarded, points: cap.points, taken: cap.taken
