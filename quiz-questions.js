@@ -51,7 +51,6 @@ function buildDeck() {
 }
 function cardFromId(id) { return { suit: id[0], rank: id.slice(1), id }; }
 
-// 指定されたターン・トリックが来た瞬間にスナップショットを返す
 function simulateUntilTarget(rng, targetTurn, targetTrick) {
   const deck = shuffleWithRng(buildDeck(), rng);
   const hands = [];
@@ -59,7 +58,6 @@ function simulateUntilTarget(rng, targetTurn, targetTrick) {
   const kitty = deck.splice(0, 2);
   const params = defaultStrategy();
   const nap = Math.floor(rng() * 5);
-  // ★ ノートランプ(NT)を復活
   const suit = SUITS.concat(['NT'])[Math.floor(rng() * 5)];
   const num = 13 + Math.floor(rng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
@@ -139,16 +137,12 @@ function simulateUntilTarget(rng, targetTurn, targetTrick) {
 
 function genPlayQuestion(rng, idx) {
   const params = defaultStrategy();
-  
-  // 問題番号(idx)から、狙う手番(0-4)を固定
   const desiredTurnIndex = idx % 5;
   
-  // トリックを0〜9までずらして、必ず見つかるまで探す
   for (let attempt = 0; attempt < 100; attempt++) {
     const targetTurn = desiredTurnIndex;
     const targetTrick = attempt % 10;
     
-    // シードを固定してシミュレーション
     const localRng = mulberry32(idx * 999 + attempt * 111);
     const cap = simulateUntilTarget(localRng, targetTurn, targetTrick);
     if (!cap) continue;
@@ -185,13 +179,15 @@ function genPlayQuestion(rng, idx) {
       explanation: `AIは ${aiChoice.id} を選択。`
     };
   }
-  
   return null;
 }
 
 const _cache = new Map();
 export function getQuestion(id) {
-  if (_cache.has(id)) return _cache.get(id);
+  // ★ キャッシュキーに v26 を付与し、古いコードのキャッシュを完全に無効化
+  const cacheKey = `${id}_v26`;
+  if (_cache.has(cacheKey)) return _cache.get(cacheKey);
+  
   const parsed = parseQuestionId(id);
   if (!parsed) return null;
   const seed = hashStr(id);
@@ -203,7 +199,7 @@ export function getQuestion(id) {
     q = genPlayQuestion(fallbackRng, parsed.index);
     if (q) q.id = id;
   }
-  if (q) _cache.set(id, q);
+  if (q) _cache.set(cacheKey, q);
   return q;
 }
 export function listQuestions({ category = null, offset = 0, limit = 20 } = {}) {
