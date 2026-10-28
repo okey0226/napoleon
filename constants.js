@@ -41,12 +41,32 @@ export const defaultStrategy = () => ({
   spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6,
   sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5, allySameTwoLeadChance: 0.55, allySameTwoWindow: 4,
   
-  // ★ 追加: チーム連携・MCTS・推測用パラメータ
-  teamCooperationWeight: 1.5, // チーム連携の重要度
-  feedBonusWeight: 1.0,       // 味方へのエサやり成功ボーナス
-  overkillPenalty: 1.0,       // 味方の勝ちにオーバーキルした時のペナルティ
-  mctsSimulations: 20,        // MCTSの1候補あたりの試行回数
-  handInferenceWeight: 0.5    // 相手の手札推測の重み
+  // 最強化パラメータ（MCTS・チーム連携）
+  teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
+  mctsSimulations: 40, mctsExploration: 1.414, handInferenceWeight: 0.5,
+  rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
+  
+  // ★ 追加: NT専用戦略パラメータ
+  ntMightyHoldThreshold: 7,      // このトリック数まではマイティを温存
+  ntMightyShadowWeight: 1.5,     // ♥Qの保持価値
+  ntAceLeadPriority: 1.2,        // 序盤のAリードの優先度
+  ntVoidExploitWeight: 1.5,      // 相手のボイドを突く重要度（連合軍用）
+  ntDeputyFeedChance: 0.8,       // NT時の副官のエサやり確率
+  ntEarlyLeadAggression: 0.7,    // 序盤のリード積極性
+  ntLateGameSafety: 1.0,         // 終盤の安全策の重み
+  
+  // ニューラルネット（線形価値関数）の重み
+  nnWeights: {
+    bias: 0.0,
+    handStrength: 0.5,
+    trumpRemaining: 0.3,
+    pointsNeeded: -0.4,
+    trickNo: -0.2,
+    isNap: 0.3,
+    isDeputy: 0.1,
+    isAlly: -0.1,
+    hasMighty: 0.8
+  }
 });
 
 export const sweetSpotFactor = (p) => {
@@ -121,31 +141,15 @@ export const computeEloDelta = (myElo, oppElos, outcome) => {
 export const rateRound = (seat, roundData, params, weight = 1) => {
   const { nap, deputy, solo, num, won, takenPoints } = roundData;
   if (!Number.isFinite(seat) || seat < 0 || seat > 4) return 0;
-  
   const isNapSide = seat === nap || (!solo && seat === deputy);
   let score = 0;
-  
   if (isNapSide) {
-    if (won) {
-      score += 1.0;
-      score += (num - 13) * 0.1; 
-    } else {
-      score -= 1.0;
-      score -= (num - 13) * 0.1; 
-    }
-    const myPoints = takenPoints ? (takenPoints[seat] || 0) : 0;
-    score += myPoints * 0.05;
+    score += won ? (1.0 + (num - 13) * 0.1) : -(1.0 + (num - 13) * 0.1);
+    score += (takenPoints[seat] || 0) * 0.05;
   } else {
-    if (!won) {
-      score += 1.0;
-      score += (num - 13) * 0.1;
-    } else {
-      score -= 1.0;
-    }
-    const myPoints = takenPoints ? (takenPoints[seat] || 0) : 0;
-    score += myPoints * 0.05;
+    score += !won ? (1.0 + (num - 13) * 0.1) : -1.0;
+    score += (takenPoints[seat] || 0) * 0.05;
   }
-  
   return Math.max(-3, Math.min(3, score)) * weight;
 };
 
@@ -168,14 +172,25 @@ export const PARAM_BOUNDS = {
   trumpAvoidWeight: [0.0, 2.0], sameColorSuitAvoid: [0.0, 2.0], spadeLeadPriority: [0.0, 1.0],
   nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
   allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10],
-  // 追加
   teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
-  mctsSimulations: [10, 100], handInferenceWeight: [0.0, 1.0]
+  mctsSimulations: [10, 100], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
+  rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
+  // ★ NT専用バウンド
+  ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
+  ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
+  ntLateGameSafety: [0.5, 2.0]
 };
 
 export const mutateStrategy = (base, rate) => {
   const out = { ...base };
   for (const k of Object.keys(out)) {
+    if (k === 'nnWeights') {
+      out.nnWeights = { ...out.nnWeights };
+      for (const nk of Object.keys(out.nnWeights)) {
+        if (Math.random() < 0.1) out.nnWeights[nk] += (Math.random() * 2 - 1) * rate * 0.5;
+      }
+      continue;
+    }
     if (Math.random() < 0.1) {
       const delta = (Math.random() * 2 - 1) * rate;
       let val = out[k] * (1 + delta);
@@ -188,6 +203,22 @@ export const mutateStrategy = (base, rate) => {
   }
   return out;
 };
+
+export const crossoverStrategy = (parentA, parentB) => {
+  const child = { ...parentA };
+  for (const k of Object.keys(parentA)) {
+    if (k === 'nnWeights') {
+      child.nnWeights = {};
+      for (const nk of Object.keys(parentA.nnWeights)) {
+        child.nnWeights[nk] = Math.random() < 0.5 ? parentA.nnWeights[nk] : parentB.nnWeights[nk];
+      }
+      continue;
+    }
+    if (Math.random() < 0.5) child[k] = parentB[k];
+  }
+  return child;
+};
+
 export const RANK_1_BONUS = 5;
 export const RANK_2_BONUS = 2;
 export const RANK_4_PENALTY = -2;
