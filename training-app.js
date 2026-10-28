@@ -139,6 +139,21 @@ function humanApprove() {
   nextAuctionTurn();
 }
 
+// ★ 追加: スキップ処理（activeから外れず、手番だけ次へ）
+function humanSkip() {
+  if (g.phase !== 'auction') return;
+  if (!g.auction.active.includes(g.active)) return;
+  
+  message(`${name(g.active)}がスキップしました。`);
+  
+  let nextSeat = (g.active + 1) % 5;
+  while (!g.auction.active.includes(nextSeat)) {
+    nextSeat = (nextSeat + 1) % 5;
+  }
+  g.active = nextSeat;
+  enterAuction();
+}
+
 function humanBid() {
   if (g.phase !== 'auction' || !g.auction.active.includes(g.active)) return;
   const numInput = $('training-bid-num');
@@ -413,9 +428,10 @@ function renderTraining() {
             <input type="number" id="training-bid-num" min="13" max="20" value="${currentBid}" style="width:60px; text-align:center; font-size:24px; font-weight:800; background:#0c211c; color:#f3d48e; border:1px solid #35534a; border-radius:6px; padding:6px;">
             <button id="training-bid-plus" class="small-action" style="font-size:24px; width:48px; height:48px;">＋</button>
           </div>
-          <div class="panel-row" style="margin-top:10px;">
+          <div class="panel-row" style="margin-top:10px; display:flex; gap:8px;">
             <button id="training-bid-submit" class="primary-button" style="flex:1; min-height:48px;">宣言する</button>
             <button id="training-approve" class="secondary-button" style="flex:1; min-height:48px;">承認する</button>
+            <button id="training-skip" class="secondary-button" style="flex:1; min-height:48px; background:#49302b; color:#fff;">スキップ</button>
           </div>
         </div>
       `;
@@ -525,6 +541,8 @@ function renderTraining() {
       if (submitBtn) submitBtn.onclick = humanBid;
       const approveBtn = $('training-approve');
       if (approveBtn) approveBtn.onclick = humanApprove;
+      const skipBtn = $('training-skip');
+      if (skipBtn) skipBtn.onclick = humanSkip;
     }
   }
   
