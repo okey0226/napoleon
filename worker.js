@@ -101,8 +101,8 @@ async function forceInitDB(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    // ★ 自己対戦を3000マッチに増加
-    ctx.waitUntil(runSelfPlayBatch(env, 3000).catch(e => console.error("scheduled self-play failed", e)));
+    // 1時間ごとに1000マッチの自己対戦を実行
+    ctx.waitUntil(runSelfPlayBatch(env, 1000).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
   async fetch(request, env) {
@@ -373,7 +373,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/ai/run-selfplay") {
         try {
           const body = await request.json().catch(() => ({}));
-          const count = Math.max(1, Math.min(5000, Number(body.matches) || 1000));
+          const count = Math.max(1, Math.min(50, Number(body.matches) || 10));
           const result = await runSelfPlayBatch(env, count);
           __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
           __cachedExperience = null; __cachedExperienceTime = 0;
@@ -382,7 +382,13 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") { try { const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 10)); const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all(); return response(results); } catch (e) { return response({ error: "load failed" }, 500); } }
       if (request.method === "GET" && url.pathname === "/api/ai/insights") { try { const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 5").all(); return response({ insights: generateInsights(results), strategies: results }); } catch (e) { return response({ error: "load failed" }, 500); } }
-      if (request.method === "GET" && url.pathname === "/api/ai/generations") { try { const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); return response(results.reverse()); } catch (e) { return response({ error: "load failed" }, 500); } }
+      if (request.method === "GET" && url.pathname === "/api/ai/generations") { 
+        try { 
+          // ★ 追加: MAX(created_at) AS time で実行時刻を取得
+          const { results } = await env.DB.prepare("SELECT generation, MAX(overall_win_rate) AS best, MAX(avg_rating_delta) AS best_delta, MAX(nap_win_rate) AS nap, MAX(deputy_win_rate) AS dep, MAX(alliance_win_rate) AS ally, COUNT(*) AS count, MAX(created_at) AS time FROM ai_strategy_log GROUP BY generation ORDER BY generation DESC LIMIT 30").all(); 
+          return response(results.reverse()); 
+        } catch (e) { return response({ error: "load failed" }, 500); } 
+      }
       if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") { try { const row = await env.DB.prepare("SELECT params,avg_rating_delta,generation FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first(); if (!row) return response({ strategy: defaultStrategy(), source: 'default' }); const parsed = safeJsonParse(row.params, null); if (!parsed) return response({ strategy: defaultStrategy(), source: 'default' }); return response({ strategy: parsed, avgRating: row.avg_rating_delta, generation: row.generation, source: 'learned' }); } catch (e) { return response({ strategy: defaultStrategy(), source: 'default' }); } }
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
@@ -755,7 +761,6 @@ function botAction(m, room) {
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
     const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
     
-    // ★ 変更: MCTS用に他のプレイヤーの手札情報やポイントなどを渡す
     const ctx = { 
       hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract, 
       playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy, 
@@ -766,12 +771,11 @@ function botAction(m, room) {
       isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap, 
       lastSeat: m.trick.length === 4, 
       params, call: m.contract.call, currentNapPoints, experience,
-      points: m.seats.map(s => s.points || 0), // MCTS用の現在のポイント
-      allianceKittyPoints: m.allianceKittyPoints || 0 // MCTS用の捨て札ポイント
+      points: m.seats.map(s => s.points || 0),
+      allianceKittyPoints: m.allianceKittyPoints || 0
     };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
-    // ★ 変更: chooseCardToPlay から chooseCardWithMCTS へ
     else c = chooseCardWithMCTS(ctx);
     if (!c || !legal.some(x => x.id === c.id)) c = legal[Math.floor(Math.random() * legal.length)];
     playCard(m, i, c.id, room, null);
