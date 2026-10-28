@@ -125,7 +125,9 @@ function auctionStart() {
 
 function enterAuction() {
   g.phase = 'auction';
-  message(`現在の手番: ${name(g.active)}`);
+  const high = g.auction.high;
+  const highStr = high.num >= 13 ? `${high.num}${high.suit} (${name(high.player)})` : 'なし';
+  message(`現在の手番: ${name(g.active)} ｜ 最高宣言: ${highStr}`);
   renderTraining();
 }
 
@@ -169,7 +171,6 @@ function humanBid() {
   g.bidHistory.push({ round: g.round, seat: g.active, num, suit });
   g.auction.high = { num, suit, player: g.active, solo: false };
   g.auction.version++;
-  message(`${name(g.active)}が${num}${suit}を宣言しました。`);
   
   const cs = colorStrength(g.players[g.active].hand, suit, defaultStrategy());
   const nt = ntHandStrength(g.players[g.active].hand, defaultStrategy());
@@ -295,7 +296,7 @@ function playCard(cardId) {
   hand.splice(hand.findIndex(x => x.id === cardId), 1);
   g.trick.push({ player: seat, card });
   g.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat });
-  g.selectedCard = null; // リセット
+  g.selectedCard = null;
   
   if (g.trick.length > 1) {
     const ledSuit = g.trick[0].card.suit;
@@ -441,8 +442,12 @@ function renderTraining() {
   
   let auctionHTML = '';
   if (g.phase === 'auction') {
+    const high = g.auction.high;
+    const highStr = high.num >= 13 ? `<strong>${high.num}${high.suit}</strong> (${name(high.player)})` : 'なし';
+    const highBidHTML = `<div class="panel-title" style="margin-bottom:10px;">現在の宣言: ${highStr}</div>`;
+
     if (!g.auction.active.includes(g.active)) {
-      auctionHTML = `<div class="training-auction-panel" style="text-align:center; color:#a3b1a8; padding:20px;">このプレイヤーは承認済みです。<br>席をタップして操作を切り替えてください。</div>`;
+      auctionHTML = `<div class="training-auction-panel" style="text-align:center; color:#a3b1a8; padding:20px;">${highBidHTML}このプレイヤーは承認済みです。<br>席をタップして操作を切り替えてください。</div>`;
     } else {
       const suitBtns = SUITS.concat(['NT']).map(s => 
         `<button class="suit-choice ${g.selectedBidSuit === s ? 'selected' : ''}" data-suit="${s}">${s}</button>`
@@ -452,6 +457,7 @@ function renderTraining() {
       
       auctionHTML = `
         <div class="training-auction-panel">
+          ${highBidHTML}
           <div class="panel-row">${suitBtns}</div>
           <div class="panel-row" style="display:flex; gap:8px; align-items:center; justify-content:center; margin-top:8px;">
             <button id="training-bid-minus" class="small-action" style="font-size:24px; width:48px; height:48px;">−</button>
@@ -488,7 +494,6 @@ function renderTraining() {
     `;
   }
 
-  // カード選択時の確認パネル
   let playPanelHTML = '';
   if (g.phase === 'play' && g.selectedCard && legalIds.includes(g.selectedCard)) {
     const c = handCards.find(x => x.id === g.selectedCard);
@@ -516,8 +521,6 @@ function renderTraining() {
   }
   
   const leadSeat = g.phase === 'play' && g.trick.length ? g.trick[0].player : g.lastTrickWinner;
-
-  // 手札が少ない時は重なりを浅くする
   const overlap = handCards.length <= 6 ? '4px' : '-18px';
   const handHTML = handCards.map((c, idx) => {
     let extra = '';
