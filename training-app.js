@@ -33,7 +33,7 @@ function dialog(title, text, cb) {
 
 const g = {
   round: 1, players: [], kitty: [], discardedKitty: [], allianceKittyPoints: 0,
-  contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep',
+  contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep', lastTrickWinner: null,
   matchScores: [0,0,0,0,0], playedCards: [], voids: [{},{},{},{},{}],
   bidHistory: [], auction: null, selectedCard: null, discard: new Set(),
   selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A'
@@ -83,7 +83,7 @@ function startTraining() {
 function roundStart() {
   g.phase = 'prep';
   g.trick = []; g.trickNo = 0; g.playedCards = []; g.voids = [{},{},{},{},{}];
-  g.contract = null; g.auction = null; g.bidHistory = [];
+  g.contract = null; g.auction = null; g.bidHistory = []; g.lastTrickWinner = null;
   g.discardedKitty = []; g.allianceKittyPoints = 0;
   g.selectedCard = null; g.discard = new Set();
   
@@ -146,7 +146,6 @@ function humanSkip() {
   message(`${name(g.active)}がスキップしました。`);
   
   if (g.auction.active.length === 1 && g.auction.active[0] === g.active) {
-    // 最後の一人ならスキップ＝承認扱いにして終了
     humanApprove();
     return;
   }
@@ -178,7 +177,6 @@ function humanBid() {
   const trumpType = suit === 'NT' ? 'NT' : 'color';
   teachAI('bid', g.active, { handStr, trumpType, num });
   
-  // 宣言した後、他の全員が承認済みなら終了
   if (g.auction.active.length === 1 && g.auction.active[0] === g.active) {
     auctionEnd(g.active);
     return;
@@ -193,12 +191,11 @@ function beatsBid(n, s) {
 
 function nextAuctionTurn() {
   if (g.auction.active.length === 0) {
-    auctionEnd(g.auction.high.player); // 全員承認（流局、または宣言者の確定）
+    auctionEnd(g.auction.high.player);
     return;
   }
   
   if (g.auction.active.length === 1) {
-    // 残った1人に手番を回す
     g.active = g.auction.active[0];
   } else {
     let nextSeat = (g.active + 1) % 5;
@@ -219,7 +216,6 @@ function auctionEnd(w) {
   const strengthAtBid = suit === 'NT' ? ntHandStrength(g.players[w].hand, defaultStrategy()) : colorStrength(g.players[w].hand, suit, defaultStrategy());
   g.contract = { nap: w, num: g.auction.high.num, suit, deputy: -1, solo: false, revealTrickNo: null, strengthAtBid };
   
-  // オープンをナポレオンの手札に加える
   g.players[w].hand.push(...g.kitty);
   sortHand(g.players[w].hand);
   
@@ -325,6 +321,8 @@ function playCard(cardId) {
   }
   
   const w = winningEntry(g.contract, g.trickNo, g.trick.map(e => ({ seat: e.player, card: e.card }))).seat;
+  g.lastTrickWinner = w; // ★ 最終トリック勝者を保存
+  
   const taken = g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).map(e => e.card);
   g.players[w].taken.push(...taken);
   g.players[w].roundTaken.push(...taken);
@@ -482,21 +480,16 @@ function renderTraining() {
   }
 
   let openKittyHTML = '';
-  if ((g.phase === 'auction' || g.phase === 'discard') && g.kitty && g.kitty.length > 0) {
-    const cardsHTML = g.kitty.map(c => {
-      const red = c.suit === '♦' || c.suit === '♥';
-      return `<div class="card ${red ? 'red' : ''}" style="width:32px; height:46px; border-radius:4px; position:relative; background:#fbfaf6; box-shadow:0 2px 4px rgba(0,0,0,.3);">
-        <span class="rank" style="font-size:14px; left:3px; top:2px; color:${red ? '#c6453f' : '#19251f'}; font-weight:800;">${c.rank}</span>
-        <span class="suit" style="font-size:12px; left:3px; top:18px; color:${red ? '#c6453f' : '#19251f'};">${c.suit}</span>
-      </div>`;
-    }).join('');
-    
+  if ((g.phase === 'auction') && g.kitty && g.kitty.length > 0) {
+    const cardsHTML = g.kitty.map(c => cardElHTML(c, 'contract-kitty-card')).join('');
     openKittyHTML = `<div style="position:absolute; top:15px; left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:row; align-items:center; gap:8px;">
       <span style="font-size:12px;color:var(--gold);font-weight:700; white-space:nowrap; writing-mode:horizontal-tb;">オープン</span>
       <div style="display:flex; gap:4px;">${cardsHTML}</div>
     </div>`;
   }
   
+  const leadSeat = g.phase === 'play' && g.trick.length ? g.trick[0].player : g.lastTrickWinner;
+
   shell.innerHTML = `
     <div class="game-screen training-game">
       <div class="game-head">
@@ -509,17 +502,44 @@ function renderTraining() {
         </div>
         <div class="phase-label">${g.phase.toUpperCase()}</div>
       </div>
-      ${g.contract ? `<div class="contract-info">宣言 ${g.contract.num}${g.contract.suit} ${g.contract.call ? '· 指名 '+g.contract.call.id : ''}</div>` : ''}
+      ${g.contract ? `<div class="contract-info">宣言 ${g.contract.num}${g.contract.suit} ${g.contract.call ? '· 指名 '+g.contract.call.id : ''}
+        ${(g.phase !== 'auction' && g.phase !== 'prep' && g.phase !== 'discard') && g.discardedKitty ? `
+          <span class="contract-call-label" style="margin-left:8px;">捨て札</span>
+          <div class="contract-kitty-cards">${g.discardedKitty.filter(c => ['10','J','Q','K','A'].includes(c.rank)).map(c => cardElHTML(c, 'contract-kitty-card')).join('')}</div>
+        ` : ''}
+      </div>` : ''}
       <div class="table-message">${escapeHTML($('table-message')?.textContent || '')}</div>
       <div class="table-area" style="position: relative; overflow: visible;">
         ${trickHTML}
         ${openKittyHTML}
         <div class="players-ring">
           ${g.players.map((p, i) => {
+            const pos = (i - mySeat + 5) % 5;
             const isApproved = g.phase === 'auction' && g.auction && g.auction.active && !g.auction.active.includes(i);
-            return `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto; opacity: ${isApproved ? 0.5 : 1};">
+            
+            let role = '';
+            if (g.contract) {
+               if (g.contract.nap === i) role = 'ナポレオン';
+               else if (g.contract.revealedCall && g.contract.deputy === i) role = '副官';
+               else if (g.contract.revealedCall) role = '連合軍';
+            } else if (g.phase === 'auction' && isApproved) {
+               role = '承認済み';
+            }
+
+            let takenHTML = '';
+            const taken = p.taken || [];
+            if (taken.length) {
+              const tags = taken.slice().sort((a,b)=>SV[a.suit]-SV[b.suit]||RANKS.indexOf(a.rank)-RANKS.indexOf(b.rank)).map(c => {
+                const isRed = c.suit === '♦' || c.suit === '♥';
+                return `<span class="taken-card ${isRed ? 'red' : ''}">${c.suit}${c.rank}</span>`;
+              }).join('');
+              takenHTML = `<div class="taken-cards"><span class="taken-label">獲得 ${taken.length}</span>${tags}</div>`;
+            }
+
+            return `<div class="player-seat player-color-${i} pos-${pos} ${i === g.active ? 'active' : ''} ${i === leadSeat ? 'trick-winner' : ''} ${role==='副官'?'deputy-seat':''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto; opacity: ${isApproved ? 0.5 : 1};">
               <div class="seat-name">${name(i)}</div>
-              ${isApproved ? `<div class="seat-role" style="color:#a3b1a8; font-size:10px;">承認済み</div>` : ''}
+              <div class="seat-role ${role==='副官'?'deputy-status':''}">${role}</div>
+              ${takenHTML}
             </div>`;
           }).join('')}
         </div>
@@ -555,7 +575,6 @@ function renderTraining() {
     };
   }
 
-  // 席を直接タップして切り替え
   document.querySelectorAll('.player-seat[data-seat]').forEach(el => {
     el.onclick = () => {
       const seat = Number(el.dataset.seat);
