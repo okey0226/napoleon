@@ -376,19 +376,6 @@ function finishTrainingRound() {
   const pts = side.reduce((n, i) => n + g.players[i].roundPoints, 0);
   const success = pts >= c.num && (c.num === 20 || pts < 20);
   
-  // AI学習用に正しい勝敗を送信
-  const payload = {
-    round: g.round, wonRound: success,
-    bid: g.roundLog.bid, call: g.roundLog.call,
-    playDecisions: g.roundLog.playDecisions.filter(d => d.won !== null)
-  };
-  if (payload.bid || payload.call || payload.playDecisions.length) {
-    fetch('/api/ai/learn', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).catch(() => {});
-  }
-
   const unit = Math.max(0, c.num - 12);
   const sign = success ? 1 : -1;
   const scores = [0,0,0,0,0];
