@@ -36,6 +36,7 @@ const g = {
   contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep',
   matchScores: [0,0,0,0,0], playedCards: [], voids: [{},{},{},{},{}],
   bidHistory: [], auction: null, selectedCard: null, discard: new Set(),
+  selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A' // ★ 選択状態を保持する変数を追加
 };
 
 function name(i) {
@@ -111,6 +112,7 @@ function prepAuction() {
 
 function auctionStart() {
   g.phase = 'auction';
+  g.selectedBidSuit = '♠'; // リセット
   g.auction = {
     active: [0, 1, 2, 3, 4],
     minBid: 13,
@@ -138,8 +140,10 @@ function humanApprove() {
 
 function humanBid() {
   if (g.phase !== 'auction' || !g.auction.active.includes(g.active)) return;
-  const num = Number($('training-bid-num').value);
-  const suit = $('training-bid-suit').value;
+  const numInput = $('training-bid-num');
+  const num = numInput ? Number(numInput.value) : 13;
+  const suit = g.selectedBidSuit; // 状態から取得
+  
   if (!beatsBid(num, suit)) { toast('現在の宣言より強い宣言を選んでください'); return; }
   
   g.bidHistory.push({ round: g.round, seat: g.active, num, suit });
@@ -207,14 +211,16 @@ function submitDiscard() {
   g.discard = new Set();
   g.selectedCard = null;
   g.phase = 'call';
+  g.selectedCallSuit = '♠';
+  g.selectedCallRank = 'A';
   message(`${name(n)}が捨て札を決めました。副官に指名するカードを選んでください。`);
   renderTraining();
 }
 
 function submitCall() {
   const n = g.contract.nap;
-  const suit = $('training-call-suit').value;
-  const rank = $('training-call-rank').value;
+  const suit = g.selectedCallSuit;
+  const rank = g.selectedCallRank;
   const id = suit + rank;
   
   if (g.kitty.some(c => c.id === id)) { toast('捨て札は指名できません'); return; }
@@ -387,11 +393,15 @@ function renderTraining() {
   
   let auctionHTML = '';
   if (g.phase === 'auction') {
+    // 選択状態を反映
+    const suitBtns = SUITS.concat(['NT']).map(s => 
+      `<button class="suit-choice ${g.selectedBidSuit === s ? 'selected' : ''}" data-suit="${s}">${s}</button>`
+    ).join('');
+    
     auctionHTML = `
       <div class="training-auction-panel">
         <div class="panel-row">
-          ${SUITS.map(s => `<button class="suit-choice" data-suit="${s}">${s}</button>`).join('')}
-          <button class="suit-choice" data-suit="NT">NT</button>
+          ${suitBtns}
         </div>
         <div class="panel-row">
           <input type="number" id="training-bid-num" min="13" max="20" value="13">
@@ -404,13 +414,20 @@ function renderTraining() {
   
   let callHTML = '';
   if (g.phase === 'call') {
+    const suitBtns = SUITS.map(s => 
+      `<button class="suit-choice ${g.selectedCallSuit === s ? 'selected' : ''}" data-cs="${s}">${s}</button>`
+    ).join('');
+    const rankBtns = RANKS.map(r => 
+      `<button class="small-action call-rank-choice ${g.selectedCallRank === r ? 'selected' : ''}" data-cr="${r}">${r}</button>`
+    ).join('');
+
     callHTML = `
       <div class="training-call-panel">
         <div class="panel-row">
-          ${SUITS.map(s => `<button class="suit-choice" data-cs="${s}">${s}</button>`).join('')}
+          ${suitBtns}
         </div>
         <div class="panel-row">
-          ${RANKS.map(r => `<button class="small-action call-rank-choice" data-cr="${r}">${r}</button>`).join('')}
+          ${rankBtns}
         </div>
         <div class="panel-row">
           <button id="training-call-submit" class="primary-button">指名する</button>
@@ -460,6 +477,7 @@ function renderTraining() {
   if (g.phase === 'auction') {
     document.querySelectorAll('[data-suit]').forEach(btn => {
       btn.onclick = () => {
+        g.selectedBidSuit = btn.dataset.suit; // 状態を更新
         document.querySelectorAll('[data-suit]').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
       };
@@ -471,19 +489,22 @@ function renderTraining() {
   }
   
   if (g.phase === 'call') {
-    let selSuit = '♠', selRank = 'A';
     document.querySelectorAll('[data-cs]').forEach(btn => {
-      btn.onclick = () => { selSuit = btn.dataset.cs; document.querySelectorAll('[data-cs]').forEach(b => b.classList.toggle('selected', b.dataset.cs === selSuit)); };
+      btn.onclick = () => { 
+        g.selectedCallSuit = btn.dataset.cs; // 状態を更新
+        document.querySelectorAll('[data-cs]').forEach(b => b.classList.remove('selected')); 
+        btn.classList.add('selected');
+      };
     });
     document.querySelectorAll('[data-cr]').forEach(btn => {
-      btn.onclick = () => { selRank = btn.dataset.cr; document.querySelectorAll('[data-cr]').forEach(b => b.classList.toggle('selected', b.dataset.cr === selRank)); };
+      btn.onclick = () => { 
+        g.selectedCallRank = btn.dataset.cr; // 状態を更新
+        document.querySelectorAll('[data-cr]').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+      };
     });
     const submitBtn = $('training-call-submit');
-    if (submitBtn) submitBtn.onclick = () => {
-      $('training-call-suit').value = selSuit;
-      $('training-call-rank').value = selRank;
-      submitCall();
-    };
+    if (submitBtn) submitBtn.onclick = submitCall;
   }
   
   if (g.phase === 'play') {
