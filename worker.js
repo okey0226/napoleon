@@ -281,18 +281,19 @@ export default {
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         try {
           const stmts = [];
+          const won = body.won === true ? 1 : 0;
           if (body.action === 'bid') {
             stmts.push(env.DB.prepare(
               "INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,1) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins, samples=samples+1, updated_at=CURRENT_TIMESTAMP"
-            ).bind(Number(body.handStr), String(body.trumpType), Number(body.num), 1));
+            ).bind(Number(body.handStr), String(body.trumpType), Number(body.num), won));
           } else if (body.action === 'play') {
             stmts.push(env.DB.prepare(
               "INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples) VALUES(?,?,?,?,?,1) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins, samples=samples+1, updated_at=CURRENT_TIMESTAMP"
-            ).bind(String(body.role), String(body.phase), String(body.pointsTier), String(body.rankTier), 1));
+            ).bind(String(body.role), String(body.phase), String(body.pointsTier), String(body.rankTier), won));
           } else if (body.action === 'call') {
             stmts.push(env.DB.prepare(
               "INSERT INTO ai_call_experience(call_id,trump_suit,wins,samples) VALUES(?,?,?,1) ON CONFLICT(call_id,trump_suit) DO UPDATE SET wins=wins+excluded.wins, samples=samples+1, updated_at=CURRENT_TIMESTAMP"
-            ).bind(String(body.callId), String(body.trumpSuit), 1));
+            ).bind(String(body.callId), String(body.trumpSuit), won));
           }
           if (stmts.length) await env.DB.batch(stmts);
           __cachedExperience = null; __cachedExperienceTime = 0;
