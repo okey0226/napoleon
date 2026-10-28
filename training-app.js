@@ -33,15 +33,14 @@ function dialog(title, text, cb) {
 
 const g = {
   round: 1, players: [], kitty: [], discardedKitty: [], allianceKittyPoints: 0,
-  contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep', lastTrickWinner: null,
-  matchScores: [0,0,0,0,0], playedCards: [], voids: [{},{},{},{},{}],
+  contract: null, trick: [], trickNo: 0, playedCards: [], voids: [{},{},{},{},{}],
   bidHistory: [], auction: null, selectedCard: null, discard: new Set(),
-  selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A'
+  selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A',
+  lastTrickWinner: null, matchScores: [0,0,0,0,0], phase: 'prep', active: 0,
+  roundLog: { bid: null, call: null, playDecisions: [] } // ★ 学習ログ用
 };
 
-function name(i) {
-  return `COM${i + 1}`;
-}
+function name(i) { return `COM${i + 1}`; }
 
 function screen(id) {
   ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen','training-screen'].forEach(x => {
@@ -86,6 +85,7 @@ function roundStart() {
   g.contract = null; g.auction = null; g.bidHistory = []; g.lastTrickWinner = null;
   g.discardedKitty = []; g.allianceKittyPoints = 0; g.selectedCard = null;
   g.discard = new Set();
+  g.roundLog = { bid: null, call: null, playDecisions: [] }; // ★ リセット
   
   const d = shuffledDeck();
   g.players.forEach(p => { p.hand = d.splice(0, 10); p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
@@ -172,11 +172,11 @@ function humanBid() {
   g.auction.high = { num, suit, player: g.active, solo: false };
   g.auction.version++;
   
+  // ★ ログに記録
   const cs = colorStrength(g.players[g.active].hand, suit, defaultStrategy());
   const nt = ntHandStrength(g.players[g.active].hand, defaultStrategy());
   const handStr = suit === 'NT' ? nt : cs;
-  const trumpType = suit === 'NT' ? 'NT' : 'color';
-  teachAI('bid', g.active, { handStr, trumpType, num });
+  g.roundLog.bid = { strengthKey: Math.round(handStr * 2) / 2, trumpType: suit === 'NT' ? 'NT' : 'color', num };
   
   if (g.auction.active.length === 1 && g.auction.active[0] === g.active) {
     auctionEnd(g.active);
@@ -239,8 +239,6 @@ function submitDiscard() {
   g.discardedKitty = removed.slice();
   g.allianceKittyPoints += removed.filter(c => ['10','J','Q','K','A'].includes(c.rank)).length;
   
-  teachAI('discard', n, { cardIds: Array.from(g.discard) });
-  
   g.discard = new Set();
   g.selectedCard = null;
   g.phase = 'call';
@@ -265,7 +263,8 @@ function submitCall() {
   const deputy = g.players.findIndex((p, i) => i !== n && p.hand.some(c => c.id === id));
   g.contract.deputy = deputy >= 0 ? deputy : n;
   
-  teachAI('call', n, { callId: id, trumpSuit: g.contract.suit });
+  // ★ ログに記録
+  g.roundLog.call = { callId: id, trumpSuit: g.contract.suit };
   
   g.kitty = [];
   g.phase = 'play';
@@ -312,11 +311,12 @@ function playCard(cardId) {
     g.contract.revealTrickNo = g.trickNo;
   }
   
+  // ★ ログに記録
   const role = g.contract.nap === seat ? 'nap' : (!g.contract.solo && g.contract.revealedCall && g.contract.deputy === seat ? 'dep' : 'ally');
   const phase = trickPhaseOf(g.trickNo);
   const pointsTier = pointsTierOf(g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).length);
   const rankTier = rankTierOf(card.rank);
-  teachAI('play', seat, { role, phase, pointsTier, rankTier, cardId });
+  g.roundLog.playDecisions.push({ trickNo: g.trickNo, role, phase, pointsTier, rankTier, won: null });
   
   if (g.trick.length < 5) {
     g.active = (seat + 4) % 5;
@@ -327,6 +327,15 @@ function playCard(cardId) {
   const w = winningEntry(g.contract, g.trickNo, g.trick.map(e => ({ seat: e.player, card: e.card }))).seat;
   g.lastTrickWinner = w;
   
+  // ★ トリック勝敗をログに記録
+  const isNapSideWin = (w === g.contract.nap || (!g.contract.solo && w === g.contract.deputy));
+  for (const d of g.roundLog.playDecisions) {
+    if (d.trickNo === g.trickNo && d.won === null) {
+      const amINapSide = d.role === 'nap' || d.role === 'dep';
+      d.won = amINapSide ? isNapSideWin : !isNapSideWin;
+    }
+  }
+
   const taken = g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).map(e => e.card);
   g.players[w].taken.push(...taken);
   g.players[w].roundTaken.push(...taken);
@@ -344,7 +353,7 @@ function playCard(cardId) {
   let earlyFinish = false;
   if (alliancePoints > 20 - c.num) earlyFinish = true;
   else if (napPoints >= c.num && (c.num === 20 || alliancePoints >= 1)) earlyFinish = true;
-  else if (napPoints === 20 && c.num < 20) earlyFinish = true; // 全部取り負け
+  else if (napPoints === 20 && c.num < 20) earlyFinish = true;
 
   if (g.trickNo >= 10 || earlyFinish) {
     finishTrainingRound();
@@ -369,6 +378,20 @@ function finishTrainingRound() {
   const side = c.solo ? [c.nap] : [c.nap, c.deputy];
   const pts = side.reduce((n, i) => n + g.players[i].roundPoints, 0);
   const success = pts >= c.num && (c.num === 20 || pts < 20);
+  
+  // ★ AI学習用に正しい勝敗を送信
+  const payload = {
+    round: g.round, wonRound: success,
+    bid: g.roundLog.bid, call: g.roundLog.call,
+    playDecisions: g.roundLog.playDecisions.filter(d => d.won !== null)
+  };
+  if (payload.bid || payload.call || payload.playDecisions.length) {
+    fetch('/api/ai/learn', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  }
+
   const unit = Math.max(0, c.num - 12);
   const sign = success ? 1 : -1;
   const scores = [0,0,0,0,0];
@@ -407,15 +430,6 @@ function finishTrainingRound() {
     }
     roundStart();
   };
-}
-
-function teachAI(action, seat, data) {
-  const payload = { action, seat, ...data };
-  fetch('/api/ai/teach', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).catch(e => console.warn('teach failed', e));
 }
 
 function cardElHTML(c, extra = '', style = '', dataAttrs = '') {
