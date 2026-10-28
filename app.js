@@ -21,7 +21,7 @@ const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{
   bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
   teamCooperationWeight:1.5,feedBonusWeight:1.0,overkillPenalty:1.0,mctsSimulations:40,mctsExploration:1.414,handInferenceWeight:0.5,rolloutPolicyWeight:0.8,bayesUpdateRate:0.05,
   ntMightyHoldThreshold:7,ntMightyShadowWeight:1.5,ntAceLeadPriority:1.2,ntVoidExploitWeight:1.5,ntDeputyFeedChance:0.8,ntEarlyLeadAggression:0.7,ntLateGameSafety:1.0
-},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null};
+},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null, botTimer:null};
 let toastTimer;
 let lastAuctionDrawHash = '';
 
@@ -291,7 +291,7 @@ function startLocal(){
 }
 
 function roundStart(){
-  clearTimers();clearTimeout(g.auction?.humanTimeout);
+  clearTimers();clearTimeout(g.auction?.humanTimeout);clearTimeout(g.botTimer);
   clearInterval(g.autoNextTimer);
   g.waitingAutoPlay=false;
   g.active=-1;
@@ -854,12 +854,25 @@ function playTurn(){
   
   stopTurnTimer();
   message(name(g.active)+'がカードを選んでいます');
-  later(()=>{
+  
+  if (g.botTimer) clearTimeout(g.botTimer);
+  g.botTimer = setTimeout(()=>{
+    g.botTimer = null;
+    if (g.phase === 'result') return; // 結果画面なら何もしない
+    
+    // フェーズがおかしくなっていたら強制的に戻す
+    if (g.phase !== 'play') {
+      console.warn('[COM] Phase was not play:', g.phase, 'forcing to play.');
+      g.phase = 'play';
+    }
+    
     try{
-      if(g.phase!=='play')return;
       const seat=g.active;
+      if (seat === g.mySeat) return;
+      
       const legalCardsList=legal(seat);
       if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+4)%5;playTurn();return}
+      
       const chosen=computeBotPlay(seat);
       if(chosen&&legalCardsList.some(x=>x.id===chosen.id)){ logPlayDecision(seat,chosen,{reason:'ai-tactics'},buildPlayContext(seat)); play(seat,chosen); }
       else{ const fallback=legalCardsList[Math.floor(Math.random()*legalCardsList.length)]; addDebugLog('play-fallback-random',{seat,expected:chosen?.id||null,fallback:fallback.id,legalIds:legalCardsList.map(x=>x.id)}); play(seat,fallback); }
@@ -872,7 +885,7 @@ function playTurn(){
       if(l.length){const random=l[Math.floor(Math.random()*l.length)];addDebugLog('bot-error-fallback-random',{seat:errSeat,fallback:random.id,legalIds:l.map(x=>x.id)});play(errSeat,random)}
       else{g.active=(errSeat+4)%5;playTurn()}
     }
-  },650+Math.random()*550)
+  }, 650 + Math.random() * 550);
 }
 
 function artfulCard(entry,trick){const c=entry.card,led=trick[0].card.suit,black=s=>s==='♣'||s==='♠';return c.id==='♠A'||c.id==='♥Q'&&trick.some(x=>x.card.id==='♠A')||c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))||c.rank==='2'&&c.suit===led&&trick.every(x=>x.card.suit===led)}
@@ -953,11 +966,27 @@ function play(i,c){
   }
   message(name(w)+'が場札を取りました');
   drawSeats();
-  later(()=>{g.trickNo++;if(g.trickNo>=10){finishGame();return}g.trick=[];$('trick-cards')?.replaceChildren();g.phase='play';message(name(w)+'から次の勝負');playTurn()},1250)
+  
+  if (g.trickResetTimer) clearTimeout(g.trickResetTimer);
+  g.trickResetTimer = setTimeout(()=>{
+    g.trickResetTimer = null;
+    if (g.phase !== 'trick-end') return; // 既に次に進んでいたらスキップ
+    g.trickNo++;
+    if(g.trickNo>=10){
+      finishGame();
+      return
+    }
+    g.trick=[];
+    $('trick-cards')?.replaceChildren();
+    g.phase='play';
+    message(name(w)+'から次の勝負');
+    playTurn()
+  },1250)
 }
 
 function finishGame(){
   g.phase='result';
+  clearTimeout(g.botTimer); clearTimeout(g.trickResetTimer);
   stopTurnTimer();
   const c=g.contract;
   const side=c.solo?[c.nap]:[c.nap,c.deputy];
