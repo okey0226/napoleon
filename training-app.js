@@ -150,9 +150,10 @@ function humanSkip() {
     return;
   }
   
-  let nextSeat = (g.active + 1) % 5;
+  // 時計回りに次の手番へ
+  let nextSeat = (g.active + 4) % 5;
   while (!g.auction.active.includes(nextSeat)) {
-    nextSeat = (nextSeat + 1) % 5;
+    nextSeat = (nextSeat + 4) % 5;
   }
   g.active = nextSeat;
   enterAuction();
@@ -198,9 +199,10 @@ function nextAuctionTurn() {
   if (g.auction.active.length === 1) {
     g.active = g.auction.active[0];
   } else {
-    let nextSeat = (g.active + 1) % 5;
+    // 時計回りに次の手番へ
+    let nextSeat = (g.active + 4) % 5;
     while (!g.auction.active.includes(nextSeat)) {
-      nextSeat = (nextSeat + 1) % 5;
+      nextSeat = (nextSeat + 4) % 5;
     }
     g.active = nextSeat;
   }
@@ -315,13 +317,14 @@ function playCard(cardId) {
   teachAI('play', seat, { role, phase, pointsTier, rankTier, cardId });
   
   if (g.trick.length < 5) {
-    g.active = (seat + 1) % 5;
+    // 時計回りに次の手番へ
+    g.active = (seat + 4) % 5;
     nextPlayTurn();
     return;
   }
   
   const w = winningEntry(g.contract, g.trickNo, g.trick.map(e => ({ seat: e.player, card: e.card }))).seat;
-  g.lastTrickWinner = w; // ★ 最終トリック勝者を保存
+  g.lastTrickWinner = w;
   
   const taken = g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).map(e => e.card);
   g.players[w].taken.push(...taken);
