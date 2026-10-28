@@ -56,9 +56,9 @@ function stopTurnTimer() {
   if (bar) bar.classList.add('hidden');
 }
 function syncTurnTimer() {
-  const mySeat = g.onlineState ? g.mySeat : 0;
+  const mySeat = (g.onlineState && g.room) ? g.mySeat : 0;
   if (g.phase === 'play' && g.active === mySeat) {
-    const dl = g.onlineState?.deadline || g.deadline;
+    const dl = (g.onlineState && g.room) ? g.onlineState?.deadline : g.deadline;
     if (dl) startTurnTimer(dl, true);
     return;
   }
@@ -69,7 +69,7 @@ function syncTurnTimer() {
   stopTurnTimer();
 }
 function resetAuctionTimer() {
-  const mySeat = g.onlineState ? g.mySeat : 0;
+  const mySeat = (g.onlineState && g.room) ? g.mySeat : 0;
   if (g.phase === 'auction' && g.auction?.active?.includes(mySeat)) {
     startTurnTimer(Date.now() + 30000, true);
   }
@@ -110,7 +110,8 @@ function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c
 
 function phase(t){const roundTag=g.playoff?'プレーオフ · ':g.round===9?'ラス前 · ':g.round>=10?'オールラスト · ':'';const pl=$('phase-label');if(pl)pl.textContent=roundTag+t;const gs=$('game-screen');if(gs)gs.classList.toggle('auctioning',g.phase==='auction');renderContractInfo()}
 function name(i){
-  if(i === g.mySeat) return 'あなた';
+  if((g.onlineState && g.room) && i === g.mySeat) return 'あなた';
+  if(!(g.onlineState && g.room) && i === 0) return 'あなた';
   const p = g.players[i];
   if(!p) return 'COM ' + i;
   if (p.abandoned) return (p.originalName || p.username || p.name || ('COM ' + i)) + ' (放棄)';
@@ -230,6 +231,12 @@ function sendRoundLearn(wonRound) {
 }
 
 function startLocal(){
+  // ★ 修正: オンライン状態を完全にクリア
+  g.onlineState = null;
+  g.room = null;
+  g.online = null;
+  g.intentionalLeave = true;
+
   if (!g.friendLobby) closeOnline();
   else {
     clearTimers();
@@ -237,9 +244,9 @@ function startLocal(){
     clearTimeout(g.onlineResultTimer);
     clearTimeout(g.auction?.humanTimeout);
     clearInterval(g.autoNextTimer);
-    g.intentionalLeave = false;
   }
-  g.onlineState=null; g.privateHand=[]; g.onlineLegal=[]; g.online=null; g.mySeat=0;
+  
+  g.privateHand=[]; g.onlineLegal=[]; g.mySeat=0;
   g.lastRating=null; g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
   g.selectedCard=null; g.active=-1; g.bid=13; g.suit='♠'; g.discard=new Set();
   stopTurnTimer();
@@ -278,6 +285,8 @@ function startLocal(){
   const modeLabel=$('game-mode-label'); if(modeLabel)modeLabel.textContent='COM戦';
   const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='RATE';
   const ratLab=$('rating-label'); if(ratLab)ratLab.textContent=g.rate;
+  
+  setTimeout(() => { g.intentionalLeave = false; }, 1000);
   roundStart()
 }
 
@@ -361,10 +370,10 @@ function prepAuction(){g.phase='prep';announceRound(g.round,finalAuctionRule(g.m
 function scheduleHumanAuctionTimeout(){
   const auction=g.auction; if(!auction)return;
   clearTimeout(auction.humanTimeout);
-  const timeoutMs = g.onlineState ? 30000 : 300000;
+  const timeoutMs = (g.onlineState && g.room) ? 30000 : 300000;
   auction.humanTimeout=setTimeout(()=>{
     if(g.phase==='auction' && g.auction===auction) {
-      if (g.onlineState) humanApprove(true);
+      if (g.onlineState && g.room) humanApprove(true);
       else { if (!g.auction.active.includes(g.mySeat)) return; message('操作がありません。「承認」か「宣言する」を選んでください。'); scheduleHumanAuctionTimeout(); }
     }
   }, timeoutMs);
@@ -372,7 +381,7 @@ function scheduleHumanAuctionTimeout(){
 
 function auctionActivity(){
   if(g.phase!=='auction'||!g.auction)return;
-  if (g.onlineState) {
+  if (g.onlineState && g.room) {
     g.room?.send({type:'game', action:{type:'auction-activity'}});
     resetAuctionTimer();
   } else {
@@ -402,7 +411,7 @@ function drawAppealResponse(){
 }
 
 function answerLocalAppeal(choice){
-  if(g.onlineState) {
+  if(g.onlineState && g.room) {
     if(choice==='skip') g.room?.send({type:'game', action:{type:'skip-appeal'}});
     else if(choice==='appeal') g.room?.send({type:'game', action:{type:'appeal'}});
     else if(choice==='disclose') g.room?.send({type:'game', action:{type:'appeal-declare'}});
@@ -456,7 +465,7 @@ function drawAuction(){
   renderContractInfo();
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
-  if (g.onlineState && g.phase === 'auction') {
+  if ((g.onlineState && g.room) && g.phase === 'auction') {
     const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active);
     if (lastAuctionDrawHash === currentHash && !p.classList.contains('hidden')) return;
     lastAuctionDrawHash = currentHash;
@@ -486,7 +495,7 @@ function scheduleComBids(){
 }
 
 function humanApprove(forced=false){
-  if(g.onlineState){
+  if(g.onlineState && g.room){
     if(!forced) {
       g.room?.send({type:'game', action:{type:'approve'}});
       resetAuctionTimer();
@@ -510,7 +519,7 @@ function humanApprove(forced=false){
 }
 
 function humanBid(){
-  if(g.onlineState){
+  if(g.onlineState && g.room){
     g.room?.send({type:'game', action:{type:'bid', num:g.bid, suit:g.suit}});
     resetAuctionTimer();
     return;
@@ -595,7 +604,7 @@ function auctionEnd(w){
 function callUi(){
   g.phase='call';
   phase('副官指名');
-  if(!g.onlineState) showDiscardedKitty();
+  if(!(g.onlineState && g.room)) showDiscardedKitty();
   else {
     const label=document.createElement('span'); label.className='open-label'; label.textContent='捨て札(絵札)';
     const cards=(g.discardedKitty||[]).map(c=>cardEl(c));
@@ -627,7 +636,7 @@ function callUi(){
   if(cok)cok.onclick=()=>{
     if(g.kitty.some(c=>c.suit===s&&c.rank===r))return;
     if(forceSolo&&!ownCards.has(s+r))return;
-    if(g.onlineState){ g.room?.send({type:'game', action:{type:'call', suit:s, rank:r}}); p.classList.add('hidden'); return; }
+    if(g.onlineState && g.room){ g.room?.send({type:'game', action:{type:'call', suit:s, rank:r}}); p.classList.add('hidden'); return; }
     g.contract.call={suit:s,rank:r,id:s+r};
     g.contract.solo=g.players[g.mySeat].hand.some(c=>c.suit===s&&c.rank===r);
     if(forceSolo&&!g.contract.solo)return;
@@ -658,7 +667,7 @@ function drawOnlineCallReveal(){
 
 function kittyStart(){
   let n=g.contract.nap;
-  if(!g.onlineState) { g.players[n].hand.push(...g.kitty); sort(g.players[n].hand); }
+  if(!(g.onlineState && g.room)) { g.players[n].hand.push(...g.kitty); sort(g.players[n].hand); }
   g.phase='discard';
   phase('浮き札の交換');
   if(n===g.mySeat){
@@ -671,7 +680,7 @@ function kittyStart(){
     if(dok)dok.disabled=g.discard.size!==2;
     if(dok)dok.onclick=()=>{
       if(g.discard.size!==2)return;
-      if(g.onlineState){ g.room?.send({type:'game', action:{type:'discard', cards:Array.from(g.discard)}}); $('game-screen')?.classList.remove('discarding'); $('hand')?.classList.remove('discard-mode'); cp.classList.add('hidden'); return; }
+      if(g.onlineState && g.room){ g.room?.send({type:'game', action:{type:'discard', cards:Array.from(g.discard)}}); $('game-screen')?.classList.remove('discarding'); $('hand')?.classList.remove('discard-mode'); cp.classList.add('hidden'); return; }
       g.kitty=g.players[g.mySeat].hand.filter(c=>g.discard.has(c.id));
       g.discardedKitty=g.kitty.slice();
       const kittyPoints=g.kitty.filter(c=>POINT.includes(c.rank));
@@ -686,7 +695,7 @@ function kittyStart(){
     g.lastDiscardPhase = true;
     return
   }
-  if(g.onlineState) return;
+  if(g.onlineState && g.room) return;
   const drop=chooseDiscard(g.players[n].hand,g.contract.suit);
   g.players[n].hand=g.players[n].hand.filter(c=>!drop.some(x=>x.id===c.id));
   g.kitty=drop;
@@ -708,7 +717,7 @@ function renderHand(discard=false){
   box.classList.toggle('discard-mode',discard);
   $('game-screen')?.classList.toggle('discarding',discard);
   box.replaceChildren();
-  const handCards = g.onlineState ? (g.privateHand || g.players[g.mySeat]?.hand || []) : (g.players[0]?.hand || []);
+  const handCards = (g.onlineState && g.room) ? (g.privateHand || g.players[g.mySeat]?.hand || []) : (g.players[0]?.hand || []);
   handCards.forEach(c=>{
     let e=cardEl(c,discard?'playable':'');
     if(discard){
@@ -727,7 +736,7 @@ function renderHand(discard=false){
         if(dc)dc.textContent=g.discard.size+' / 2枚選択';
         if(dok)dok.disabled=g.discard.size!==2
       }
-    }else if(g.phase==='play' && (g.onlineState ? g.active===g.mySeat : g.active===0)){
+    }else if(g.phase==='play' && ((g.onlineState && g.room) ? g.active===g.mySeat : g.active===0)){
       const ok=legal(g.mySeat).some(x=>x.id===c.id);
       e.classList.toggle('playable',ok && !g.waitingAutoPlay);
       e.classList.toggle('selected',g.selectedCard===c.id);
@@ -747,7 +756,7 @@ function drawLocalPlayControls(){
   const lpc=$('local-play-card');if(lpc)lpc.replaceChildren(cardEl(card,'play-confirm-card'));
   const cancel=$('cancel-local-play');if(cancel)cancel.onclick=()=>{g.selectedCard=null;renderHand();drawLocalPlayControls()};
   const confirm=$('confirm-local-play');if(confirm)confirm.onclick=()=>{
-    if(g.onlineState){ g.room?.send({type:'game', action:{type:'play', card:card.id}}); g.selectedCard=null; p.classList.add('hidden'); return; }
+    if(g.onlineState && g.room){ g.room?.send({type:'game', action:{type:'play', card:card.id}}); g.selectedCard=null; p.classList.add('hidden'); return; }
     const chosen=card;g.selectedCard=null;p.classList.add('hidden');play(g.mySeat,chosen)
   }
 }
@@ -840,7 +849,9 @@ function playTurn(){
     syncTurnTimer();
     return
   }
-  if(g.onlineState) return;
+  // ★ 修正: オンライン状態とWebSocket接続の両方が存在する場合のみオンラインと判断
+  if(g.onlineState && g.room) return;
+  
   stopTurnTimer();
   message(name(g.active)+'がカードを選んでいます');
   later(()=>{
@@ -867,7 +878,7 @@ function playTurn(){
 function artfulCard(entry,trick){const c=entry.card,led=trick[0].card.suit,black=s=>s==='♣'||s==='♠';return c.id==='♠A'||c.id==='♥Q'&&trick.some(x=>x.card.id==='♠A')||c.rank==='J'&&g.contract.suit!=='NT'&&(c.suit===g.contract.suit||c.suit!==g.contract.suit&&black(c.suit)===black(g.contract.suit))||c.rank==='2'&&c.suit===led&&trick.every(x=>x.card.suit===led)}
 
 function play(i,c){
-  if(g.onlineState){ g.room?.send({type:'game', action:{type:'play', card:c.id}}); g.selectedCard=null; $('play-panel')?.classList.add('hidden'); stopTurnTimer(); return; }
+  if(g.onlineState && g.room){ g.room?.send({type:'game', action:{type:'play', card:c.id}}); g.selectedCard=null; $('play-panel')?.classList.add('hidden'); stopTurnTimer(); return; }
   if(g.phase!=='play'||g.active!==i||!legal(i).some(x=>x.id===c.id))return;
   if(!g.trick.length)g.lastTrickWinner=null;
   const previous=g.trick.length?winning():null;
@@ -1016,7 +1027,7 @@ function finishGame(){
     clearInterval(g.autoNextTimer);
     r.classList.add('hidden');
     if(final){screen('home-screen');return}
-    if(g.onlineState) g.room?.send({type:'game',action:{type:'next-round'}});
+    if(g.onlineState && g.room) g.room?.send({type:'game',action:{type:'next-round'}});
     else { g.round++;g.mult=1;g.greenRedraws=0;roundStart(); }
   };
   if(!final){
@@ -1029,7 +1040,7 @@ function finishGame(){
       if(remain<=0){
         clearInterval(g.autoNextTimer);
         r.classList.add('hidden');
-        if(g.onlineState) g.room?.send({type:'game',action:{type:'next-round'}});
+        if(g.onlineState && g.room) g.room?.send({type:'game',action:{type:'next-round'}});
         else { g.round++;g.mult=1;g.greenRedraws=0;roundStart(); }
       } else if(cd){cd.textContent=remain+'秒後に次の局へ…';}
     },1000);
@@ -1038,7 +1049,7 @@ function finishGame(){
 
 function showOnlineResult() {
   const r = $('result-panel');
-  if (!r || !g.onlineState || !g.onlineState.result) return;
+  if (!r || !(g.onlineState && g.room) || !g.onlineState.result) return;
   const res = g.onlineState.result;
   const success = res.made;
   const format = n => (n > 0 ? '+' : '') + n;
@@ -1415,6 +1426,9 @@ function bindOnlineWs(ws){
 }
 
 function handleOnlineMessage(m){
+  // ★ 修正: 意図的に切断した場合は、遅延して届いたメッセージをすべて無視する
+  if (g.intentionalLeave) return;
+
   if(m.type==='lobby'){message(m.text);return;}
   if(m.type==='queue-cancelled'){ if (g.online?.mode === 'ranked' || !g.onlineState) { toast('待機をキャンセルしました'); closeOnline(); screen('mode-select-screen'); } return; }
   if(m.type==='friend-lobby'){ g.friendLobby = m; const banner = document.getElementById('friend-waiting-banner'); const overlay = document.getElementById('friend-lobby-overlay'); if (banner && !banner.classList.contains('hidden')) showWaitingBanner(m); else if (overlay && !overlay.classList.contains('hidden')) showFriendLobby(m); else showFriendLobby(m); return; }
