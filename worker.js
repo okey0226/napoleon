@@ -1,6 +1,6 @@
 // ===== [worker.js 1/2 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
-import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 import { handleQuizRequest, quizSchema } from './quiz-api.js';
 
@@ -101,7 +101,8 @@ async function forceInitDB(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    ctx.waitUntil(runSelfPlayBatch(env, 1000).catch(e => console.error("scheduled self-play failed", e)));
+    // ★ 自己対戦を3000マッチに増加
+    ctx.waitUntil(runSelfPlayBatch(env, 3000).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
   async fetch(request, env) {
@@ -753,10 +754,25 @@ function botAction(m, room) {
     const legal = legalCards(m, i);
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
     const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
-    const ctx = { hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract, playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy, discardedKitty: m.discardedKitty || [], isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy), isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false, isRevealed: m.contract.revealedCall, isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap, lastSeat: m.trick.length === 4, params, call: m.contract.call, currentNapPoints, experience };
+    
+    // ★ 変更: MCTS用に他のプレイヤーの手札情報やポイントなどを渡す
+    const ctx = { 
+      hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract, 
+      playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy, 
+      discardedKitty: m.discardedKitty || [], 
+      isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy), 
+      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false, 
+      isRevealed: m.contract.revealedCall, 
+      isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap, 
+      lastSeat: m.trick.length === 4, 
+      params, call: m.contract.call, currentNapPoints, experience,
+      points: m.seats.map(s => s.points || 0), // MCTS用の現在のポイント
+      allianceKittyPoints: m.allianceKittyPoints || 0 // MCTS用の捨て札ポイント
+    };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
-    else c = chooseCardToPlay(ctx);
+    // ★ 変更: chooseCardToPlay から chooseCardWithMCTS へ
+    else c = chooseCardWithMCTS(ctx);
     if (!c || !legal.some(x => x.id === c.id)) c = legal[Math.floor(Math.random() * legal.length)];
     playCard(m, i, c.id, room, null);
   }
