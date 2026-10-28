@@ -39,7 +39,14 @@ export const defaultStrategy = () => ({
   deputyCoverWeight: 0.5, sameTwoDeputyBonus: 0.5, allyFaceCardBonus: 0.9,
   napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9, sameColorSuitAvoid: 0.8,
   spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6,
-  sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5, allySameTwoLeadChance: 0.55, allySameTwoWindow: 4
+  sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5, allySameTwoLeadChance: 0.55, allySameTwoWindow: 4,
+  
+  // ★ 追加: チーム連携・MCTS・推測用パラメータ
+  teamCooperationWeight: 1.5, // チーム連携の重要度
+  feedBonusWeight: 1.0,       // 味方へのエサやり成功ボーナス
+  overkillPenalty: 1.0,       // 味方の勝ちにオーバーキルした時のペナルティ
+  mctsSimulations: 20,        // MCTSの1候補あたりの試行回数
+  handInferenceWeight: 0.5    // 相手の手札推測の重み
 });
 
 export const sweetSpotFactor = (p) => {
@@ -111,7 +118,6 @@ export const computeEloDelta = (myElo, oppElos, outcome) => {
   return Math.round(32 * (score - expected));
 };
 
-// ★ 追加: 自己対戦の評価ロジックを実装
 export const rateRound = (seat, roundData, params, weight = 1) => {
   const { nap, deputy, solo, num, won, takenPoints } = roundData;
   if (!Number.isFinite(seat) || seat < 0 || seat > 4) return 0;
@@ -122,17 +128,17 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
   if (isNapSide) {
     if (won) {
       score += 1.0;
-      score += (num - 13) * 0.1; // 高難度宣言成功ボーナス
+      score += (num - 13) * 0.1; 
     } else {
       score -= 1.0;
-      score -= (num - 13) * 0.1; // 高難度宣言失敗ペナルティ
+      score -= (num - 13) * 0.1; 
     }
     const myPoints = takenPoints ? (takenPoints[seat] || 0) : 0;
     score += myPoints * 0.05;
   } else {
     if (!won) {
       score += 1.0;
-      score += (num - 13) * 0.1; // 高難度宣言阻止ボーナス
+      score += (num - 13) * 0.1;
     } else {
       score -= 1.0;
     }
@@ -143,7 +149,6 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
   return Math.max(-3, Math.min(3, score)) * weight;
 };
 
-// ★ 修正: 全パラメータにバウンドを設定
 export const PARAM_BOUNDS = {
   bidThreshold: [2, 8], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
@@ -162,10 +167,12 @@ export const PARAM_BOUNDS = {
   sameTwoDeputyBonus: [0.0, 1.0], allyFaceCardBonus: [0.0, 1.0], napWeaknessLeadWeight: [0.0, 2.0],
   trumpAvoidWeight: [0.0, 2.0], sameColorSuitAvoid: [0.0, 2.0], spadeLeadPriority: [0.0, 1.0],
   nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
-  allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10]
+  allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10],
+  // 追加
+  teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
+  mctsSimulations: [10, 100], handInferenceWeight: [0.0, 1.0]
 };
 
-// ★ 修正: 範囲制限を適用
 export const mutateStrategy = (base, rate) => {
   const out = { ...base };
   for (const k of Object.keys(out)) {
