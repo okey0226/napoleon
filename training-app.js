@@ -1,6 +1,6 @@
 // training-app.js — 5人全員を操作するトレーニングモード
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
 
 const $ = id => document.getElementById(id);
 
@@ -37,7 +37,7 @@ const g = {
   bidHistory: [], auction: null, selectedCard: null, discard: new Set(),
   selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A',
   lastTrickWinner: null, matchScores: [0,0,0,0,0], phase: 'prep', active: 0,
-  roundLog: { bid: null, call: null, playDecisions: [] } // ★ 学習ログ用
+  roundLog: { bid: null, call: null, playDecisions: [] }
 };
 
 function name(i) { return `COM${i + 1}`; }
@@ -85,7 +85,7 @@ function roundStart() {
   g.contract = null; g.auction = null; g.bidHistory = []; g.lastTrickWinner = null;
   g.discardedKitty = []; g.allianceKittyPoints = 0; g.selectedCard = null;
   g.discard = new Set();
-  g.roundLog = { bid: null, call: null, playDecisions: [] }; // ★ リセット
+  g.roundLog = { bid: null, call: null, playDecisions: [] };
   
   const d = shuffledDeck();
   g.players.forEach(p => { p.hand = d.splice(0, 10); p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
@@ -172,7 +172,6 @@ function humanBid() {
   g.auction.high = { num, suit, player: g.active, solo: false };
   g.auction.version++;
   
-  // ★ ログに記録
   const cs = colorStrength(g.players[g.active].hand, suit, defaultStrategy());
   const nt = ntHandStrength(g.players[g.active].hand, defaultStrategy());
   const handStr = suit === 'NT' ? nt : cs;
@@ -263,7 +262,6 @@ function submitCall() {
   const deputy = g.players.findIndex((p, i) => i !== n && p.hand.some(c => c.id === id));
   g.contract.deputy = deputy >= 0 ? deputy : n;
   
-  // ★ ログに記録
   g.roundLog.call = { callId: id, trumpSuit: g.contract.suit };
   
   g.kitty = [];
@@ -311,7 +309,6 @@ function playCard(cardId) {
     g.contract.revealTrickNo = g.trickNo;
   }
   
-  // ★ ログに記録
   const role = g.contract.nap === seat ? 'nap' : (!g.contract.solo && g.contract.revealedCall && g.contract.deputy === seat ? 'dep' : 'ally');
   const phase = trickPhaseOf(g.trickNo);
   const pointsTier = pointsTierOf(g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).length);
@@ -327,7 +324,7 @@ function playCard(cardId) {
   const w = winningEntry(g.contract, g.trickNo, g.trick.map(e => ({ seat: e.player, card: e.card }))).seat;
   g.lastTrickWinner = w;
   
-  // ★ トリック勝敗をログに記録
+  // トリック勝敗をログに記録
   const isNapSideWin = (w === g.contract.nap || (!g.contract.solo && w === g.contract.deputy));
   for (const d of g.roundLog.playDecisions) {
     if (d.trickNo === g.trickNo && d.won === null) {
@@ -379,7 +376,7 @@ function finishTrainingRound() {
   const pts = side.reduce((n, i) => n + g.players[i].roundPoints, 0);
   const success = pts >= c.num && (c.num === 20 || pts < 20);
   
-  // ★ AI学習用に正しい勝敗を送信
+  // AI学習用に正しい勝敗を送信
   const payload = {
     round: g.round, wonRound: success,
     bid: g.roundLog.bid, call: g.roundLog.call,
