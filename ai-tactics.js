@@ -699,26 +699,35 @@ export function chooseDeputyCard(ctx) {
   const current = winningEntry(contract, trickNo, trick, trick.length < 5);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
 
+  // ★ 連携ロジック: ナポレオンが勝っている時
   if (napCard && isAbsoluteWinner(napCard, contract, trick, playedCards)) {
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
       const dump = pickDumpFace(followCards, contract, napCard.rank, { excludeId: call?.id });
       if (dump) return dump;
       
-      const dumpHighCard = followCards.filter(c =>
-        (c.rank === 'Q' || c.rank === '10' || (c.rank === 'J' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract))) &&
-        c.id !== call?.id &&
-        c.id !== '♠A' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
-      );
-      if (dumpHighCard.length) {
-        dumpHighCard.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank));
-        return dumpHighCard[0];
+      const scoreCards = followCards.filter(c => isFace(c) && c.id !== '♠A' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract));
+      if (scoreCards.length) {
+        scoreCards.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
+        return scoreCards[0];
       }
     }
     return lowX(ctx, legal);
   }
 
   if (current && isTeamNap(current.seat, contract)) return lowX(ctx, legal);
+
+  // ★ 連携ロジック: ナポレオンが負けている時
+  if (!isTeamNap(current.seat, contract) && pointsInTrick > 0) {
+    if (winningCards.length) {
+      const scoreWins = winningCards.filter(c => isFace(c));
+      if (scoreWins.length) return scoreWins.sort((a,b)=>RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))[0];
+      return low(winningCards);
+    } else {
+      const nonScore = legal.filter(c => !isFace(c));
+      if (nonScore.length) return lowX(ctx, nonScore);
+    }
+  }
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
 
@@ -816,7 +825,9 @@ function chooseAllianceFollow(ctx) {
   const ledSuit = trick[0].card.suit;
   const current = winningEntry(contract, trickNo, trick, trick.length < 5);
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
-  const currentIsEnemy = isTeamNap(current.seat, contract);
+  
+  const isAllyWinning = current && current.seat !== contract.nap && (!contract.solo && current.seat !== contract.deputy);
+  const isEnemyWinning = !isAllyWinning;
 
   const winningCards = legal.filter(c =>
     winningEntry(contract, trickNo, [...trick, { seat, card: c }], trick.length < 4)?.seat === seat
@@ -857,22 +868,31 @@ function chooseAllianceFollow(ctx) {
     }
   }
 
-  if (!currentIsEnemy && current.seat !== seat) {
+  // ★ 連携ロジック: 味方（連合軍）が勝っている時
+  if (isAllyWinning) {
     const followCards = legal.filter(c => c.suit === ledSuit);
     if (followCards.length > 0) {
-      const dumpHighCard = followCards.filter(c =>
-        (c.rank === 'Q' || c.rank === '10' || (c.rank === 'J' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract))) &&
-        c.id !== '♠A' && !isTrumpJ(c, contract) && !isSameColorJ(c, contract)
-      );
-      if (dumpHighCard.length) {
-        dumpHighCard.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank));
-        return dumpHighCard[0];
-      }
-
       const dump = pickDumpFace(followCards, contract, current.card.rank);
       if (dump) return dump;
+      const scoreCards = followCards.filter(c => isFace(c) && c.id !== '♠A');
+      if (scoreCards.length) {
+        scoreCards.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
+        return scoreCards[0];
+      }
     }
     return lowX(ctx, legal);
+  }
+
+  // ★ 連携ロジック: 敵（ナポレオン軍）が勝っている時
+  if (isEnemyWinning && pointsInTrick > 0) {
+    if (winningCards.length) {
+      const scoreWins = winningCards.filter(c => isFace(c));
+      if (scoreWins.length) return scoreWins.sort((a,b)=>RANKS.indexOf(b.rank)-RANKS.indexOf(a.rank))[0];
+      return low(winningCards);
+    } else {
+      const nonScore = legal.filter(c => !isFace(c));
+      if (nonScore.length) return lowX(ctx, nonScore);
+    }
   }
 
   if (trickNo >= 1 && pointsInTrick >= 1) {
@@ -881,10 +901,10 @@ function chooseAllianceFollow(ctx) {
   }
 
   if (pointsInTrick > 0 && winningCards.length) return low(winningCards);
-  if (currentIsEnemy && winningCards.length && (pointsInTrick > 0 || trickNo >= 3)) return low(winningCards);
+  if (isEnemyWinning && winningCards.length && (pointsInTrick > 0 || trickNo >= 3)) return low(winningCards);
 
   if (contract.suit !== 'NT' && pointsInTrick > 0
-      && legal[0]?.suit !== ledSuit && currentIsEnemy) {
+      && legal[0]?.suit !== ledSuit && isEnemyWinning) {
     const trumps = legal.filter(c => isTrump(contract, c));
     if (trumps.length) return low(trumps);
   }
@@ -913,7 +933,7 @@ export function chooseCardToPlay(ctx) {
 }
 
 // ==========================================
-// 11. 決定化モンテカルロ法（MCTS）の導入
+// 11. MCTS & 推測
 // ==========================================
 function getUnseenCards(ctx) {
   const allIds = [];
@@ -928,13 +948,14 @@ function getUnseenCards(ctx) {
   return allIds.filter(id => !seen.has(id)).map(id => ({ suit: id[0], rank: id.slice(1), id }));
 }
 
-function simulateRandomPlayout(state, mySeat, contract) {
-  // state: { hands, trick, trickNo, active, playedCards, voids, points }
+function simulateRandomPlayout(state, mySeat, contract, params) {
   let active = state.active;
   let trick = state.trick.slice();
   let trickNo = state.trickNo;
   let hands = state.hands.map(h => h.slice());
   let points = state.points.slice();
+  let feedSuccessCount = 0;
+  let overkillCount = 0;
   
   const getLegal = (seat) => {
     const h = hands[seat];
@@ -947,10 +968,29 @@ function simulateRandomPlayout(state, mySeat, contract) {
   while (trickNo < 10) {
     if (trick.length < 5) {
       const legal = getLegal(active);
-      if (!legal.length) break; // 手札切れ（通常起きない）
-      const chosen = legal[Math.floor(Math.random() * legal.length)];
+      if (!legal.length) break;
       
+      const chosen = legal[Math.floor(Math.random() * legal.length)];
       hands[active] = hands[active].filter(c => c.id !== chosen.id);
+      
+      if (trick.length > 0) {
+        const currentWinner = winningEntry(contract, trickNo, trick);
+        const isSameTeam = (a, b) => {
+          const isNapA = a === contract.nap || (!contract.solo && a === contract.deputy);
+          const isNapB = b === contract.nap || (!contract.solo && b === contract.deputy);
+          return isNapA === isNapB;
+        };
+        
+        if (isSameTeam(active, currentWinner.seat)) {
+          if (FACE.includes(chosen.rank)) {
+            feedSuccessCount++;
+          }
+          if (cardPower(contract, trickNo, chosen, trick) > cardPower(contract, trickNo, currentWinner.card, trick)) {
+            overkillCount++;
+          }
+        }
+      }
+
       trick.push({ seat: active, card: chosen });
       
       if (trick.length === 5) {
@@ -958,12 +998,10 @@ function simulateRandomPlayout(state, mySeat, contract) {
         const w = wEntry.seat;
         const taken = trick.filter(e => FACE.includes(e.card.rank)).length;
         points[w] += taken;
-        
         active = w;
         trick = [];
         trickNo++;
         
-        // 早期終了判定
         const nap = contract.nap;
         const deputy = contract.deputy;
         const isSolo = contract.solo;
@@ -980,54 +1018,62 @@ function simulateRandomPlayout(state, mySeat, contract) {
     }
   }
   
-  return points;
+  const nap = contract.nap, deputy = contract.deputy, isSolo = contract.solo, num = contract.num;
+  const napPoints = points[nap] + (isSolo ? 0 : points[deputy]);
+  const allyPoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
+  const made = napPoints >= num && (num === 20 || napPoints < 20);
+  
+  const myTeamIsNap = mySeat === nap || (!isSolo && mySeat === deputy);
+  const myTeamWon = myTeamIsNap ? made : !made;
+  
+  let score = myTeamWon ? 100 : 0;
+  
+  const coopWeight = params.teamCooperationWeight || 1.5;
+  const feedWeight = params.feedBonusWeight || 1.0;
+  const penaltyWeight = params.overkillPenalty || 1.0;
+  
+  score += feedSuccessCount * feedWeight * 5;
+  score -= overkillCount * penaltyWeight * 5;
+  
+  const myTeamPoints = myTeamIsNap ? napPoints : allyPoints;
+  score += myTeamPoints * 0.5;
+
+  return { score, points, feedSuccessCount, overkillCount };
 }
 
 export function chooseCardWithMCTS(ctx) {
   const baseChoice = chooseCardToPlay(ctx);
   if (!ctx.legal || ctx.legal.length <= 1) return baseChoice;
 
-  // 負荷軽減のため、確率でMCTSをスキップ（例: 50%）
+  // 確率でMCTSをスキップ（負荷軽減）
   if (Math.random() > 0.5) return baseChoice;
 
   const candidates = [baseChoice];
-  // ヒューリスティックとは異なる候補を最大2つ追加
   const others = ctx.legal.filter(c => c.id !== baseChoice.id);
   if (others.length > 0) candidates.push(others[Math.floor(Math.random() * others.length)]);
   if (others.length > 1) candidates.push(others[Math.floor(Math.random() * others.length)]);
   
-  // 重複排除
   const uniqueCands = Array.from(new Map(candidates.map(c => [c.id, c])).values());
 
   let bestCard = baseChoice;
-  let bestWinRate = -1;
-  const trials = 10; // 各候補手のシミュレーション回数
+  let bestScore = -Infinity;
+  const trials = ctx.params?.mctsSimulations || 20;
 
   for (const card of uniqueCands) {
-    let napWins = 0;
+    let totalScore = 0;
     for (let i = 0; i < trials; i++) {
-      // 1. 未見のカードを集める
       const unseen = getUnseenCards(ctx);
-      
-      // 2. 全員の手札を再構築（自分は現在の手札から出そうなカードを除外、他人は未見からランダム）
       const hands = [[], [], [], [], []];
-      
-      // 自分の手札
       hands[ctx.seat] = ctx.hand.filter(c => c.id !== card.id);
       
-      // 他人の手札枚数を推測
-      // 全体のカードは52枚。最初の手札は10枚×5人。場に出た枚数で計算。
-      // 正確な枚数は (10 - 現時点で出した枚数) だが、簡易的に残りトリック数から推測
       const remainingTricks = 10 - ctx.trickNo;
-      const cardsPerPlayer = ctx.trick.length >= 4 ? remainingTricks - 1 : remainingTricks; // まだ出してない人の枚数
+      const cardsPerPlayer = ctx.trick.length >= 4 ? remainingTricks - 1 : remainingTricks;
       
-      // 未見のカードをシャッフル
       unseen.sort(() => Math.random() - 0.5);
       
       let unseenIdx = 0;
       for (let s = 0; s < 5; s++) {
         if (s === ctx.seat) continue;
-        // 簡易配布（本来はもっと正確に配る必要があるが、ランダムプレイアウトなら十分）
         for (let k = 0; k < cardsPerPlayer; k++) {
           if (unseenIdx < unseen.length) {
             hands[s].push(unseen[unseenIdx++]);
@@ -1035,35 +1081,20 @@ export function chooseCardWithMCTS(ctx) {
         }
       }
 
-      // 現在のトリックの状況を再現
       const trick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
-      // 自分が出そうなカードを追加
       trick.push({ seat: ctx.seat, card });
       
       let active = (ctx.seat + 4) % 5;
       let trickNo = ctx.trickNo;
-      
-      // 現在のポイント
       const points = ctx.points ? ctx.points.slice() : [0,0,0,0,0];
       
-      // 3. ランダムプレイアウト実行
-      const finalPoints = simulateRandomPlayout({ hands, trick, trickNo, active, points }, ctx.seat, ctx.contract);
-      
-      // 4. 勝敗判定
-      const nap = ctx.contract.nap;
-      const deputy = ctx.contract.deputy;
-      const isSolo = ctx.contract.solo;
-      const num = ctx.contract.num;
-      const napPoints = finalPoints[nap] + (isSolo ? 0 : finalPoints[deputy]);
-      const allyPoints = finalPoints.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0) + (ctx.allianceKittyPoints || 0);
-      
-      const made = napPoints >= num && (num === 20 || napPoints < 20);
-      if (made) napWins++;
+      const result = simulateRandomPlayout({ hands, trick, trickNo, active, points }, ctx.seat, ctx.contract, ctx.params);
+      totalScore += result.score;
     }
     
-    const winRate = napWins / trials;
-    if (winRate > bestWinRate) {
-      bestWinRate = winRate;
+    const avgScore = totalScore / trials;
+    if (avgScore > bestScore) {
+      bestScore = avgScore;
       bestCard = card;
     }
   }
