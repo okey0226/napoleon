@@ -13,6 +13,6 @@ binding = "ASSETS"
 # WebSocket（/ws）は worker を経由させず、プラットフォームの room が直接処理する
 run_worker_first = ["/api/*"]
 
-# ▼ ここが最重要：1時間おき（毎時0分）に自動で自己対戦を回す設定 ▼
+# ▼ ここが最重要：5分おきに自動で自己対戦を回す設定 ▼
 [triggers]
-crons = ["0 * * * *"]
+crons = ["*/5 * * * *"]
