@@ -3,6 +3,34 @@ import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand } from './con
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, winningEntry, colorStrength, ntHandStrength } from './ai-tactics.js';
 
 const $ = id => document.getElementById(id);
+
+// ===== 追加: app.js で定義されているユーティリティ関数 =====
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function toast(t) {
+  const e = $('toast');
+  if (!e) return;
+  e.textContent = t;
+  e.classList.add('show');
+  clearTimeout(e._timer);
+  e._timer = setTimeout(() => e.classList.remove('show'), 2600);
+}
+function dialog(title, text, cb) {
+  let d = $('message-dialog'), card = $('dialog-card');
+  if (!d || !card) return;
+  document.querySelectorAll('dialog[open]').forEach(dlg => { try { if (dlg !== d) dlg.close(); } catch {} });
+  try { if (d.open) d.close(); } catch {}
+  card.classList.add('hidden'); card.replaceChildren();
+  const de = $('dialog-eyebrow'); if (de) { de.classList.remove('hidden'); de.textContent = 'Napoleon'; }
+  const dok = $('dialog-ok'); if (dok) dok.textContent = 'OK';
+  const dt = $('dialog-title'), db = $('dialog-body');
+  if (dt) dt.textContent = title; if (db) db.textContent = text;
+  if (dok) dok.onclick = () => { d.close(); if (cb) cb() };
+  try { d.showModal(); } catch (e) { console.warn('[dialog] showModal failed', e?.message); }
+}
+// =========================================================
+
 const g = {
   round: 1, players: [], kitty: [], discardedKitty: [], allianceKittyPoints: 0,
   contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep',
