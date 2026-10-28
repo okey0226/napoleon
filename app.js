@@ -1,6 +1,6 @@
 // ===== [app.js 完全版 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
@@ -796,9 +796,24 @@ function computeBotPlay(seat){
   const trick=g.trick.map(x=>({seat:x.player,card:x.card}));
   const deputyPts=(!g.contract.solo&&g.contract.deputy>=0)?(g.points[g.contract.deputy]||0):0;
   const currentNapPoints=(g.points[g.contract.nap]||0)+deputyPts;
-  const ctx={hand,legal:legalCardsList,trick,trickNo:g.trickNo,contract,playedCards:g.playedCards,voids:g.voids,seat,deputy:g.contract.deputy,params:g.aiWeights,call:g.contract.call,discardedKitty:g.discardedKitty||[],isMySideNap:seat===contract.nap||(contract.revealedCall&&seat===contract.deputy),isCurrentNapWinning:false,isRevealed:contract.revealedCall,isNapLeading:false,lastSeat:trick.length===4,currentNapPoints,experience:g.aiExperience};
-  if(trick.length>0){ const winner=winningEntry(contract,g.trickNo,trick); if(winner){ctx.isCurrentNapWinning=winner.seat===contract.nap||(!contract.solo&&winner.seat===contract.deputy);ctx.isNapLeading=trick[0].seat===contract.nap} }
-  try{return chooseCardToPlay(ctx)}catch(e){addDebugLog('chooseCardToPlay-error',{seat,message:e?.message,stack:e?.stack});return null}
+  
+  const ctx={hand,legal:legalCardsList,trick,trickNo:g.trickNo,contract,playedCards:g.playedCards,voids:g.voids,seat,deputy:g.contract.deputy,params:g.aiWeights,call:g.contract.call,discardedKitty:g.discardedKitty||[],isMySideNap:seat===contract.nap||(contract.revealedCall&&seat===contract.deputy),isCurrentNapWinning:false,isRevealed:contract.revealedCall,isNapLeading:false,lastSeat:trick.length===4,currentNapPoints,experience:g.aiExperience,
+    points: g.players.map(p => p.roundPoints || 0),
+    allianceKittyPoints: g.allianceKittyPoints || 0
+  };
+  if(trick.length>0){ 
+    const winner=winningEntry(contract,g.trickNo,trick); 
+    if(winner){
+      ctx.isCurrentNapWinning=winner.seat===contract.nap||(!contract.solo&&winner.seat===contract.deputy);
+      ctx.isNapLeading=trick[0].seat===contract.nap;
+    } 
+  }
+  try{
+    return chooseCardWithMCTS(ctx);
+  }catch(e){
+    addDebugLog('chooseCardWithMCTS-error',{seat,message:e?.message,stack:e?.stack});
+    return null;
+  }
 }
 
 function playTurn(){
