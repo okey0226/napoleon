@@ -84,8 +84,8 @@ function roundStart() {
   g.phase = 'prep';
   g.trick = []; g.trickNo = 0; g.playedCards = []; g.voids = [{},{},{},{},{}];
   g.contract = null; g.auction = null; g.bidHistory = []; g.lastTrickWinner = null;
-  g.discardedKitty = []; g.allianceKittyPoints = 0;
-  g.selectedCard = null; g.discard = new Set();
+  g.discardedKitty = []; g.allianceKittyPoints = 0; g.selectedCard = null;
+  g.discard = new Set();
   
   const d = shuffledDeck();
   g.players.forEach(p => { p.hand = d.splice(0, 10); p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
@@ -150,7 +150,6 @@ function humanSkip() {
     return;
   }
   
-  // 時計回りに次の手番へ
   let nextSeat = (g.active + 4) % 5;
   while (!g.auction.active.includes(nextSeat)) {
     nextSeat = (nextSeat + 4) % 5;
@@ -199,7 +198,6 @@ function nextAuctionTurn() {
   if (g.auction.active.length === 1) {
     g.active = g.auction.active[0];
   } else {
-    // 時計回りに次の手番へ
     let nextSeat = (g.active + 4) % 5;
     while (!g.auction.active.includes(nextSeat)) {
       nextSeat = (nextSeat + 4) % 5;
@@ -273,6 +271,7 @@ function submitCall() {
   g.active = n;
   g.trick = [];
   g.trickNo = 0;
+  g.selectedCard = null;
   message(`${id}を指名しました。カードプレイを開始します。`);
   renderTraining();
   nextPlayTurn();
@@ -280,6 +279,7 @@ function submitCall() {
 
 function nextPlayTurn() {
   g.phase = 'play';
+  g.selectedCard = null;
   renderTraining();
   message(`現在の手番: ${name(g.active)}`);
 }
@@ -295,6 +295,7 @@ function playCard(cardId) {
   hand.splice(hand.findIndex(x => x.id === cardId), 1);
   g.trick.push({ player: seat, card });
   g.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat });
+  g.selectedCard = null; // リセット
   
   if (g.trick.length > 1) {
     const ledSuit = g.trick[0].card.suit;
@@ -317,7 +318,6 @@ function playCard(cardId) {
   teachAI('play', seat, { role, phase, pointsTier, rankTier, cardId });
   
   if (g.trick.length < 5) {
-    // 時計回りに次の手番へ
     g.active = (seat + 4) % 5;
     nextPlayTurn();
     return;
@@ -406,6 +406,12 @@ function teachAI(action, seat, data) {
   }).catch(e => console.warn('teach failed', e));
 }
 
+function cardElHTML(c, extra = '', style = '', dataAttrs = '') {
+  if (!c) return `<div class="card card-back ${extra}" style="${style}" ${dataAttrs}></div>`;
+  const red = c.suit === '♦' || c.suit === '♥';
+  return `<div class="card ${red ? 'red ' : ''}${extra}" style="${style}" ${dataAttrs}><span class="rank">${c.rank}</span><span class="suit">${c.suit}</span></div>`;
+}
+
 function renderTraining() {
   const shell = $('training-shell');
   if (!shell) return;
@@ -482,6 +488,24 @@ function renderTraining() {
     `;
   }
 
+  // カード選択時の確認パネル
+  let playPanelHTML = '';
+  if (g.phase === 'play' && g.selectedCard && legalIds.includes(g.selectedCard)) {
+    const c = handCards.find(x => x.id === g.selectedCard);
+    playPanelHTML = `
+      <div class="action-panel" style="position:relative; margin-top:10px; width:min(400px, 92%); z-index:40; display:flex; flex-direction:column; align-items:center;">
+        <div class="panel-title">このカードを出しますか？</div>
+        <div class="play-confirm-preview" style="margin:10px 0; transform:scale(1.2);">
+          ${cardElHTML(c)}
+        </div>
+        <div class="play-confirm-actions" style="display:flex; gap:8px; width:100%;">
+          <button id="training-cancel-play" class="small-action" style="flex:1; min-height:44px;">選び直す</button>
+          <button id="training-confirm-play" class="primary-button" style="flex:1; min-height:44px;">出す</button>
+        </div>
+      </div>
+    `;
+  }
+
   let openKittyHTML = '';
   if ((g.phase === 'auction') && g.kitty && g.kitty.length > 0) {
     const cardsHTML = g.kitty.map(c => cardElHTML(c, 'contract-kitty-card')).join('');
@@ -492,6 +516,17 @@ function renderTraining() {
   }
   
   const leadSeat = g.phase === 'play' && g.trick.length ? g.trick[0].player : g.lastTrickWinner;
+
+  // 手札が少ない時は重なりを浅くする
+  const overlap = handCards.length <= 6 ? '4px' : '-18px';
+  const handHTML = handCards.map((c, idx) => {
+    let extra = '';
+    if (isDiscardPhase) extra = g.discard.has(c.id) ? 'selected' : 'playable';
+    else if (legalIds.includes(c.id) && g.phase === 'play') extra = (g.selectedCard === c.id) ? 'playable selected' : 'playable';
+    
+    const style = idx === 0 ? '' : `margin-left: ${overlap};`;
+    return cardElHTML(c, extra, style, `data-card-id="${c.id}"`);
+  }).join('');
 
   shell.innerHTML = `
     <div class="game-screen training-game">
@@ -551,10 +586,11 @@ function renderTraining() {
       ${auctionHTML}
       ${callHTML}
       ${discardHTML}
+      ${playPanelHTML}
       <div class="hand-dock">
         <div class="hand-label">${name(mySeat)}の手札 <span>${handCards.length}枚</span></div>
         <div class="hand ${isDiscardPhase ? 'discard-mode' : ''}">
-          ${handCards.map(c => cardElHTML(c, isDiscardPhase && g.discard.has(c.id) ? 'selected' : (legalIds.includes(c.id) && !isDiscardPhase ? 'playable' : ''))).join('')}
+          ${handHTML}
         </div>
       </div>
       <div id="training-result-panel" class="result-panel hidden"></div>
@@ -574,6 +610,7 @@ function renderTraining() {
   if (seatSelect) {
     seatSelect.onchange = (e) => {
       g.active = Number(e.target.value);
+      g.selectedCard = null;
       renderTraining();
     };
   }
@@ -583,6 +620,7 @@ function renderTraining() {
       const seat = Number(el.dataset.seat);
       if (g.active !== seat) {
         g.active = seat;
+        g.selectedCard = null;
         renderTraining();
         toast(`操作席を ${name(seat)} に切り替えました`);
       }
@@ -636,16 +674,28 @@ function renderTraining() {
   if (g.phase === 'play') {
     document.querySelectorAll('.hand .card.playable').forEach(el => {
       el.onclick = () => {
-        const id = el.querySelector('.suit').textContent + el.querySelector('.rank').textContent;
-        playCard(id);
+        const id = el.dataset.cardId;
+        g.selectedCard = id;
+        renderTraining();
       };
     });
+
+    const cancelPlayBtn = $('training-cancel-play');
+    if (cancelPlayBtn) cancelPlayBtn.onclick = () => {
+      g.selectedCard = null;
+      renderTraining();
+    };
+
+    const confirmPlayBtn = $('training-confirm-play');
+    if (confirmPlayBtn) confirmPlayBtn.onclick = () => {
+      if (g.selectedCard) playCard(g.selectedCard);
+    };
   }
   
   if (isDiscardPhase) {
     document.querySelectorAll('.hand .card').forEach(el => {
       el.onclick = () => {
-        const id = el.querySelector('.suit').textContent + el.querySelector('.rank').textContent;
+        const id = el.dataset.cardId;
         if (g.discard.has(id)) g.discard.delete(id);
         else if (g.discard.size < 2) g.discard.add(id);
         renderTraining();
@@ -654,12 +704,6 @@ function renderTraining() {
     const submitBtn = $('training-discard-submit');
     if (submitBtn) submitBtn.onclick = submitDiscard;
   }
-}
-
-function cardElHTML(c, extra = '') {
-  if (!c) return `<div class="card card-back ${extra}"></div>`;
-  const red = c.suit === '♦' || c.suit === '♥';
-  return `<div class="card ${red ? 'red ' : ''}${extra}"><span class="rank">${c.rank}</span><span class="suit">${c.suit}</span></div>`;
 }
 
 function phase(t) {
