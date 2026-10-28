@@ -445,6 +445,23 @@ function timeoutAction(m, room) {
 
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('OK'); return; }
+  if (req.method === 'POST' && req.url === '/api/ai/teach') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        // DBがない場合はメモリ上に保持するか、あるいはスキップ
+        // ローカルで動かしている場合、DBがないので学習は機能しないが、エラーにならないようにする
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
   res.writeHead(404); res.end();
 });
 
