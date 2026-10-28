@@ -1273,57 +1273,154 @@ async function records(){
   }catch(e){rc.textContent='UNABLE TO LOAD PLAYER STATS.'}
 }
 
+// ★ 修正: 棒グラフから折れ線グラフに変更し、時間軸をX軸に
+function genLineChart(generations){
+  if(!generations||generations.length<1) return '<p class="subcopy" style="padding:20px 0; text-align:center;">まだ学習データがありません。毎時0分に自動で自己対戦が行われます。</p>';
+  
+  const data=generations.slice(-20); // 直近20世代
+  const W=600, H=200, padX=40, padY=20;
+  const innerW = W - padX*2;
+  const innerH = H - padY*2;
+  
+  const xStep = data.length > 1 ? innerW / (data.length - 1) : innerW;
+  
+  const pointsNap = data.map((d, i) => {
+    const x = padX + i * xStep;
+    const y = H - padY - (Number(d.nap || 0) * innerH);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const pointsAlly = data.map((d, i) => {
+    const x = padX + i * xStep;
+    const y = H - padY - (Number(d.ally || 0) * innerH);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const labels = data.map((d, i) => {
+    const x = padX + i * xStep;
+    let timeStr = '';
+    if (d.time) {
+      const parts = d.time.split(' ');
+      if (parts.length > 1) timeStr = parts[1].slice(0, 5); // HH:MM
+      else timeStr = `Gen ${d.generation}`;
+    } else {
+      timeStr = `Gen ${d.generation}`;
+    }
+    return `<text x="${x}" y="${H-2}" font-size="9" fill="#8fa69a" text-anchor="middle">${timeStr}</text>`;
+  }).join('');
+
+  const grids = [0, 0.25, 0.5, 0.75, 1].map(p => {
+    const y = H - padY - (p * innerH);
+    return `<line x1="${padX}" y1="${y}" x2="${W-padX}" y2="${y}" stroke="rgba(255,255,255,0.1)" stroke-dasharray="3 3" />
+            <text x="${padX-5}" y="${y+4}" font-size="9" fill="#8fa69a" text-anchor="end">${p*100}%</text>`;
+  }).join('');
+
+  return `
+    <div style="position:relative; width:100%; overflow-x:auto; background:rgba(20,42,33,.6); padding:15px 10px; border-radius:10px; border:1px solid rgba(225,188,112,.2);">
+      <div style="display:flex; gap:16px; margin-bottom:12px; justify-content:center;">
+        <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#f3d48e;"><div style="width:12px; height:3px; background:#f3d48e;"></div>NAP勝率</div>
+        <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#a9d2ae;"><div style="width:12px; height:3px; background:#a9d2ae;"></div>連合軍勝率</div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%; min-width:400px; height:200px; display:block;">
+        ${grids}
+        <polyline fill="none" stroke="#a9d2ae" stroke-width="2" points="${pointsAlly}" />
+        <polyline fill="none" stroke="#f3d48e" stroke-width="2" points="${pointsNap}" />
+        ${labels}
+      </svg>
+    </div>
+  `;
+}
+
+// ★ 修正: 手動実行ボタンを削除し、サマリーとグラフを表示
+function renderStrategyLab({strategies,insights,generations}){
+  const wrap=$('strategy-content');if(!wrap)return;
+  
+  let latestGen = 0;
+  let latestDelta = 0;
+  let totalMatches = 0;
+  
+  if (strategies.length > 0) {
+    latestGen = strategies[0].generation;
+    latestDelta = Number(strategies[0].avg_rating_delta || 0);
+  }
+  if (generations.length > 0) {
+    totalMatches = generations.reduce((sum, g) => sum + (Number(g.count) * 5), 0);
+  }
+
+  const chartHTML = genLineChart(generations);
+  
+  const insightCards = insights.length > 0 ? insights.map(ins => `<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join('') : '<p class="subcopy">データなし</p>';
+  
+  wrap.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px;">
+      <div class="performance-card" style="padding:15px;">
+        <span>最新世代</span>
+        <strong>Gen ${latestGen}</strong>
+        <small>1時間ごとに自動更新</small>
+      </div>
+      <div class="performance-card" style="padding:15px;">
+        <span>平均レート上昇値</span>
+        <strong style="color:${latestDelta>0?'#a9d2ae':'#e89685'}">${latestDelta>0?'+':''}${latestDelta.toFixed(2)}</strong>
+        <small>上位戦略の1試合あたり</small>
+      </div>
+      <div class="performance-card" style="padding:15px;">
+        <span>総学習マッチ数</span>
+        <strong>${totalMatches > 0 ? totalMatches : '-'}</strong>
+        <small>累計自己対戦数</small>
+      </div>
+    </div>
+
+    <section class="strategy-section">
+      <h2 style="margin-bottom:10px; font-size:15px; color:#e8d7a9;">世代ごとの勝率推移</h2>
+      ${chartHTML}
+    </section>
+
+    <section class="strategy-section" style="margin-top:20px;">
+      <h2 style="margin-bottom:10px; font-size:15px; color:#e8d7a9;">学習インサイト</h2>
+      <div class="insight-list">${insightCards}</div>
+    </section>
+    
+    <section class="strategy-section" style="margin-top:20px;">
+      <h2 style="margin-bottom:10px; font-size:15px; color:#e8d7a9;">最近のトップ戦略</h2>
+      <div class="strategy-list">
+        ${strategies.slice(0,5).map((s,i)=>{
+          return `<article class="strategy-card rank-${i+1}">
+            <div class="strategy-rank">#${i+1}</div>
+            <div class="strategy-meta">
+              <span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span>
+              <strong>${Number(s.avg_rating_delta||0)>0?'+':''}${Number(s.avg_rating_delta||0).toFixed(2)} <small>pt/試合</small></strong>
+            </div>
+            <div class="strategy-roles">
+              <span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span>
+              <span>DEP ${(Number(s.deputy_win_rate)*100).toFixed(1)}%</span>
+              <span>ALLI ${(Number(s.alliance_win_rate)*100).toFixed(1)}%</span>
+            </div>
+          </article>`;
+        }).join('')}
+      </div>
+    </section>
+  `;
+}
+
+// ★ 修正: loadStrategyLab から不要なボタンのイベントリスナーを削除
 async function loadStrategyLab(){
   const wrap=$('strategy-content');
   if(!wrap)return;
-  wrap.innerHTML='<p class="subcopy">戦略を読み込み中…</p>';
+  wrap.innerHTML='<p class="subcopy">データを読み込み中…</p>';
   try{
     const[stratRes,insightRes,genRes]=await Promise.all([
-      fetch('/api/ai/strategies?limit=10').then(r=>readResponse(r)).catch(()=>({data:null})),
-      fetch('/api/ai/insights').then(r=>readResponse(r)).catch(()=>({data:null})),
-      fetch('/api/ai/generations').then(r=>readResponse(r)).catch(()=>({data:null}))
+      fetch('/api/ai/strategies?limit=10').then(r=>r.json()).catch(()=>null),
+      fetch('/api/ai/insights').then(r=>r.json()).catch(()=>null),
+      fetch('/api/ai/generations').then(r=>r.json()).catch(()=>null)
     ]);
-    const strategies = Array.isArray(stratRes.data) ? stratRes.data : [];
-    const insights = (insightRes.data && Array.isArray(insightRes.data.insights)) ? insightRes.data.insights : [];
-    const generations = Array.isArray(genRes.data) ? genRes.data : [];
+    const strategies = Array.isArray(stratRes) ? stratRes : [];
+    const insights = (insightRes && Array.isArray(insightRes.insights)) ? insightRes.insights : [];
+    const generations = Array.isArray(genRes) ? genRes : [];
     renderStrategyLab({strategies,insights,generations});
-  }catch(e){console.warn('[loadStrategyLab]', e?.message);wrap.innerHTML='<p class="subcopy">戦略を読み込めませんでした。</p>'}
-}
-
-function genBarChart(generations){
-  if(!generations||generations.length<1) return '';
-  const data=generations.slice(-20);
-  const W=Math.max(300,data.length*30);
-  const H=130,padX=18,padY=10;
-  const barW=(W-padX*2)/data.length,innerH=H-padY*2;
-  const bars=data.map((gg,i)=>{const nap=Math.max(0,Math.min(1,Number(gg.nap)||0));const bh=nap*innerH;const x=padX+i*barW;const y=H-padY-bh;return `<rect x="${x+2}" y="${y}" width="${barW-4}" height="${bh}" fill="#f3d48e" rx="2"><title>Gen ${gg.generation}: NAP ${(nap*100).toFixed(1)}%</title></rect>`;}).join('');
-  const labels=data.map((gg,i)=>{const x=padX+i*barW+barW/2;return `<text x="${x}" y="${H-2}" font-size="7" fill="#8fa69a" text-anchor="middle">${gg.generation}</text>`;}).join('');
-  const lineY=padY+innerH*0.5;
-  return `<div style="margin-top:10px;padding:10px;border:1px solid rgba(225,188,112,.2);border-radius:10px;background:rgba(20,42,33,.6);"><div class="micro-copy" style="margin-bottom:6px;">NAP勝率の世代推移（目標50% / 直近${data.length}世代）</div><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:140px;display:block;"><line x1="${padX}" y1="${lineY}" x2="${W-padX}" y2="${lineY}" stroke="rgba(163,177,168,.45)" stroke-dasharray="3 3" /><text x="${padX}" y="${lineY-3}" font-size="7" fill="#a3b1a8">50%</text>${bars}${labels}</svg></div>`;
-}
-
-function renderStrategyLab({strategies,insights,generations}){
-  const wrap=$('strategy-content');if(!wrap)return;
-  let cards='';
-  if(strategies.length===0){cards='<p class="subcopy" style="padding:10px 0;">まだ学習データがありません。上の「自己対戦を実行」ボタンから学習を開始してください。</p>'}
-  else{cards=strategies.slice(0,5).map((s,i)=>{const rank=i+1;const delta=Number(s.avg_rating_delta||0);return`<article class="strategy-card rank-${rank}"><div class="strategy-rank">#${rank}</div><div class="strategy-meta"><span class="eyebrow">GEN ${s.generation} · ${s.matches}試合</span><strong>${delta>0?'+':''}${delta.toFixed(2)} <small>pt/試合</small></strong></div><div class="strategy-roles"><span>NAP ${(Number(s.nap_win_rate)*100).toFixed(1)}%</span><span>DEP ${(Number(s.deputy_win_rate)*100).toFixed(1)}%</span><span>ALLI ${(Number(s.alliance_win_rate)*100).toFixed(1)}%</span></div></article>`}).join('')}
-  const paramNames={bidThreshold:'立ち強度',riskTolerance:'リスク許容',leadAggression:'リード積極性',followAggression:'フォロー積極性',trumpBonus:'切り札評価',mightyBonus:'マイティ評価',safeAceWeight:'A温存',roleCardPreservation:'役札温存',deputyFeedBias:'副官の絵札回し'};
-  let paramRows='<p class="subcopy" style="padding:10px 0;">データなし</p>';
-  if(strategies.length>0){ const parsedParams = safeJsonParse(strategies[0].params, null); if (parsedParams && typeof parsedParams === 'object') { const rows = Object.entries(parsedParams).map(([k,v])=>`<div class="param-row"><span>${escapeHTML(paramNames[k]||k)}</span><b>${Number(v).toFixed(2)}</b></div>`).join(''); if (rows) paramRows = rows; } }
-  const insightCards=insights.length>0?insights.map(ins=>`<article class="insight-card"><h3>${escapeHTML(ins.title)}</h3><p>${escapeHTML(ins.detail)}</p></article>`).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
-  const genRows=generations.length>0?generations.slice(-10).map(gg=>{const delta=Number(gg.best_delta||0);return`<div class="gen-row"><span>Gen ${gg.generation}</span><b>${delta>0?'+':''}${delta.toFixed(2)}pt</b><small>NAP ${(Number(gg.nap)*100).toFixed(0)} / DEP ${(Number(gg.dep)*100).toFixed(0)} / ALLI ${(Number(gg.ally)*100).toFixed(0)}</small></div>`}).join(''):'<p class="subcopy" style="padding:10px 0;">データなし</p>';
-  wrap.innerHTML=`<div class="strategy-actions"><button id="run-selfplay" class="primary-button">自己対戦を実行（100局）</button><button id="refresh-strategy" class="secondary-button">再読み込み</button><span id="selfplay-status" class="micro-copy"></span></div><section class="strategy-section"><h2>NAP勝率の世代推移</h2>${genBarChart(generations)}</section><section class="strategy-section"><h2>TOP STRATEGIES（レート上昇順）</h2><div class="strategy-list">${cards}</div></section><section class="strategy-section"><h2>最上位戦略のパラメータ</h2><div class="param-table">${paramRows}</div></section><section class="strategy-section"><h2>学習インサイト</h2><div class="insight-list">${insightCards}</div></section><section class="strategy-section"><h2>世代推移（数値）</h2><div class="gen-list">${genRows}</div></section>`;
-  const runSelfplay=$('run-selfplay');
-  if(runSelfplay)runSelfplay.onclick=async()=>{
-    const btn=$('run-selfplay'),status=$('selfplay-status');
-    if(!btn||!status)return;
-    btn.disabled=true;status.textContent='自己対戦100局を実行中…（数秒かかります）';
-    const doRun=async()=>{ const res=await fetch('/api/ai/run-selfplay',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({matches:100})}); const { data, text, parseError } = await readResponse(res); if (parseError) throw new Error(`HTTP ${res.status} JSON解析失敗`); if(!res.ok||!data||data.error)throw new Error(sanitizeMessage(data?.error)||`HTTP ${res.status}`); return data; };
-    try{ let data; try{ data=await doRun() }catch(e){ if(e.message&&e.message.includes('no such table')){ status.textContent='初回データベースセットアップ中…'; const setupRes=await fetch('/api/setup-db'); if(!setupRes.ok)throw new Error('データベースの初期化に失敗しました'); status.textContent='自己対戦100局を実行中…（再試行）'; data=await doRun() }else{ throw e } } status.textContent=`Gen ${data.generation} 完了（${data.matches}試合）`; await loadTopStrategy(); await loadStrategyLab() }
-    catch(e){status.textContent='実行できませんでした: '+sanitizeMessage(e?.message||'ネットワークエラー');console.warn('[run-selfplay]', e);}
-    finally{btn.disabled=false}
-  };
-  const refresh=$('refresh-strategy'); if(refresh)refresh.onclick=()=>loadStrategyLab();
+  }catch(e){
+    console.warn('[loadStrategyLab]', e?.message);
+    wrap.innerHTML='<p class="subcopy">データを読み込めませんでした。</p>';
+  }
 }
 
 function code(){return Math.random().toString(36).slice(2,7).toUpperCase()}
