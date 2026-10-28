@@ -36,7 +36,7 @@ const g = {
   contract: null, trick: [], trickNo: 0, active: 0, phase: 'prep',
   matchScores: [0,0,0,0,0], playedCards: [], voids: [{},{},{},{},{}],
   bidHistory: [], auction: null, selectedCard: null, discard: new Set(),
-  selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A' // ★ 選択状態を保持する変数を追加
+  selectedBidSuit: '♠', selectedCallSuit: '♠', selectedCallRank: 'A'
 };
 
 function name(i) {
@@ -112,19 +112,21 @@ function prepAuction() {
 
 function auctionStart() {
   g.phase = 'auction';
-  g.selectedBidSuit = '♠'; // リセット
+  g.selectedBidSuit = '♠';
   g.auction = {
     active: [0, 1, 2, 3, 4],
     minBid: 13,
     high: { num: 12, suit: '', player: -1, solo: false },
     version: 0, botSeen: Array(5).fill(-1)
   };
+  // 最初の手番は席0（COM1）から
+  g.active = 0;
   enterAuction();
 }
 
 function enterAuction() {
   g.phase = 'auction';
-  message(`${name(g.active)}の番です。宣言するか、承認してください。`);
+  message(`現在の手番: ${name(g.active)}`);
   renderTraining();
 }
 
@@ -142,7 +144,7 @@ function humanBid() {
   if (g.phase !== 'auction' || !g.auction.active.includes(g.active)) return;
   const numInput = $('training-bid-num');
   const num = numInput ? Number(numInput.value) : 13;
-  const suit = g.selectedBidSuit; // 状態から取得
+  const suit = g.selectedBidSuit;
   
   if (!beatsBid(num, suit)) { toast('現在の宣言より強い宣言を選んでください'); return; }
   
@@ -151,7 +153,6 @@ function humanBid() {
   g.auction.version++;
   message(`${name(g.active)}が${num}${suit}を宣言しました。`);
   
-  // 学習データ送信
   const cs = colorStrength(g.players[g.active].hand, suit, defaultStrategy());
   const nt = ntHandStrength(g.players[g.active].hand, defaultStrategy());
   const handStr = suit === 'NT' ? nt : cs;
@@ -175,7 +176,12 @@ function nextAuctionTurn() {
     auctionEnd(-1);
     return;
   }
-  g.active = g.auction.active[Math.floor(Math.random() * g.auction.active.length)];
+  // 次のアクティブプレイヤーを決定（時計回り）
+  let nextSeat = (g.active + 1) % 5;
+  while (!g.auction.active.includes(nextSeat)) {
+    nextSeat = (nextSeat + 1) % 5;
+  }
+  g.active = nextSeat;
   enterAuction();
 }
 
@@ -247,7 +253,7 @@ function submitCall() {
 function nextPlayTurn() {
   g.phase = 'play';
   renderTraining();
-  message(`${name(g.active)}の番です。カードを出してください。`);
+  message(`現在の手番: ${name(g.active)}`);
 }
 
 function playCard(cardId) {
@@ -276,7 +282,6 @@ function playCard(cardId) {
     g.contract.revealTrickNo = g.trickNo;
   }
   
-  // 学習データ送信
   const role = g.contract.nap === seat ? 'nap' : (!g.contract.solo && g.contract.revealedCall && g.contract.deputy === seat ? 'dep' : 'ally');
   const phase = trickPhaseOf(g.trickNo);
   const pointsTier = pointsTierOf(g.trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).length);
@@ -284,7 +289,8 @@ function playCard(cardId) {
   teachAI('play', seat, { role, phase, pointsTier, rankTier, cardId });
   
   if (g.trick.length < 5) {
-    g.active = (seat - 1 + 5) % 5;
+    // 時計回りに次の席へ
+    g.active = (seat + 1) % 5;
     nextPlayTurn();
     return;
   }
@@ -387,33 +393,40 @@ function renderTraining() {
   }
   
   let discardHTML = '';
-  if (g.phase === 'discard') {
+  if (g.phase === 'discard' && g.active === g.contract?.nap) {
     discardHTML = `<div class="training-discard-hint">捨て札を2枚選んでください</div>`;
   }
   
   let auctionHTML = '';
   if (g.phase === 'auction') {
-    // 選択状態を反映
-    const suitBtns = SUITS.concat(['NT']).map(s => 
-      `<button class="suit-choice ${g.selectedBidSuit === s ? 'selected' : ''}" data-suit="${s}">${s}</button>`
-    ).join('');
-    
-    auctionHTML = `
-      <div class="training-auction-panel">
-        <div class="panel-row">
-          ${suitBtns}
+    if (!g.auction.active.includes(g.active)) {
+      auctionHTML = `<div class="training-auction-panel" style="text-align:center; color:#a3b1a8; padding:20px;">このプレイヤーは承認済みです。<br>セレクトボックスで操作席を切り替えてください。</div>`;
+    } else {
+      const suitBtns = SUITS.concat(['NT']).map(s => 
+        `<button class="suit-choice ${g.selectedBidSuit === s ? 'selected' : ''}" data-suit="${s}">${s}</button>`
+      ).join('');
+      
+      const currentBid = $('training-bid-num') ? Number($('training-bid-num').value) : 13;
+      
+      auctionHTML = `
+        <div class="training-auction-panel">
+          <div class="panel-row">${suitBtns}</div>
+          <div class="panel-row" style="display:flex; gap:8px; align-items:center; justify-content:center; margin-top:8px;">
+            <button id="training-bid-minus" class="small-action" style="font-size:24px; width:48px; height:48px;">−</button>
+            <input type="number" id="training-bid-num" min="13" max="20" value="${currentBid}" style="width:60px; text-align:center; font-size:24px; font-weight:800; background:#0c211c; color:#f3d48e; border:1px solid #35534a; border-radius:6px; padding:6px;">
+            <button id="training-bid-plus" class="small-action" style="font-size:24px; width:48px; height:48px;">＋</button>
+          </div>
+          <div class="panel-row" style="margin-top:10px;">
+            <button id="training-bid-submit" class="primary-button" style="flex:1; min-height:48px;">宣言する</button>
+            <button id="training-approve" class="secondary-button" style="flex:1; min-height:48px;">承認する</button>
+          </div>
         </div>
-        <div class="panel-row">
-          <input type="number" id="training-bid-num" min="13" max="20" value="13">
-          <button id="training-bid-submit" class="primary-button">宣言する</button>
-          <button id="training-approve" class="secondary-button">承認する</button>
-        </div>
-      </div>
-    `;
+      `;
+    }
   }
   
   let callHTML = '';
-  if (g.phase === 'call') {
+  if (g.phase === 'call' && g.active === g.contract?.nap) {
     const suitBtns = SUITS.map(s => 
       `<button class="suit-choice ${g.selectedCallSuit === s ? 'selected' : ''}" data-cs="${s}">${s}</button>`
     ).join('');
@@ -423,12 +436,8 @@ function renderTraining() {
 
     callHTML = `
       <div class="training-call-panel">
-        <div class="panel-row">
-          ${suitBtns}
-        </div>
-        <div class="panel-row">
-          ${rankBtns}
-        </div>
+        <div class="panel-row">${suitBtns}</div>
+        <div class="panel-row">${rankBtns}</div>
         <div class="panel-row">
           <button id="training-call-submit" class="primary-button">指名する</button>
         </div>
@@ -440,7 +449,12 @@ function renderTraining() {
     <div class="game-screen training-game">
       <div class="game-head">
         <button class="back-button" id="training-back">← メニュー</button>
-        <div class="game-meta"><span>ROUND ${g.round} / 10</span><span class="mode-tag">操作席: ${name(g.active)}</span></div>
+        <div class="game-meta">
+          <span>ROUND ${g.round} / 10</span>
+          <select id="training-seat-select" class="mode-tag" style="background:#112a23;color:#fff;border:1px solid #e1bc70; padding:2px 6px; border-radius:4px; font-size:12px;">
+            ${g.players.map((p, i) => `<option value="${i}" ${i === g.active ? 'selected' : ''}>操作席: COM${i + 1}</option>`).join('')}
+          </select>
+        </div>
         <div class="phase-label">${g.phase.toUpperCase()}</div>
       </div>
       ${g.contract ? `<div class="contract-info">宣言 ${g.contract.num}${g.contract.suit} ${g.contract.call ? '· 指名 '+g.contract.call.id : ''}</div>` : ''}
@@ -473,32 +487,49 @@ function renderTraining() {
     $('mode-select-screen').classList.remove('hidden');
     $('mode-select-screen').style.removeProperty('display');
   };
-  
-  if (g.phase === 'auction') {
-    document.querySelectorAll('[data-suit]').forEach(btn => {
-      btn.onclick = () => {
-        g.selectedBidSuit = btn.dataset.suit; // 状態を更新
-        document.querySelectorAll('[data-suit]').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-      };
-    });
-    const submitBtn = $('training-bid-submit');
-    if (submitBtn) submitBtn.onclick = humanBid;
-    const approveBtn = $('training-approve');
-    if (approveBtn) approveBtn.onclick = humanApprove;
+
+  const seatSelect = $('training-seat-select');
+  if (seatSelect) {
+    seatSelect.onchange = (e) => {
+      g.active = Number(e.target.value);
+      renderTraining();
+    };
   }
   
-  if (g.phase === 'call') {
+  if (g.phase === 'auction') {
+    if (g.auction.active.includes(g.active)) {
+      document.querySelectorAll('[data-suit]').forEach(btn => {
+        btn.onclick = () => {
+          g.selectedBidSuit = btn.dataset.suit;
+          document.querySelectorAll('[data-suit]').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+        };
+      });
+      
+      const minusBtn = $('training-bid-minus');
+      const plusBtn = $('training-bid-plus');
+      const numInput = $('training-bid-num');
+      if (minusBtn) minusBtn.onclick = () => { if (numInput) numInput.value = Math.max(13, Number(numInput.value) - 1); };
+      if (plusBtn) plusBtn.onclick = () => { if (numInput) numInput.value = Math.min(20, Number(numInput.value) + 1); };
+      
+      const submitBtn = $('training-bid-submit');
+      if (submitBtn) submitBtn.onclick = humanBid;
+      const approveBtn = $('training-approve');
+      if (approveBtn) approveBtn.onclick = humanApprove;
+    }
+  }
+  
+  if (g.phase === 'call' && g.active === g.contract?.nap) {
     document.querySelectorAll('[data-cs]').forEach(btn => {
       btn.onclick = () => { 
-        g.selectedCallSuit = btn.dataset.cs; // 状態を更新
+        g.selectedCallSuit = btn.dataset.cs;
         document.querySelectorAll('[data-cs]').forEach(b => b.classList.remove('selected')); 
         btn.classList.add('selected');
       };
     });
     document.querySelectorAll('[data-cr]').forEach(btn => {
       btn.onclick = () => { 
-        g.selectedCallRank = btn.dataset.cr; // 状態を更新
+        g.selectedCallRank = btn.dataset.cr;
         document.querySelectorAll('[data-cr]').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
       };
@@ -516,7 +547,7 @@ function renderTraining() {
     });
   }
   
-  if (g.phase === 'discard') {
+  if (g.phase === 'discard' && g.active === g.contract?.nap) {
     document.querySelectorAll('.hand .card').forEach(el => {
       el.onclick = () => {
         const id = el.querySelector('.suit').textContent + el.querySelector('.rank').textContent;
