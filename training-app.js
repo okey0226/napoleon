@@ -119,7 +119,6 @@ function auctionStart() {
     high: { num: 12, suit: '', player: -1, solo: false },
     version: 0, botSeen: Array(5).fill(-1)
   };
-  // 最初の手番は席0（COM1）から
   g.active = 0;
   enterAuction();
 }
@@ -176,7 +175,6 @@ function nextAuctionTurn() {
     auctionEnd(-1);
     return;
   }
-  // 次のアクティブプレイヤーを決定（時計回り）
   let nextSeat = (g.active + 1) % 5;
   while (!g.auction.active.includes(nextSeat)) {
     nextSeat = (nextSeat + 1) % 5;
@@ -289,7 +287,6 @@ function playCard(cardId) {
   teachAI('play', seat, { role, phase, pointsTier, rankTier, cardId });
   
   if (g.trick.length < 5) {
-    // 時計回りに次の席へ
     g.active = (seat + 1) % 5;
     nextPlayTurn();
     return;
@@ -400,7 +397,7 @@ function renderTraining() {
   let auctionHTML = '';
   if (g.phase === 'auction') {
     if (!g.auction.active.includes(g.active)) {
-      auctionHTML = `<div class="training-auction-panel" style="text-align:center; color:#a3b1a8; padding:20px;">このプレイヤーは承認済みです。<br>セレクトボックスで操作席を切り替えてください。</div>`;
+      auctionHTML = `<div class="training-auction-panel" style="text-align:center; color:#a3b1a8; padding:20px;">このプレイヤーは承認済みです。<br>席をタップして操作を切り替えてください。</div>`;
     } else {
       const suitBtns = SUITS.concat(['NT']).map(s => 
         `<button class="suit-choice ${g.selectedBidSuit === s ? 'selected' : ''}" data-suit="${s}">${s}</button>`
@@ -462,7 +459,7 @@ function renderTraining() {
       <div class="table-area" style="position: relative; overflow: visible;">
         ${trickHTML}
         <div class="players-ring">
-          ${g.players.map((p, i) => `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}"><div class="seat-name">${name(i)}</div></div>`).join('')}
+          ${g.players.map((p, i) => `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto;"><div class="seat-name">${name(i)}</div></div>`).join('')}
         </div>
         <div class="center-table"><div class="center-caption">場札</div></div>
       </div>
@@ -495,6 +492,18 @@ function renderTraining() {
       renderTraining();
     };
   }
+
+  // 席を直接タップして切り替え
+  document.querySelectorAll('.player-seat[data-seat]').forEach(el => {
+    el.onclick = () => {
+      const seat = Number(el.dataset.seat);
+      if (g.active !== seat) {
+        g.active = seat;
+        renderTraining();
+        toast(`操作席を ${name(seat)} に切り替えました`);
+      }
+    };
+  });
   
   if (g.phase === 'auction') {
     if (g.auction.active.includes(g.active)) {
