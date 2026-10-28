@@ -911,3 +911,161 @@ export function chooseCardToPlay(ctx) {
   if (!ctx.trick.length) return chooseAllianceLead(ctx);
   return chooseAllianceFollow(ctx);
 }
+
+// ==========================================
+// 11. 決定化モンテカルロ法（MCTS）の導入
+// ==========================================
+function getUnseenCards(ctx) {
+  const allIds = [];
+  for (const s of SUITS) for (const r of RANKS) allIds.push(s + r);
+  
+  const seen = new Set();
+  (ctx.hand || []).forEach(c => seen.add(c.id));
+  (ctx.playedCards || []).forEach(c => seen.add(c.id));
+  (ctx.discardedKitty || []).forEach(c => seen.add(c.id));
+  (ctx.trick || []).forEach(t => seen.add(t.card.id));
+  
+  return allIds.filter(id => !seen.has(id)).map(id => ({ suit: id[0], rank: id.slice(1), id }));
+}
+
+function simulateRandomPlayout(state, mySeat, contract) {
+  // state: { hands, trick, trickNo, active, playedCards, voids, points }
+  let active = state.active;
+  let trick = state.trick.slice();
+  let trickNo = state.trickNo;
+  let hands = state.hands.map(h => h.slice());
+  let points = state.points.slice();
+  
+  const getLegal = (seat) => {
+    const h = hands[seat];
+    if (!trick.length) return h;
+    const ledSuit = trick[0].card.suit;
+    const follow = h.filter(c => c.suit === ledSuit);
+    return follow.length ? follow : h;
+  };
+
+  while (trickNo < 10) {
+    if (trick.length < 5) {
+      const legal = getLegal(active);
+      if (!legal.length) break; // 手札切れ（通常起きない）
+      const chosen = legal[Math.floor(Math.random() * legal.length)];
+      
+      hands[active] = hands[active].filter(c => c.id !== chosen.id);
+      trick.push({ seat: active, card: chosen });
+      
+      if (trick.length === 5) {
+        const wEntry = winningEntry(contract, trickNo, trick);
+        const w = wEntry.seat;
+        const taken = trick.filter(e => FACE.includes(e.card.rank)).length;
+        points[w] += taken;
+        
+        active = w;
+        trick = [];
+        trickNo++;
+        
+        // 早期終了判定
+        const nap = contract.nap;
+        const deputy = contract.deputy;
+        const isSolo = contract.solo;
+        const num = contract.num;
+        const napPoints = points[nap] + (isSolo ? 0 : points[deputy]);
+        const alliancePoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
+        
+        if (alliancePoints > 20 - num || (napPoints >= num && (num === 20 || alliancePoints >= 1))) {
+          break;
+        }
+      } else {
+        active = (active + 4) % 5;
+      }
+    }
+  }
+  
+  return points;
+}
+
+export function chooseCardWithMCTS(ctx) {
+  const baseChoice = chooseCardToPlay(ctx);
+  if (!ctx.legal || ctx.legal.length <= 1) return baseChoice;
+
+  // 負荷軽減のため、確率でMCTSをスキップ（例: 50%）
+  if (Math.random() > 0.5) return baseChoice;
+
+  const candidates = [baseChoice];
+  // ヒューリスティックとは異なる候補を最大2つ追加
+  const others = ctx.legal.filter(c => c.id !== baseChoice.id);
+  if (others.length > 0) candidates.push(others[Math.floor(Math.random() * others.length)]);
+  if (others.length > 1) candidates.push(others[Math.floor(Math.random() * others.length)]);
+  
+  // 重複排除
+  const uniqueCands = Array.from(new Map(candidates.map(c => [c.id, c])).values());
+
+  let bestCard = baseChoice;
+  let bestWinRate = -1;
+  const trials = 10; // 各候補手のシミュレーション回数
+
+  for (const card of uniqueCands) {
+    let napWins = 0;
+    for (let i = 0; i < trials; i++) {
+      // 1. 未見のカードを集める
+      const unseen = getUnseenCards(ctx);
+      
+      // 2. 全員の手札を再構築（自分は現在の手札から出そうなカードを除外、他人は未見からランダム）
+      const hands = [[], [], [], [], []];
+      
+      // 自分の手札
+      hands[ctx.seat] = ctx.hand.filter(c => c.id !== card.id);
+      
+      // 他人の手札枚数を推測
+      // 全体のカードは52枚。最初の手札は10枚×5人。場に出た枚数で計算。
+      // 正確な枚数は (10 - 現時点で出した枚数) だが、簡易的に残りトリック数から推測
+      const remainingTricks = 10 - ctx.trickNo;
+      const cardsPerPlayer = ctx.trick.length >= 4 ? remainingTricks - 1 : remainingTricks; // まだ出してない人の枚数
+      
+      // 未見のカードをシャッフル
+      unseen.sort(() => Math.random() - 0.5);
+      
+      let unseenIdx = 0;
+      for (let s = 0; s < 5; s++) {
+        if (s === ctx.seat) continue;
+        // 簡易配布（本来はもっと正確に配る必要があるが、ランダムプレイアウトなら十分）
+        for (let k = 0; k < cardsPerPlayer; k++) {
+          if (unseenIdx < unseen.length) {
+            hands[s].push(unseen[unseenIdx++]);
+          }
+        }
+      }
+
+      // 現在のトリックの状況を再現
+      const trick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
+      // 自分が出そうなカードを追加
+      trick.push({ seat: ctx.seat, card });
+      
+      let active = (ctx.seat + 4) % 5;
+      let trickNo = ctx.trickNo;
+      
+      // 現在のポイント
+      const points = ctx.points ? ctx.points.slice() : [0,0,0,0,0];
+      
+      // 3. ランダムプレイアウト実行
+      const finalPoints = simulateRandomPlayout({ hands, trick, trickNo, active, points }, ctx.seat, ctx.contract);
+      
+      // 4. 勝敗判定
+      const nap = ctx.contract.nap;
+      const deputy = ctx.contract.deputy;
+      const isSolo = ctx.contract.solo;
+      const num = ctx.contract.num;
+      const napPoints = finalPoints[nap] + (isSolo ? 0 : finalPoints[deputy]);
+      const allyPoints = finalPoints.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0) + (ctx.allianceKittyPoints || 0);
+      
+      const made = napPoints >= num && (num === 20 || napPoints < 20);
+      if (made) napWins++;
+    }
+    
+    const winRate = napWins / trials;
+    if (winRate > bestWinRate) {
+      bestWinRate = winRate;
+      bestCard = card;
+    }
+  }
+  return bestCard;
+}
