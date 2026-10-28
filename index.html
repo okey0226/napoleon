@@ -17,12 +17,8 @@
       document.body.appendChild(errDiv);
     });
   </script>
-  <!-- キャッシュ破棄のため ?v=30 に更新 -->
-    <!-- キャッシュ破棄のため ?v=32 に更新 -->
-    <!-- キャッシュ破棄のため ?v=33 に更新 -->  <!-- キャッシュ破棄のため ?v=41 に更新 -->
-    <!-- キャッシュ破棄のため ?v=42 に更新 -->
-    <!-- キャッシュ破棄のため ?v=44 に更新 -->
-  <script type="module" src="/app.js?v=44"></script>
+  <!-- キャッシュ破棄のため ?v=45 に更新 -->
+  <script type="module" src="/app.js?v=45"></script>
 </head>
 <body>
   <header class="topbar">
@@ -127,6 +123,17 @@
           </div>
         </article>
 
+        <article class="mode-card mode-training">
+          <div class="mode-mark gold">👨‍🏫</div>
+          <div class="mode-info">
+            <h2>AI指導モード</h2>
+            <p>5人全員の手札をあなたが操作し、最適な立ちやカード選択をCOMに教え込みます。</p>
+          </div>
+          <div class="mode-action">
+            <button id="start-training" class="rank-button">開始する</button>
+          </div>
+        </article>
+
         <section id="leaderboard" class="leaderboard mode-leaderboard" aria-labelledby="leaderboard-title">
           <div class="leaderboard-heading">
             <div><div class="eyebrow">ELO + ART</div><h2 id="leaderboard-title">TOP PLAYERS</h2></div>
@@ -200,6 +207,10 @@
         <div class="hand-label">あなたの手札 <span id="hand-count"></span></div>
         <div id="hand" class="hand"></div>
       </div>
+    </section>
+
+    <section id="training-screen" class="screen training-screen hidden">
+      <div id="training-shell" class="training-shell"></div>
     </section>
 
     <section id="records-screen" class="screen narrow-screen hidden">
