@@ -336,10 +336,21 @@ function playCard(cardId) {
   g.trick = [];
   g.active = w;
   
-  if (g.trickNo >= 10) {
+  const c = g.contract;
+  const napPoints = g.players.reduce((sum, p, i) => sum + (i === c.nap || (!c.solo && i === c.deputy) ? p.roundPoints : 0), 0);
+  const alliancePointsRaw = g.players.reduce((sum, p, i) => sum + (i !== c.nap && (c.solo || i !== c.deputy) ? p.roundPoints : 0), 0);
+  const alliancePoints = alliancePointsRaw + (g.allianceKittyPoints || 0);
+  
+  let earlyFinish = false;
+  if (alliancePoints > 20 - c.num) earlyFinish = true;
+  else if (napPoints >= c.num && (c.num === 20 || alliancePoints >= 1)) earlyFinish = true;
+  else if (napPoints === 20 && c.num < 20) earlyFinish = true; // 全部取り負け
+
+  if (g.trickNo >= 10 || earlyFinish) {
     finishTrainingRound();
     return;
   }
+  
   message(`${name(w)}が場札を取りました。次の勝負です。`);
   renderTraining();
   setTimeout(nextPlayTurn, 1000);
