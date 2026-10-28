@@ -131,20 +131,25 @@ function enterAuction() {
 
 function humanApprove() {
   if (g.phase !== 'auction' || !g.auction.active.includes(g.active)) return;
-  if (!g.auction.active.length) { auctionEnd(-1); return; }
+  
   g.auction.active = g.auction.active.filter(x => x !== g.active);
   g.auction.botSeen[g.active] = g.auction.version;
   message(`${name(g.active)}が承認しました。`);
-  if (!g.auction.active.length) { auctionEnd(-1); return; }
+  
   nextAuctionTurn();
 }
 
-// ★ 追加: スキップ処理（activeから外れず、手番だけ次へ）
 function humanSkip() {
   if (g.phase !== 'auction') return;
   if (!g.auction.active.includes(g.active)) return;
   
   message(`${name(g.active)}がスキップしました。`);
+  
+  if (g.auction.active.length === 1 && g.auction.active[0] === g.active) {
+    // 最後の一人ならスキップ＝承認扱いにして終了
+    humanApprove();
+    return;
+  }
   
   let nextSeat = (g.active + 1) % 5;
   while (!g.auction.active.includes(nextSeat)) {
@@ -173,6 +178,11 @@ function humanBid() {
   const trumpType = suit === 'NT' ? 'NT' : 'color';
   teachAI('bid', g.active, { handStr, trumpType, num });
   
+  // 宣言した後、他の全員が承認済みなら終了
+  if (g.auction.active.length === 1 && g.auction.active[0] === g.active) {
+    auctionEnd(g.active);
+    return;
+  }
   nextAuctionTurn();
 }
 
@@ -182,19 +192,21 @@ function beatsBid(n, s) {
 }
 
 function nextAuctionTurn() {
-  if (g.auction.active.length === 1) {
-    auctionEnd(g.auction.active[0]);
-    return;
-  }
   if (g.auction.active.length === 0) {
-    auctionEnd(-1);
+    auctionEnd(g.auction.high.player); // 全員承認（流局、または宣言者の確定）
     return;
   }
-  let nextSeat = (g.active + 1) % 5;
-  while (!g.auction.active.includes(nextSeat)) {
-    nextSeat = (nextSeat + 1) % 5;
+  
+  if (g.auction.active.length === 1) {
+    // 残った1人に手番を回す
+    g.active = g.auction.active[0];
+  } else {
+    let nextSeat = (g.active + 1) % 5;
+    while (!g.auction.active.includes(nextSeat)) {
+      nextSeat = (nextSeat + 1) % 5;
+    }
+    g.active = nextSeat;
   }
-  g.active = nextSeat;
   enterAuction();
 }
 
@@ -207,7 +219,7 @@ function auctionEnd(w) {
   const strengthAtBid = suit === 'NT' ? ntHandStrength(g.players[w].hand, defaultStrategy()) : colorStrength(g.players[w].hand, suit, defaultStrategy());
   g.contract = { nap: w, num: g.auction.high.num, suit, deputy: -1, solo: false, revealTrickNo: null, strengthAtBid };
   
-  // ★ オープンをナポレオンの手札に加える
+  // オープンをナポレオンの手札に加える
   g.players[w].hand.push(...g.kitty);
   sortHand(g.players[w].hand);
   
@@ -469,12 +481,19 @@ function renderTraining() {
     `;
   }
 
-  // オープン（キティ）の表示
   let openKittyHTML = '';
   if ((g.phase === 'auction' || g.phase === 'discard') && g.kitty && g.kitty.length > 0) {
-    openKittyHTML = `<div class="kitty-view" style="position:absolute; top:20px; left:50%; transform:translateX(-50%); z-index:20; display:flex; gap:8px;">
-      <span class="open-label" style="font-size:12px;color:var(--gold);font-weight:700;">オープン</span>
-      ${g.kitty.map(c => cardElHTML(c, 'contract-kitty-card')).join('')}
+    const cardsHTML = g.kitty.map(c => {
+      const red = c.suit === '♦' || c.suit === '♥';
+      return `<div class="card ${red ? 'red' : ''}" style="width:32px; height:46px; border-radius:4px; position:relative; background:#fbfaf6; box-shadow:0 2px 4px rgba(0,0,0,.3);">
+        <span class="rank" style="font-size:14px; left:3px; top:2px; color:${red ? '#c6453f' : '#19251f'}; font-weight:800;">${c.rank}</span>
+        <span class="suit" style="font-size:12px; left:3px; top:18px; color:${red ? '#c6453f' : '#19251f'};">${c.suit}</span>
+      </div>`;
+    }).join('');
+    
+    openKittyHTML = `<div style="position:absolute; top:15px; left:50%; transform:translateX(-50%); z-index:20; display:flex; flex-direction:row; align-items:center; gap:8px;">
+      <span style="font-size:12px;color:var(--gold);font-weight:700; white-space:nowrap; writing-mode:horizontal-tb;">オープン</span>
+      <div style="display:flex; gap:4px;">${cardsHTML}</div>
     </div>`;
   }
   
@@ -496,7 +515,13 @@ function renderTraining() {
         ${trickHTML}
         ${openKittyHTML}
         <div class="players-ring">
-          ${g.players.map((p, i) => `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto;"><div class="seat-name">${name(i)}</div></div>`).join('')}
+          ${g.players.map((p, i) => {
+            const isApproved = g.phase === 'auction' && g.auction && g.auction.active && !g.auction.active.includes(i);
+            return `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto; opacity: ${isApproved ? 0.5 : 1};">
+              <div class="seat-name">${name(i)}</div>
+              ${isApproved ? `<div class="seat-role" style="color:#a3b1a8; font-size:10px;">承認済み</div>` : ''}
+            </div>`;
+          }).join('')}
         </div>
         <div class="center-table"><div class="center-caption">場札</div></div>
       </div>
