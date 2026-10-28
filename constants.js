@@ -111,17 +111,76 @@ export const computeEloDelta = (myElo, oppElos, outcome) => {
   return Math.round(32 * (score - expected));
 };
 
-export const PARAM_BOUNDS = {
-  bidThreshold: [2, 6], riskTolerance: [0.1, 1.0], leadAggression: [0.2, 1.0],
-  followAggression: [0.1, 1.0], trumpBonus: [0.1, 1.5], mightyBonus: [0.5, 3.0],
-  safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0]
+// ★ 追加: 自己対戦の評価ロジックを実装
+export const rateRound = (seat, roundData, params, weight = 1) => {
+  const { nap, deputy, solo, num, won, takenPoints } = roundData;
+  if (!Number.isFinite(seat) || seat < 0 || seat > 4) return 0;
+  
+  const isNapSide = seat === nap || (!solo && seat === deputy);
+  let score = 0;
+  
+  if (isNapSide) {
+    if (won) {
+      score += 1.0;
+      score += (num - 13) * 0.1; // 高難度宣言成功ボーナス
+    } else {
+      score -= 1.0;
+      score -= (num - 13) * 0.1; // 高難度宣言失敗ペナルティ
+    }
+    const myPoints = takenPoints ? (takenPoints[seat] || 0) : 0;
+    score += myPoints * 0.05;
+  } else {
+    if (!won) {
+      score += 1.0;
+      score += (num - 13) * 0.1; // 高難度宣言阻止ボーナス
+    } else {
+      score -= 1.0;
+    }
+    const myPoints = takenPoints ? (takenPoints[seat] || 0) : 0;
+    score += myPoints * 0.05;
+  }
+  
+  return Math.max(-3, Math.min(3, score)) * weight;
 };
+
+// ★ 修正: 全パラメータにバウンドを設定
+export const PARAM_BOUNDS = {
+  bidThreshold: [2, 8], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
+  followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
+  safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
+  opponentInferenceWeight: [0.0, 1.0], suitConflictWeight: [0.0, 2.0],
+  mightyShadowWeight: [0.0, 1.0], weakOpponentBoost: [0.0, 1.0], bluffLossMultiplier: [0.1, 2.0],
+  cooperationBonus: [0.0, 1.0], ntPreference: [0.5, 1.5], ntSuitLengthBonus: [0.0, 3.0],
+  ntAceWeight: [0.5, 3.0], ntMightyBonus: [1.0, 5.0], highBidNtThreshold: [13, 20],
+  aceWeakSuitBonus: [0.0, 1.0], aceShortBonus: [0.0, 1.0], aceLongPenalty: [0.0, 1.0],
+  sameTwoAceCounter: [0.0, 1.0], sameTwoShortBonus: [0.0, 1.0], sameTwoLongPenalty: [0.0, 1.0],
+  sameTwoHighBidBonus: [0.0, 1.0], trumpExhaustionThreshold: [1, 10], baitModeWindow: [0, 10],
+  baitMinTrumps: [1, 10], strongTrumpLeadAggression: [0.0, 1.0], aceCashUrgency: [0.0, 2.0],
+  pointCardSafetyThreshold: [0.0, 1.0], tenHoldThreshold: [0.0, 1.0], nonTrumpAceWaiting: [0.0, 1.0],
+  baitBackJWindow: [0, 10], baitBackJChance: [0.0, 1.0], faceCardOnNapWin: [0.0, 1.0],
+  preserveNextStronger: [0.0, 1.0], deputyRevealUrgency: [0.0, 1.0], deputyCoverWeight: [0.0, 1.0],
+  sameTwoDeputyBonus: [0.0, 1.0], allyFaceCardBonus: [0.0, 1.0], napWeaknessLeadWeight: [0.0, 2.0],
+  trumpAvoidWeight: [0.0, 2.0], sameColorSuitAvoid: [0.0, 2.0], spadeLeadPriority: [0.0, 1.0],
+  nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
+  allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10]
+};
+
+// ★ 修正: 範囲制限を適用
 export const mutateStrategy = (base, rate) => {
   const out = { ...base };
-  for (const k of Object.keys(out)) if (Math.random() < 0.1) out[k] = out[k] * (1 + (Math.random() * 2 - 1) * rate);
+  for (const k of Object.keys(out)) {
+    if (Math.random() < 0.1) {
+      const delta = (Math.random() * 2 - 1) * rate;
+      let val = out[k] * (1 + delta);
+      if (PARAM_BOUNDS[k]) {
+        const [min, max] = PARAM_BOUNDS[k];
+        val = Math.max(min, Math.min(max, val));
+      }
+      out[k] = val;
+    }
+  }
   return out;
 };
-export const rateRound = () => 0;
 export const RANK_1_BONUS = 5;
 export const RANK_2_BONUS = 2;
 export const RANK_4_PENALTY = -2;
