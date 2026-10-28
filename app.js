@@ -72,7 +72,7 @@ function resetAuctionTimer() {
 }
 
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
-function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();}
+function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen','training-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
@@ -1570,22 +1570,27 @@ $('profile-open')?.addEventListener('click', () => g.account ? records() : scree
 $('show-record')?.addEventListener('click', records);
 $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.leaderboardExpanded; loadLeaderboard(); });
 
-// ★ キャッシュ破棄のため ?v=29 を追加
-// ★ キャッシュ破棄のため ?v=30 を追加
-// ★ キャッシュ破棄のため ?v=32 を追加
-// ★ キャッシュ破棄のため ?v=33 を追加
-// ★ キャッシュ破棄のため ?v=41 を追加
-// ★ キャッシュ破棄のため ?v=42 を追加
-// ★ キャッシュ破棄のため ?v=44 を追加
+// ★ キャッシュ破棄のため ?v=45 を追加
 $('open-quiz')?.addEventListener('click', async () => {
   try {
-    const mod = await import('./quiz-app.js?v=44');
+    const mod = await import('./quiz-app.js?v=45');
     mod.openQuizScreen();
   } catch (err) {
     console.error(err);
     alert('何切る問題集の読み込みに失敗しました: ' + err.message);
   }
 });
+
+$('start-training')?.addEventListener('click', async () => {
+  try {
+    const mod = await import('./training-app.js?v=1');
+    mod.openTrainingScreen();
+  } catch (err) {
+    console.error(err);
+    alert('トレーニングモードの読み込みに失敗しました: ' + err.message);
+  }
+});
+
 const strategyBtn = $('open-strategy-lab');
 if (strategyBtn) strategyBtn.addEventListener('click', () => screen('strategy-screen'));
 
