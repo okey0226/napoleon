@@ -206,7 +206,13 @@ function auctionEnd(w) {
   const suit = g.auction.high.suit;
   const strengthAtBid = suit === 'NT' ? ntHandStrength(g.players[w].hand, defaultStrategy()) : colorStrength(g.players[w].hand, suit, defaultStrategy());
   g.contract = { nap: w, num: g.auction.high.num, suit, deputy: -1, solo: false, revealTrickNo: null, strengthAtBid };
+  
+  // ★ オープンをナポレオンの手札に加える
+  g.players[w].hand.push(...g.kitty);
+  sortHand(g.players[w].hand);
+  
   g.active = w;
+  g.discard = new Set();
   message(`${name(w)}が${g.contract.num}${g.contract.suit}で宣言。オープンを手札に入れて2枚捨ててください。`);
   g.phase = 'discard';
   renderTraining();
@@ -215,12 +221,11 @@ function auctionEnd(w) {
 function submitDiscard() {
   if (g.discard.size !== 2) return;
   const n = g.contract.nap;
-  g.players[n].hand.push(...g.kitty);
-  sortHand(g.players[n].hand);
   
   const removed = g.players[n].hand.filter(c => g.discard.has(c.id));
   g.players[n].hand = g.players[n].hand.filter(c => !g.discard.has(c.id));
   sortHand(g.players[n].hand);
+  
   g.kitty = removed;
   g.discardedKitty = removed.slice();
   g.allianceKittyPoints += removed.filter(c => ['10','J','Q','K','A'].includes(c.rank)).length;
@@ -395,6 +400,7 @@ function renderTraining() {
   const mySeat = g.active;
   const handCards = g.players[mySeat].hand || [];
   const legalIds = getLegalCards(mySeat).map(c => c.id);
+  const isDiscardPhase = (g.phase === 'discard' && g.active === g.contract?.nap);
   
   let trickHTML = '';
   if (g.trick.length) {
@@ -405,8 +411,13 @@ function renderTraining() {
   }
   
   let discardHTML = '';
-  if (g.phase === 'discard' && g.active === g.contract?.nap) {
-    discardHTML = `<div class="training-discard-hint">捨て札を2枚選んでください</div>`;
+  if (isDiscardPhase) {
+    discardHTML = `
+      <div class="training-discard-panel" style="display:flex; flex-direction:column; gap:8px; align-items:center; margin-top:10px;">
+        <div class="training-discard-hint" style="font-size:16px; font-weight:700; color:#e8d7a9;">捨て札を2枚選んでください (${g.discard.size}/2)</div>
+        <button id="training-discard-submit" class="primary-button" style="min-height:48px; width:200px;" ${g.discard.size !== 2 ? 'disabled' : ''}>決定</button>
+      </div>
+    `;
   }
   
   let auctionHTML = '';
@@ -457,6 +468,15 @@ function renderTraining() {
       </div>
     `;
   }
+
+  // オープン（キティ）の表示
+  let openKittyHTML = '';
+  if ((g.phase === 'auction' || g.phase === 'discard') && g.kitty && g.kitty.length > 0) {
+    openKittyHTML = `<div class="kitty-view" style="position:absolute; top:20px; left:50%; transform:translateX(-50%); z-index:20; display:flex; gap:8px;">
+      <span class="open-label" style="font-size:12px;color:var(--gold);font-weight:700;">オープン</span>
+      ${g.kitty.map(c => cardElHTML(c, 'contract-kitty-card')).join('')}
+    </div>`;
+  }
   
   shell.innerHTML = `
     <div class="game-screen training-game">
@@ -474,6 +494,7 @@ function renderTraining() {
       <div class="table-message">${escapeHTML($('table-message')?.textContent || '')}</div>
       <div class="table-area" style="position: relative; overflow: visible;">
         ${trickHTML}
+        ${openKittyHTML}
         <div class="players-ring">
           ${g.players.map((p, i) => `<div class="player-seat player-color-${i} pos-${i} ${i === g.active ? 'active' : ''}" data-seat="${i}" style="cursor: pointer; pointer-events: auto;"><div class="seat-name">${name(i)}</div></div>`).join('')}
         </div>
@@ -484,8 +505,8 @@ function renderTraining() {
       ${discardHTML}
       <div class="hand-dock">
         <div class="hand-label">${name(mySeat)}の手札 <span>${handCards.length}枚</span></div>
-        <div class="hand">
-          ${handCards.map(c => cardElHTML(c, legalIds.includes(c.id) ? 'playable' : '')).join('')}
+        <div class="hand ${isDiscardPhase ? 'discard-mode' : ''}">
+          ${handCards.map(c => cardElHTML(c, isDiscardPhase && g.discard.has(c.id) ? 'selected' : (legalIds.includes(c.id) && !isDiscardPhase ? 'playable' : ''))).join('')}
         </div>
       </div>
       <div id="training-result-panel" class="result-panel hidden"></div>
@@ -574,7 +595,7 @@ function renderTraining() {
     });
   }
   
-  if (g.phase === 'discard' && g.active === g.contract?.nap) {
+  if (isDiscardPhase) {
     document.querySelectorAll('.hand .card').forEach(el => {
       el.onclick = () => {
         const id = el.querySelector('.suit').textContent + el.querySelector('.rank').textContent;
