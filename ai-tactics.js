@@ -638,41 +638,6 @@ export function chooseCardToPlay(ctx) {
 // ==========================================
 // MCTS & 推測
 // ==========================================
-function getUnseenCards(ctx) {
-  const allIds = [];
-  for (const s of SUITS) for (const r of RANKS) allIds.push(s + r);
-  const seen = new Set();
-  (ctx.hand || []).forEach(c => seen.add(c.id));
-  (ctx.playedCards || []).forEach(c => seen.add(c.id));
-  (ctx.discardedKitty || []).forEach(c => seen.add(c.id));
-  (ctx.trick || []).forEach(t => seen.add(t.card.id));
-  return allIds.filter(id => !seen.has(id)).map(id => ({ suit: id[0], rank: id.slice(1), id }));
-}
-
-function evaluateValueNetwork(state, seat, contract, params) {
-  const nn = params?.nnWeights || defaultStrategy().nnWeights;
-  let score = nn.bias;
-  const hand = state.hands[seat] || [];
-  const hStr = handStrength(hand) / 10;
-  const myTrumps = hand.filter(c => c.suit === contract.suit).length;
-  const isNap = seat === contract.nap ? 1 : 0;
-  const isDep = (!contract.solo && seat === contract.deputy) ? 1 : 0;
-  const isAlly = (!isNap && !isDep) ? 1 : 0;
-  const hasMighty = hand.some(c => c.id === '♠A') ? 1 : 0;
-  const napPoints = state.points[contract.nap] + (contract.solo ? 0 : state.points[contract.deputy]);
-  const needed = Math.max(0, contract.num - napPoints);
-  score += nn.handStrength * hStr;
-  score += nn.trumpRemaining * (myTrumps / 10);
-  score += nn.pointsNeeded * (needed / 10);
-  score += nn.trickNo * (state.trickNo / 10);
-  score += nn.isNap * isNap;
-  score += nn.isDeputy * isDep;
-  score += nn.isAlly * isAlly;
-  score += nn.hasMighty * hasMighty;
-  return 1 / (1 + Math.exp(-score));
-}
-
-// ★ 修正: ベイズ推定（決定化の高度化）
 function determinizeState(ctx) {
   const unseen = [];
   for (const s of SUITS) for (const r of RANKS) unseen.push(s + r);
@@ -686,7 +651,6 @@ function determinizeState(ctx) {
   const hands = [[], [], [], [], []];
   hands[ctx.seat] = ctx.hand.slice();
   
-  // 各プレイヤーの現在の手札枚数を正確に計算
   const handCounts = [0,0,0,0,0];
   for (let s = 0; s < 5; s++) {
     if (s === ctx.seat) {
@@ -697,7 +661,6 @@ function determinizeState(ctx) {
     }
   }
   
-  // 各プレイヤーに配る（ボイド情報を厳密に反映）
   for (let s = 0; s < 5; s++) {
     if (s === ctx.seat) continue;
     const voidInfo = ctx.voids?.[s] || {};
@@ -705,7 +668,6 @@ function determinizeState(ctx) {
     const tempHand = [];
     const targetCount = handCounts[s];
     
-    // 1. ボイド（持っていないスート）を排除して割り当て
     for (let i = 0; i < unseens.length && assigned < targetCount; i++) {
       const c = unseens[i];
       if (voidInfo[c.suit]) continue;
@@ -715,7 +677,6 @@ function determinizeState(ctx) {
       assigned++;
     }
     
-    // 2. 足りない場合は、整合性エラー対策としてボイドを無視して割り当て
     while (assigned < targetCount && unseens.length > 0) {
       tempHand.push(unseens.shift());
       assigned++;
@@ -725,7 +686,6 @@ function determinizeState(ctx) {
   return hands;
 }
 
-// ★ 修正: 終端評価の改善（オーバーキル防止）＋無限ループ防止の安全弁追加
 function simulateWithPolicy(state, mySeat, contract, params) {
   let active = state.active;
   let trick = state.trick.slice();
@@ -742,10 +702,10 @@ function simulateWithPolicy(state, mySeat, contract, params) {
     return follow.length ? follow : h;
   };
   
-  let loopSafety = 0; // ★ 安全弁
+  let loopSafety = 0;
   while (trickNo < 10) {
     loopSafety++;
-    if (loopSafety > 100) break; // 万が一の無限ループを防止
+    if (loopSafety > 100) break;
 
     if (trick.length < 5) {
       const legal = getLegal(active);
@@ -789,40 +749,37 @@ function simulateWithPolicy(state, mySeat, contract, params) {
   const made = napPoints >= num && (num === 20 || napPoints < 20);
   const myTeamIsNap = mySeat === nap || (!isSolo && mySeat === deputy);
   
-  // 勝敗だけでなく「点数差」と「オーバーキル」を評価
   let score = made ? 1.0 : 0.0;
   if (myTeamIsNap) {
     if (made) {
       const overkill = napPoints - num;
-      score -= overkill * 0.05; // 余分に取るとペナルティ
+      score -= overkill * 0.05;
     }
   } else {
     if (!made) {
       const gap = num - napPoints;
-      score += Math.min(1.0, gap * 0.1); // 相手の不足分が多いほど高評価
+      score += Math.min(1.0, gap * 0.1);
       score += Math.min(0.5, points[mySeat] * 0.05);
     }
   }
   return Math.max(0, Math.min(1.5, score));
 }
 
-export function chooseCardWithMCTS(ctx) {
+// ★ 追加: 探索統計（N, W）を返す関数
+export function getMCTSStats(ctx) {
   const legal = ctx.legal;
-  if (!legal || legal.length <= 1) return legal[0];
-  const params = ctx.params || defaultStrategy();
-  if (ctx.trickNo > 8 && Math.random() > 0.3) return chooseCardToPlay(ctx);
-  
-  const N = {};
-  const W = {};
+  const N = {}, W = {};
   legal.forEach(c => { N[c.id] = 0; W[c.id] = 0; });
-  
+  if (!legal || legal.length <= 1) return { N, W, iterations: 0 };
+
+  const params = ctx.params || defaultStrategy();
   const cParam = params.mctsExploration || 1.414;
   const startTime = Date.now();
-  // デフォルトを 1200ms に設定（スマホの負荷軽減）
-  const maxTimeMs = params.maxThinkTimeMs || 1200;
+  // デフォルトを 3000ms に延長（フリーズしない前提のため）
+  const maxTimeMs = params.maxThinkTimeMs || 3000; 
   
   let iterations = 0;
-  while (iterations < 10000) {
+  while (iterations < 20000) { // 安全弁の上限を上げる
     if (Date.now() - startTime > maxTimeMs) break;
 
     let bestCard = null;
@@ -842,19 +799,29 @@ export function chooseCardWithMCTS(ctx) {
     let trickNo = ctx.trickNo;
     const points = ctx.points ? ctx.points.slice() : [0,0,0,0,0];
     
-    // simulateWithPolicy 内に無限ループ防止策を追加
     const win = simulateWithPolicy({ hands, trick, trickNo, active, points, voids: ctx.voids, playedCards: ctx.playedCards }, ctx.seat, ctx.contract, params);
     
     N[bestCard.id]++;
     W[bestCard.id] += win;
     iterations++;
   }
+  return { N, W, iterations };
+}
+
+// 既存の chooseCardWithMCTS は、getMCTSStats を使って最善手を選ぶようにリファクタリング
+export function chooseCardWithMCTS(ctx) {
+  const legal = ctx.legal;
+  if (!legal || legal.length <= 1) return legal[0];
+  
+  if (ctx.trickNo > 8 && Math.random() > 0.3) return chooseCardToPlay(ctx);
+  
+  const { N, W } = getMCTSStats(ctx);
   
   let bestCard = legal[0];
   let bestWinRate = -1;
   for (const c of legal) {
     const winRate = N[c.id] > 0 ? W[c.id] / N[c.id] : 0;
-    if (N[c.id] < 3) continue;
+    if (N[c.id] < 3) continue; // 探索回数が少なすぎる手は無視
     if (winRate > bestWinRate) { bestWinRate = winRate; bestCard = c; }
   }
   if (bestWinRate === -1) return chooseCardToPlay(ctx);
