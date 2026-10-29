@@ -2,8 +2,12 @@
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
 
-// ★ Web Workerを読み込む
-const aiWorker = new Worker('./ai-worker.js', { type: 'module' });
+// ★ CPUコア数に応じてWorkerプールを作成 (最大4つ)
+const numWorkers = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+const aiWorkers = [];
+for (let i = 0; i < numWorkers; i++) {
+  aiWorkers.push(new Worker('./ai-worker.js', { type: 'module' }));
+}
 
 const SUITS=['♣','♦','♥','♠'],SV={'♣':1,'♦':2,'♥':3,'♠':4,NT:5},RANKS=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],FACE=['10','J','Q','K','A'],POINT=['10','J','Q','K','A'],$=id=>document.getElementById(id);
 
@@ -804,7 +808,7 @@ function cardPower(entry,trick,trickNo=0,strictAllSame=false){
 }
 function winning(trick=g.trick,strictAllSame=false){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo,strictAllSame)>cardPower(best,trick,g.trickNo,strictAllSame)?e:best,trick[0])}
 
-// ★ 修正: Web Workerで計算する（タイムアウト・エラーフォールバック付き）
+// ★ 修正: Web Workerで計算する（並列マルチスレッド＋タイムアウトフォールバック）
 async function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
@@ -827,52 +831,92 @@ async function computeBotPlay(seat){
     } 
   }
   
-  // ★ Web Workerに計算を依頼する（タイムアウト付き）
+  // ★ 並列Workerに計算を依頼する
   return new Promise((resolve) => {
     let isResolved = false;
-    
-    // 万が一Workerが3秒応答しなければランダムでフォールバック
+    let completed = 0;
+    const results = [];
+    const handlers = [];
+
+    // 万が一全Workerが応答しなければ5秒でランダムフォールバック
     const timeoutTimer = setTimeout(() => {
       if (isResolved) return;
       isResolved = true;
-      aiWorker.removeEventListener('message', handler);
-      console.warn('[computeBotPlay] Worker timeout. Falling back to random.');
+      handlers.forEach(({worker, handler}) => worker.removeEventListener('message', handler));
+      console.warn('[computeBotPlay] All Workers timeout. Falling back to random.');
       const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
       resolve({ card: randomCard, source: 'タイムアウト(ランダム)' });
-    }, 3000);
+    }, 5000);
 
-    const handler = (e) => {
+    const handleAllResults = () => {
       if (isResolved) return;
-      if (e.data.type === 'result') {
-        isResolved = true;
-        clearTimeout(timeoutTimer);
-        aiWorker.removeEventListener('message', handler);
-        const chosen = legalCardsList.find(c => c.id === e.data.card.id);
-        resolve({ card: chosen || e.data.card, source: 'ローカル(Worker)' });
-      } else if (e.data.type === 'error') {
-        isResolved = true;
-        clearTimeout(timeoutTimer);
-        aiWorker.removeEventListener('message', handler);
-        console.warn('[computeBotPlay] Worker error:', e.data.error);
-        const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
-        resolve({ card: randomCard, source: 'ランダム(Workerエラー)' });
-      }
-    };
-    aiWorker.addEventListener('message', handler);
-    
-    // 時間制限（1.2秒）を渡す
-    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 1200 } };
-    
-    try {
-      aiWorker.postMessage({ type: 'calculate', ctx: workerCtx });
-    } catch (err) {
-      if (isResolved) return;
+      if (completed < aiWorkers.length) return;
+      
       isResolved = true;
       clearTimeout(timeoutTimer);
-      aiWorker.removeEventListener('message', handler);
-      const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
-      resolve({ card: randomCard, source: 'ランダム(postMessageエラー)' });
-    }
+      
+      // 結果のマージ
+      const mergedN = {};
+      const mergedW = {};
+      legalCardsList.forEach(c => { mergedN[c.id] = 0; mergedW[c.id] = 0; });
+      
+      let totalIterations = 0;
+      for (const res of results) {
+        if (!res || !res.N || !res.W) continue;
+        totalIterations += res.iterations || 0;
+        for (const c of legalCardsList) {
+          mergedN[c.id] += res.N[c.id] || 0;
+          mergedW[c.id] += res.W[c.id] || 0;
+        }
+      }
+      
+      // 最も勝率が高い手を選択
+      let bestCard = legalCardsList[0];
+      let bestWinRate = -1;
+      for (const c of legalCardsList) {
+        const winRate = mergedN[c.id] > 0 ? mergedW[c.id] / mergedN[c.id] : 0;
+        if (mergedN[c.id] < 5) continue; // 全体で探索回数が少なすぎる手は無視
+        if (winRate > bestWinRate) { bestWinRate = winRate; bestCard = c; }
+      }
+      
+      if (bestWinRate === -1) {
+        // 探索が足りない場合はルールベースでフォールバック
+        const fallback = chooseCardToPlay(ctx);
+        resolve({ card: fallback || legalCardsList[0], source: '並列MCTS(フォールバック)' });
+      } else {
+        resolve({ card: bestCard, source: `並列MCTS(${numWorkers}Threads)` });
+      }
+    };
+
+    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 3000 } };
+
+    aiWorkers.forEach((worker, index) => {
+      const handler = (e) => {
+        if (isResolved) return;
+        if (e.data.type === 'result') {
+          worker.removeEventListener('message', handler);
+          results.push(e.data.stats);
+          completed++;
+          handleAllResults();
+        } else if (e.data.type === 'error') {
+          worker.removeEventListener('message', handler);
+          console.warn('[computeBotPlay] Worker error:', e.data.error);
+          results.push(null);
+          completed++;
+          handleAllResults();
+        }
+      };
+      handlers.push({worker, handler});
+      worker.addEventListener('message', handler);
+      
+      try {
+        worker.postMessage({ type: 'calculate', ctx: workerCtx });
+      } catch (err) {
+        results.push(null);
+        completed++;
+        handleAllResults();
+      }
+    });
   });
 }
 
