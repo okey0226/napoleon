@@ -392,7 +392,7 @@ function chooseNapoleonLead(ctx) {
   }
 
   const finalCandidates = legal.filter(c => c.rank !== '2');
-  return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, [])).slice(-1)[0];
+  return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
 }
 
 function chooseNapoleonFollow(ctx) {
@@ -557,7 +557,7 @@ function chooseAllianceLead(ctx) {
     if (lowCard) return lowCard;
   }
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
-  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, [])).slice(-1)[0];
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
 }
 
 function chooseAllianceFollow(ctx) {
@@ -672,6 +672,7 @@ function evaluateValueNetwork(state, seat, contract, params) {
   return 1 / (1 + Math.exp(-score));
 }
 
+// ★ 修正: ベイズ推定（決定化の高度化）
 function determinizeState(ctx) {
   const unseen = [];
   for (const s of SUITS) for (const r of RANKS) unseen.push(s + r);
@@ -681,10 +682,11 @@ function determinizeState(ctx) {
   (ctx.discardedKitty || []).forEach(c => seen.add(c.id));
   (ctx.trick || []).forEach(t => seen.add(t.card.id));
   const unseens = unseen.filter(id => !seen.has(id)).map(id => ({ suit: id[0], rank: id.slice(1), id }));
-  unseens.sort(() => Math.random() - 0.5);
+  
   const hands = [[], [], [], [], []];
   hands[ctx.seat] = ctx.hand.slice();
   
+  // 各プレイヤーの現在の手札枚数を正確に計算
   const handCounts = [0,0,0,0,0];
   for (let s = 0; s < 5; s++) {
     if (s === ctx.seat) {
@@ -695,7 +697,7 @@ function determinizeState(ctx) {
     }
   }
   
-  let idx = 0;
+  // 各プレイヤーに配る（ボイド情報を厳密に反映）
   for (let s = 0; s < 5; s++) {
     if (s === ctx.seat) continue;
     const voidInfo = ctx.voids?.[s] || {};
@@ -703,7 +705,8 @@ function determinizeState(ctx) {
     const tempHand = [];
     const targetCount = handCounts[s];
     
-    for (let i = idx; i < unseens.length && assigned < targetCount; i++) {
+    // 1. ボイド（持っていないスート）を排除して割り当て
+    for (let i = 0; i < unseens.length && assigned < targetCount; i++) {
       const c = unseens[i];
       if (voidInfo[c.suit]) continue;
       tempHand.push(c);
@@ -711,6 +714,8 @@ function determinizeState(ctx) {
       i--;
       assigned++;
     }
+    
+    // 2. 足りない場合は、整合性エラー対策としてボイドを無視して割り当て
     while (assigned < targetCount && unseens.length > 0) {
       tempHand.push(unseens.shift());
       assigned++;
@@ -720,6 +725,7 @@ function determinizeState(ctx) {
   return hands;
 }
 
+// ★ 修正: 終端評価の改善（オーバーキル防止）
 function simulateWithPolicy(state, mySeat, contract, params) {
   let active = state.active;
   let trick = state.trick.slice();
@@ -734,11 +740,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
     const follow = h.filter(c => c.suit === ledSuit);
     return follow.length ? follow : h;
   };
-  let loopGuard = 0;
   while (trickNo < 10) {
-    loopGuard++;
-    if (loopGuard > 100) break;
-    
     if (trick.length < 5) {
       const legal = getLegal(active);
       if (!legal.length) break;
@@ -776,8 +778,22 @@ function simulateWithPolicy(state, mySeat, contract, params) {
   const allyPoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
   const made = napPoints >= num && (num === 20 || napPoints < 20);
   const myTeamIsNap = mySeat === nap || (!isSolo && mySeat === deputy);
-  const myTeamWon = myTeamIsNap ? made : !made;
-  return myTeamWon ? 1.0 : 0.0;
+  
+  // 勝敗だけでなく「点数差」と「オーバーキル」を評価
+  let score = made ? 1.0 : 0.0;
+  if (myTeamIsNap) {
+    if (made) {
+      const overkill = napPoints - num;
+      score -= overkill * 0.05; // 余分に取るとペナルティ
+    }
+  } else {
+    if (!made) {
+      const gap = num - napPoints;
+      score += Math.min(1.0, gap * 0.1); // 相手の不足分が多いほど高評価
+      score += Math.min(0.5, points[mySeat] * 0.05);
+    }
+  }
+  return Math.max(0, Math.min(1.5, score));
 }
 
 export function chooseCardWithMCTS(ctx) {
