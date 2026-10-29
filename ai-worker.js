@@ -1,13 +1,13 @@
-// ai-worker.js
-import { chooseCardWithMCTS } from './ai-tactics.js';
+// ai-worker.js (完全版)
+import { getMCTSStats } from './ai-tactics.js';
 
 self.onmessage = function(e) {
   const { type, ctx } = e.data;
   if (type === 'calculate') {
     try {
-      // 裏のスレッドで重い計算を実行（画面はフリーズしない）
-      const chosen = chooseCardWithMCTS(ctx);
-      self.postMessage({ type: 'result', card: chosen });
+      // 統計データを計算して返す
+      const stats = getMCTSStats(ctx);
+      self.postMessage({ type: 'result', stats });
     } catch (error) {
       self.postMessage({ type: 'error', error: error.message });
     }
