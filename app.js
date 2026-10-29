@@ -801,9 +801,12 @@ function cardPower(entry,trick,trickNo=0,strictAllSame=false){
 }
 function winning(trick=g.trick,strictAllSame=false){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo,strictAllSame)>cardPower(best,trick,g.trickNo,strictAllSame)?e:best,trick[0])}
 
+// ★ 修正: ローカル計算の確実なフォールバックと、最終手段のランダム選択を追加
 async function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
+  if(!legalCardsList.length) return { card: null, source: 'エラー(手札なし)' };
+
   const contract={nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,revealedCall:g.contract.revealedCall,call:g.contract.call};
   const trick=g.trick.map(x=>({seat:x.player,card:x.card}));
   const deputyPts=(!g.contract.solo&&g.contract.deputy>=0)?(g.points[g.contract.deputy]||0):0;
@@ -829,7 +832,7 @@ async function computeBotPlay(seat){
     try {
       message(name(seat) + 'が思考中（サーバー）...');
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1000); // ★ 1000ms(1秒)に短縮
+      const timeoutId = setTimeout(() => controller.abort(), 800); // ★ タイムアウトを0.8秒に短縮
       
       const res = await fetch(`${serverUrl}/api/com-calculate`, {
         method: 'POST',
@@ -857,11 +860,15 @@ async function computeBotPlay(seat){
     const localCtx = { ...ctx };
     localCtx.params = { ...ctx.params, mctsSimulations: 40 };
     const chosen = chooseCardWithMCTS(localCtx);
-    return { card: chosen, source: 'ローカル' };
+    if (chosen) return { card: chosen, source: 'ローカル' };
   }catch(e){
     addDebugLog('chooseCardWithMCTS-error',{seat,message:e?.message,stack:e?.stack});
-    return { card: null, source: 'エラー' };
   }
+  
+  // ★ 最終手段: ローカル計算すら失敗した場合はランダムに出す
+  console.warn("Fallback to random card due to total failure.");
+  const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
+  return { card: randomCard, source: 'ランダム(緊急)' };
 }
 
 function playTurn(){
