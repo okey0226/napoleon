@@ -2,7 +2,6 @@
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, matchRatingChanges, computeEloDelta, ELO_INIT } from './constants.js';
-// ★修正1: chooseCardWithMCTS をインポートに追加
 import { winningEntry, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, strongestSuit, chooseSoloCall, colorStrength, ntHandStrength, chooseCardWithMCTS } from './ai-tactics.js';
 
 const conns = new Map();
@@ -444,7 +443,7 @@ function timeoutAction(m, room) {
   }
 }
 
-// ★修正2: CORS許可と推論APIの追加
+// ★ 修正: CORS許可と推論APIの追加
 const server = http.createServer((req, res) => {
   // ブラウザからのAPIアクセスを許可するCORSヘッダー
   res.setHeader('Access-Control-Allow-Origin', '*');
