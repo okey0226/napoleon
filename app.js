@@ -804,7 +804,7 @@ function cardPower(entry,trick,trickNo=0,strictAllSame=false){
 }
 function winning(trick=g.trick,strictAllSame=false){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo,strictAllSame)>cardPower(best,trick,g.trickNo,strictAllSame)?e:best,trick[0])}
 
-// ★ 修正: Web Workerで計算する
+// ★ 修正: Web Workerで計算する（タイムアウト・エラーフォールバック付き）
 async function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
@@ -827,24 +827,52 @@ async function computeBotPlay(seat){
     } 
   }
   
-  // ★ Web Workerに計算を依頼する
+  // ★ Web Workerに計算を依頼する（タイムアウト付き）
   return new Promise((resolve) => {
+    let isResolved = false;
+    
+    // 万が一Workerが3秒応答しなければランダムでフォールバック
+    const timeoutTimer = setTimeout(() => {
+      if (isResolved) return;
+      isResolved = true;
+      aiWorker.removeEventListener('message', handler);
+      console.warn('[computeBotPlay] Worker timeout. Falling back to random.');
+      const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
+      resolve({ card: randomCard, source: 'タイムアウト(ランダム)' });
+    }, 3000);
+
     const handler = (e) => {
+      if (isResolved) return;
       if (e.data.type === 'result') {
+        isResolved = true;
+        clearTimeout(timeoutTimer);
         aiWorker.removeEventListener('message', handler);
         const chosen = legalCardsList.find(c => c.id === e.data.card.id);
         resolve({ card: chosen || e.data.card, source: 'ローカル(Worker)' });
       } else if (e.data.type === 'error') {
+        isResolved = true;
+        clearTimeout(timeoutTimer);
         aiWorker.removeEventListener('message', handler);
-        // エラー時はランダム
+        console.warn('[computeBotPlay] Worker error:', e.data.error);
         const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
-        resolve({ card: randomCard, source: 'ランダム(緊急)' });
+        resolve({ card: randomCard, source: 'ランダム(Workerエラー)' });
       }
     };
     aiWorker.addEventListener('message', handler);
-    // 時間制限付きMCTSを実行するためmaxThinkTimeMsを渡す
-    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 1500 } };
-    aiWorker.postMessage({ type: 'calculate', ctx: workerCtx });
+    
+    // 時間制限（1.2秒）を渡す
+    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 1200 } };
+    
+    try {
+      aiWorker.postMessage({ type: 'calculate', ctx: workerCtx });
+    } catch (err) {
+      if (isResolved) return;
+      isResolved = true;
+      clearTimeout(timeoutTimer);
+      aiWorker.removeEventListener('message', handler);
+      const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
+      resolve({ card: randomCard, source: 'ランダム(postMessageエラー)' });
+    }
   });
 }
 
