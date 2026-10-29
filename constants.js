@@ -44,8 +44,8 @@ export const defaultStrategy = () => ({
   
   // 最強化パラメータ（MCTS・チーム連携）
   teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
-  // ★ 修正: シミュレーション回数を 40 から 300 に増やす
-  mctsSimulations: 300, mctsExploration: 1.414, handInferenceWeight: 0.5,
+  // ★ 修正: シミュレーション回数を 150 に設定
+  mctsSimulations: 150, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   
   // ★ 追加: NT専用戦略パラメータ
