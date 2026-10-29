@@ -1,3 +1,4 @@
+// ai-tactics.js (完全版)
 import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, HONEST_BID_FIXED_BONUS, ALLY_LOSS_PENALTY, ALLY_WIN_BONUS, ALLY_BLOCK_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy, quantizeStrength, bidExperienceKey, callExperienceKey, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 const FACE = ['10', 'J', 'Q', 'K', 'A'];
@@ -319,7 +320,6 @@ function chooseNapoleonLead(ctx) {
   const isNT = contract.suit === 'NT';
 
   if (isNT) {
-    // ★ NT専用ロジック: マイティの温存
     const mighty = legal.find(c => c.id === '♠A');
     const hqPlayed = playedCards.some(c => c.id === '♥Q');
     const hqInDiscard = (discardedKitty || []).some(c => c.id === '♥Q');
@@ -337,7 +337,6 @@ function chooseNapoleonLead(ctx) {
 
     if (mighty && isMightySafe) return mighty;
 
-    // NTでのセイム2リード（中盤以降）
     if (trickNo > 0 && trickNo <= 4) {
       const freshTwos = legal.filter(c => c.rank === '2' && !playedCards.some(pc => pc.suit === c.suit));
       if (freshTwos.length) return freshTwos[0];
@@ -393,7 +392,7 @@ function chooseNapoleonLead(ctx) {
   }
 
   const finalCandidates = legal.filter(c => c.rank !== '2');
-  return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, [])).slice(-1)[0];
 }
 
 function chooseNapoleonFollow(ctx) {
@@ -511,7 +510,6 @@ function chooseAllianceLead(ctx) {
   const isNT = contract.suit === 'NT';
 
   if (isNT) {
-    // ★ NT専用ロジック: ナポレオンのボイドを突く
     const napVoidSuits = SUITS.filter(s => voids[contract.nap]?.[s]);
     if (napVoidSuits.length > 0) {
       const exploitSuit = napVoidSuits[0];
@@ -520,12 +518,8 @@ function chooseAllianceLead(ctx) {
         return exploitCards.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
       }
     }
-
-    // 自分の強いスート（Aなど）からリード
     const myAces = legal.filter(c => c.rank === 'A');
     if (myAces.length) return myAces[0];
-
-    // 味方（連合軍）が勝ちやすいスートを探す
     const allyWinningSuit = SUITS.find(s => s !== contract.suit && !voids[seat]?.[s]);
     if (allyWinningSuit) {
       const lowCards = legal.filter(c => c.suit === allyWinningSuit && !isFace(c));
@@ -563,7 +557,7 @@ function chooseAllianceLead(ctx) {
     if (lowCard) return lowCard;
   }
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
-  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []))[0];
+  return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, [])).slice(-1)[0];
 }
 
 function chooseAllianceFollow(ctx) {
@@ -642,7 +636,7 @@ export function chooseCardToPlay(ctx) {
 }
 
 // ==========================================
-// 11. MCTS & 推測
+// MCTS & 推測
 // ==========================================
 function getUnseenCards(ctx) {
   const allIds = [];
@@ -690,15 +684,26 @@ function determinizeState(ctx) {
   unseens.sort(() => Math.random() - 0.5);
   const hands = [[], [], [], [], []];
   hands[ctx.seat] = ctx.hand.slice();
-  const remainingTricks = 10 - ctx.trickNo;
-  let cardsPerPlayer = ctx.trick.length > 0 ? remainingTricks : remainingTricks;
+  
+  const handCounts = [0,0,0,0,0];
+  for (let s = 0; s < 5; s++) {
+    if (s === ctx.seat) {
+      handCounts[s] = ctx.hand.length;
+    } else {
+      const hasPlayed = ctx.trick.some(t => t.seat === s);
+      handCounts[s] = 10 - ctx.trickNo - (hasPlayed ? 1 : 0);
+    }
+  }
+  
   let idx = 0;
   for (let s = 0; s < 5; s++) {
     if (s === ctx.seat) continue;
     const voidInfo = ctx.voids?.[s] || {};
     let assigned = 0;
     const tempHand = [];
-    for (let i = idx; i < unseens.length && assigned < cardsPerPlayer; i++) {
+    const targetCount = handCounts[s];
+    
+    for (let i = idx; i < unseens.length && assigned < targetCount; i++) {
       const c = unseens[i];
       if (voidInfo[c.suit]) continue;
       tempHand.push(c);
@@ -706,7 +711,7 @@ function determinizeState(ctx) {
       i--;
       assigned++;
     }
-    while (assigned < cardsPerPlayer && unseens.length > 0) {
+    while (assigned < targetCount && unseens.length > 0) {
       tempHand.push(unseens.shift());
       assigned++;
     }
@@ -729,10 +734,15 @@ function simulateWithPolicy(state, mySeat, contract, params) {
     const follow = h.filter(c => c.suit === ledSuit);
     return follow.length ? follow : h;
   };
+  let loopGuard = 0;
   while (trickNo < 10) {
+    loopGuard++;
+    if (loopGuard > 100) break;
+    
     if (trick.length < 5) {
       const legal = getLegal(active);
       if (!legal.length) break;
+      
       let chosen = null;
       if (Math.random() < (params.rolloutPolicyWeight ?? 0.8)) {
         const playCtx = { seat: active, contract, legal, hand: hands[active], trick, trickNo, playedCards: state.playedCards || [], voids, params, isCurrentNapWinning: false };
