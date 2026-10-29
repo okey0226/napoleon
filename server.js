@@ -1,7 +1,9 @@
+// server.js (完全版)
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, matchRatingChanges, computeEloDelta, ELO_INIT } from './constants.js';
-import { winningEntry, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, strongestSuit, chooseSoloCall, colorStrength, ntHandStrength } from './ai-tactics.js';
+// ★修正1: chooseCardWithMCTS をインポートに追加
+import { winningEntry, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardToPlay, chooseDeputyCard, strongestSuit, chooseSoloCall, colorStrength, ntHandStrength, chooseCardWithMCTS } from './ai-tactics.js';
 
 const conns = new Map();
 const matches = new Map();
@@ -223,7 +225,6 @@ function auctionDone(m, seat, room) {
 function startPlay(m, room) {
   const c = m.contract;
   if (!c) return;
-  // ★修正: 捨て札が未完了（手札12枚）の場合はdiscardフェーズに戻す
   if (m.seats[c.nap].hand.length > 10) {
     m.phase = "discard"; m.active = c.nap; m.deadline = Date.now() + 30000;
     m.notice = "捨て札が完了していません。2枚捨ててください。";
@@ -238,7 +239,7 @@ function startPlay(m, room) {
 }
 
 function beginDiscard(m, seat, room) {
-  if (m.phase === "discard" && m.active === seat) return; // ★修正: 二重呼び出し防止
+  if (m.phase === "discard" && m.active === seat) return;
   m.seats[seat].hand.push(...m.kitty); m.kitty = []; sortHand(m.seats[seat].hand);
   m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room);
@@ -312,7 +313,7 @@ async function finish(m, room, env) {
   m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000; m.humanAutoPlayAt = null; m.botThinkAt = 0;
   m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
-  
+
   publish(m, room); matches.delete(m.id);
   for (const seat of m.seats) { if (seat.connId) connMatch.delete(seat.connId); const userId = seat.player.userId; if (userId && rankedUsers.get(userId) === seat.originalConnId) rankedUsers.delete(userId); }
 }
@@ -443,16 +444,55 @@ function timeoutAction(m, room) {
   }
 }
 
+// ★修正2: CORS許可と推論APIの追加
 const server = http.createServer((req, res) => {
-  if (req.url === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('OK'); return; }
+  // ブラウザからのAPIアクセスを許可するCORSヘッダー
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // プリフライトリクエスト（OPTIONS）の処理
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.url === '/healthz') { 
+    res.writeHead(200, { 'content-type': 'text/plain' }); 
+    res.end('OK'); 
+    return; 
+  }
+
+  // ★追加: COM思考APIエンドポイント
+  if (req.method === 'POST' && req.url === '/api/com-calculate') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const ctx = JSON.parse(body);
+        if (!ctx.params) ctx.params = defaultStrategy();
+        
+        // サーバーのパワーでMCTSを実行
+        const chosen = chooseCardWithMCTS(ctx);
+        
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ cardId: chosen ? chosen.id : null }));
+      } catch (e) {
+        console.error('COM Calculate Error:', e);
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/api/ai/teach') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
-        // DBがない場合はメモリ上に保持するか、あるいはスキップ
-        // ローカルで動かしている場合、DBがないので学習は機能しないが、エラーにならないようにする
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (e) {
