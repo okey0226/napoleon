@@ -1,6 +1,6 @@
 // ===== [app.js 完全版 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
-import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay } from './ai-tactics.js';
 
 // ★ CPUコア数に応じてWorkerプールを作成 (最大4つ)
 const numWorkers = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
@@ -872,14 +872,23 @@ async function computeBotPlay(seat){
       
       // 最も勝率が高い手を選択
       let bestCard = legalCardsList[0];
-      let bestWinRate = -1;
+      let bestScore = -1;
+      
       for (const c of legalCardsList) {
-        const winRate = mergedN[c.id] > 0 ? mergedW[c.id] / mergedN[c.id] : 0;
-        if (mergedN[c.id] < 5) continue; // 全体で探索回数が少なすぎる手は無視
-        if (winRate > bestWinRate) { bestWinRate = winRate; bestCard = c; }
+        if (mergedN[c.id] === 0) continue;
+        
+        const winRate = mergedW[c.id] / mergedN[c.id];
+        // ★ 信頼度（探索回数）を加味したスコア。多く探索された手を少し優遇する
+        const confidence = Math.min(1.0, mergedN[c.id] / (totalIterations / legalCardsList.length));
+        const adjustedScore = winRate * (0.8 + 0.2 * confidence); 
+        
+        if (adjustedScore > bestScore) {
+          bestScore = adjustedScore;
+          bestCard = c;
+        }
       }
       
-      if (bestWinRate === -1) {
+      if (bestScore === -1) {
         // 探索が足りない場合はルールベースでフォールバック
         const fallback = chooseCardToPlay(ctx);
         resolve({ card: fallback || legalCardsList[0], source: '並列MCTS(フォールバック)' });
