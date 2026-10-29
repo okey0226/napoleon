@@ -146,10 +146,12 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
   const isNapSide = seat === nap || (!solo && seat === deputy);
   let score = 0;
   if (isNapSide) {
-    score += won ? (1.0 + (num - 13) * 0.1) : -(1.0 + (num - 13) * 0.1);
+    // ★ NAPO側の勝利報酬を大きく、敗北ペナルティを小さくする
+    score += won ? (1.5 + (num - 13) * 0.15) : -(0.8 + (num - 13) * 0.1);
     score += (takenPoints[seat] || 0) * 0.05;
   } else {
-    score += !won ? (1.0 + (num - 13) * 0.1) : -1.0;
+    // ★ 連合軍側の勝利報酬を小さく、敗北ペナルティを大きくする
+    score += !won ? (0.8 + (num - 13) * 0.1) : -1.2;
     score += (takenPoints[seat] || 0) * 0.05;
   }
   return Math.max(-3, Math.min(3, score)) * weight;
