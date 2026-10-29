@@ -231,6 +231,7 @@ function sendRoundLearn(wonRound) {
 }
 
 function startLocal(){
+  // ★ 修正: オンライン状態を完全にクリア
   g.onlineState = null;
   g.room = null;
   g.online = null;
@@ -801,7 +802,8 @@ function cardPower(entry,trick,trickNo=0,strictAllSame=false){
 }
 function winning(trick=g.trick,strictAllSame=false){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo,strictAllSame)>cardPower(best,trick,g.trickNo,strictAllSame)?e:best,trick[0])}
 
-function computeBotPlay(seat){
+// ★ 修正: 非同期にしてサーバーAPIを叩く
+async function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
   const contract={nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,revealedCall:g.contract.revealedCall,call:g.contract.call};
@@ -820,6 +822,36 @@ function computeBotPlay(seat){
       ctx.isNapLeading=trick[0].seat===contract.nap;
     } 
   }
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4秒でタイムアウト
+    
+    const serverUrl = window.NAPOLEON_WS_URL 
+      ? window.NAPOLEON_WS_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/ws$/, '') 
+      : '';
+      
+    if (!serverUrl) throw new Error('Server URL not found');
+
+    const res = await fetch(`${serverUrl}/api/com-calculate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(ctx),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error('Server error');
+    const data = await res.json();
+    if (data.cardId) {
+      const chosen = legalCardsList.find(c => c.id === data.cardId);
+      if (chosen) return chosen;
+    }
+  } catch(e) {
+    console.warn('[COM API] Server calculation failed, falling back to local:', e.message);
+  }
+  
+  // ★ フォールバック: サーバーが落ちている・タイムアウトした場合はローカル計算
   try{
     return chooseCardWithMCTS(ctx);
   }catch(e){
@@ -856,7 +888,8 @@ function playTurn(){
   const seatAtSchedule = g.active;
   const trickLengthAtSchedule = g.trick.length;
 
-  later(()=>{
+  // ★ 修正: async で await する
+  later(async ()=>{
     if (g.phase !== 'play' || g.active !== seatAtSchedule || g.trick.length !== trickLengthAtSchedule) return;
 
     try{
@@ -866,8 +899,13 @@ function playTurn(){
       const legalCardsList=legal(seat);
       if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+4)%5;playTurn();return}
       
-      const chosen=computeBotPlay(seat);
-      if(chosen&&legalCardsList.some(x=>x.id===chosen.id)){ logPlayDecision(seat,chosen,{reason:'ai-tactics'},buildPlayContext(seat)); play(seat,chosen); }
+      // サーバーAPIからの計算結果を待つ
+      const chosen = await computeBotPlay(seat);
+      
+      // 計算中にフェーズが変わっていたら中断
+      if (g.phase !== 'play' || g.active !== seat) return;
+
+      if(chosen&&legalCardsList.some(x=>x.id===chosen.id)){ logPlayDecision(seat,chosen,{reason:'ai-tactics-api'},buildPlayContext(seat)); play(seat,chosen); }
       else{ const fallback=legalCardsList[Math.floor(Math.random()*legalCardsList.length)]; addDebugLog('play-fallback-random',{seat,expected:chosen?.id||null,fallback:fallback.id,legalIds:legalCardsList.map(x=>x.id)}); play(seat,fallback); }
     }catch(e){
       console.error("Bot Error:",e);
@@ -926,11 +964,8 @@ function play(i,c){
   $('trick-cards')?.append(cardEl(c,'trick-card played-seat-'+i));
   
   if(g.trick.length<5){
-    let next = (i+4)%5;
-    while(g.trick.some(t => t.player === next)) {
-      next = (next+4)%5;
-    }
-    g.active = next;
+    // ★修正: 時計回り (i+4)%5 に変更
+    g.active=(i+4)%5;
     playTurn();
     return
   }
