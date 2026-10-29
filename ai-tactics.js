@@ -801,20 +801,28 @@ export function chooseCardWithMCTS(ctx) {
   if (!legal || legal.length <= 1) return legal[0];
   const params = ctx.params || defaultStrategy();
   if (ctx.trickNo > 8 && Math.random() > 0.3) return chooseCardToPlay(ctx);
+  
   const N = {};
   const W = {};
   legal.forEach(c => { N[c.id] = 0; W[c.id] = 0; });
-  const maxIterations = params.mctsSimulations || 40;
+  
   const cParam = params.mctsExploration || 1.414;
-  for (let i = 0; i < maxIterations; i++) {
+  const startTime = Date.now();
+  const maxTimeMs = params.maxThinkTimeMs || 1500; // デフォルト1.5秒
+  
+  let iterations = 0;
+  while (iterations < 10000) {
+    if (Date.now() - startTime > maxTimeMs) break;
+
     let bestCard = null;
     let bestUcb = -Infinity;
     for (const card of legal) {
       if (N[card.id] === 0) { bestCard = card; break; }
-      const ucb = W[card.id] / N[card.id] + cParam * Math.sqrt(Math.log(i + 1) / N[card.id]);
+      const ucb = W[card.id] / N[card.id] + cParam * Math.sqrt(Math.log(iterations + 1) / N[card.id]);
       if (ucb > bestUcb) { bestUcb = ucb; bestCard = card; }
     }
     if (!bestCard) bestCard = legal[0];
+    
     const hands = determinizeState(ctx);
     let trick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
     hands[ctx.seat] = hands[ctx.seat].filter(c => c.id !== bestCard.id);
@@ -823,9 +831,12 @@ export function chooseCardWithMCTS(ctx) {
     let trickNo = ctx.trickNo;
     const points = ctx.points ? ctx.points.slice() : [0,0,0,0,0];
     const win = simulateWithPolicy({ hands, trick, trickNo, active, points, voids: ctx.voids, playedCards: ctx.playedCards }, ctx.seat, ctx.contract, params);
+    
     N[bestCard.id]++;
     W[bestCard.id] += win;
+    iterations++;
   }
+  
   let bestCard = legal[0];
   let bestWinRate = -1;
   for (const c of legal) {
