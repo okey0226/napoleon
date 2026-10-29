@@ -123,15 +123,19 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const currentBids = (bidHistory || []).filter(b => b && b.round === currentRound);
   const targetMin = Math.max(minBid, (currentHigh?.num ?? 12) + 1, 13);
   const candidates = [];
+  
+  // ★ 修正: 最低勝率の基準を引き上げ、無理な立ちを抑制する
   const isBidViable = (num, p) => {
-    if (num >= 19 && p < 0.65) return false;
-    if (num >= 18 && p < 0.60) return false;
-    if (num >= 17 && p < 0.55) return false;
-    if (num >= 16 && p < 0.50) return false;
-    if (num >= 15 && p < 0.45) return false;
-    if (num >= 14 && p < 0.40) return false;
+    if (p < 0.48) return false; // 勝率48%未満はビッドしない
+    if (num >= 19 && p < 0.72) return false;
+    if (num >= 18 && p < 0.66) return false;
+    if (num >= 17 && p < 0.60) return false;
+    if (num >= 16 && p < 0.55) return false;
+    if (num >= 15 && p < 0.50) return false;
+    if (num >= 14 && p < 0.48) return false;
     return true;
   };
+  
   const SUIT_ORDER = SUITS.slice().sort(() => Math.random() - 0.5);
   for (const suit of SUIT_ORDER) {
     const cs = colorStrength(hand, suit, params);
@@ -638,6 +642,8 @@ export function chooseCardToPlay(ctx) {
 // ==========================================
 // MCTS & 推測
 // ==========================================
+
+// ★ 修正: ベイズ推定（決定化の高度化）
 function determinizeState(ctx) {
   const unseen = [];
   for (const s of SUITS) for (const r of RANKS) unseen.push(s + r);
@@ -668,15 +674,25 @@ function determinizeState(ctx) {
     const tempHand = [];
     const targetCount = handCounts[s];
     
+    // 1. ボイド（持っていないスート）を排除して割り当て
     for (let i = 0; i < unseens.length && assigned < targetCount; i++) {
       const c = unseens[i];
       if (voidInfo[c.suit]) continue;
-      tempHand.push(c);
-      unseens.splice(i, 1);
-      i--;
-      assigned++;
+      
+      // ★ 高度化: 過去のプレイ履歴からそのスートを好むか/避けるかの推測を追加
+      let weight = 1.0;
+      const playedInSuit = (ctx.playedCards || []).filter(pc => pc.seat === s && pc.suit === c.suit).length;
+      if (playedInSuit === 0 && ctx.trickNo > 3) weight = 0.8; // 終盤まで出していないスートは持っていない可能性が少し高い
+      
+      if (Math.random() < weight) {
+        tempHand.push(c);
+        unseens.splice(i, 1);
+        i--;
+        assigned++;
+      }
     }
     
+    // 2. 足りない場合は、整合性エラー対策としてボイドを無視して割り当て
     while (assigned < targetCount && unseens.length > 0) {
       tempHand.push(unseens.shift());
       assigned++;
@@ -686,6 +702,7 @@ function determinizeState(ctx) {
   return hands;
 }
 
+// ★ 修正: MCTSの終端評価をリッチにする
 function simulateWithPolicy(state, mySeat, contract, params) {
   let active = state.active;
   let trick = state.trick.slice();
@@ -705,7 +722,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
   let loopSafety = 0;
   while (trickNo < 10) {
     loopSafety++;
-    if (loopSafety > 100) break;
+    if (loopSafety > 100) break; // 万が一の無限ループを防止
 
     if (trick.length < 5) {
       const legal = getLegal(active);
@@ -746,22 +763,60 @@ function simulateWithPolicy(state, mySeat, contract, params) {
   const nap = contract.nap, deputy = contract.deputy, isSolo = contract.solo, num = contract.num;
   const napPoints = points[nap] + (isSolo ? 0 : points[deputy]);
   const allyPoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
+  
+  // 勝敗判定
   const made = napPoints >= num && (num === 20 || napPoints < 20);
   const myTeamIsNap = mySeat === nap || (!isSolo && mySeat === deputy);
   
-  let score = made ? 1.0 : 0.0;
+  // ★ リッチな報酬計算
+  let score = 0;
+  
   if (myTeamIsNap) {
     if (made) {
+      // 勝利した場合
+      score = 1.0;
       const overkill = napPoints - num;
-      score -= overkill * 0.05;
+      // 取りすぎ（オーバーキル）のペナルティ。ただし、相手に点数を渡さないための取りすぎは許容する
+      if (overkill > 0 && num < 20) {
+        const allyGap = 20 - allyPoints;
+        if (allyGap <= 2) {
+          // 連合軍がギリギリの点数しか持っていない場合、取るのは正解
+          score -= overkill * 0.01;
+        } else {
+          // 連合軍に余裕がある場合、取りすぎると他の札を取れなくなるリスク
+          score -= overkill * 0.05;
+        }
+      }
+      // 余裕を持って勝てたボーナス（宣言枚数が少ないほど、きっちり取れているか）
+      if (num < 20 && napPoints === num) score += 0.1; 
+    } else {
+      // 敗北した場合
+      score = 0.0;
+      const gap = num - napPoints;
+      // あと少しで勝てた（惜しい）場合は部分点を与える
+      score += Math.max(0, 0.5 - gap * 0.1);
+      // 得点札を多く取れている場合は評価
+      score += Math.min(0.2, napPoints * 0.02);
     }
   } else {
+    // 連合軍側
     if (!made) {
+      // 勝利した場合
+      score = 1.0;
       const gap = num - napPoints;
-      score += Math.min(1.0, gap * 0.1);
-      score += Math.min(0.5, points[mySeat] * 0.05);
+      // 相手の宣言枚数から大きく引き離して勝てた場合はボーナス
+      if (gap >= 3) score += 0.1;
+      // 自分が得点札を取れている場合はボーナス
+      score += Math.min(0.2, points[mySeat] * 0.05);
+    } else {
+      // 敗北した場合
+      score = 0.0;
+      const overkill = napPoints - num;
+      // 相手にオーバーキルさせた（ギリギリまで追い詰めた）場合は部分点
+      if (overkill === 0 && allyPoints >= 2) score += 0.3; 
     }
   }
+  
   return Math.max(0, Math.min(1.5, score));
 }
 
