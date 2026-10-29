@@ -1,3 +1,4 @@
+// constants.js (完全版)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -43,7 +44,8 @@ export const defaultStrategy = () => ({
   
   // 最強化パラメータ（MCTS・チーム連携）
   teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
-  mctsSimulations: 40, mctsExploration: 1.414, handInferenceWeight: 0.5,
+  // ★ 修正: シミュレーション回数を 40 から 300 に増やす
+  mctsSimulations: 300, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   
   // ★ 追加: NT専用戦略パラメータ
@@ -173,7 +175,7 @@ export const PARAM_BOUNDS = {
   nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
   allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10],
   teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
-  mctsSimulations: [10, 100], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
+  mctsSimulations: [10, 1000], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
   rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
   // ★ NT専用バウンド
   ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
