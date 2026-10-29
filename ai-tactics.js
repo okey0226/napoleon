@@ -725,7 +725,7 @@ function determinizeState(ctx) {
   return hands;
 }
 
-// ★ 修正: 終端評価の改善（オーバーキル防止）
+// ★ 修正: 終端評価の改善（オーバーキル防止）＋無限ループ防止の安全弁追加
 function simulateWithPolicy(state, mySeat, contract, params) {
   let active = state.active;
   let trick = state.trick.slice();
@@ -733,6 +733,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
   let hands = state.hands.map(h => h.slice());
   let points = state.points.slice();
   let voids = JSON.parse(JSON.stringify(state.voids || [{},{},{},{},{}]));
+  
   const getLegal = (seat) => {
     const h = hands[seat];
     if (!trick.length) return h;
@@ -740,7 +741,12 @@ function simulateWithPolicy(state, mySeat, contract, params) {
     const follow = h.filter(c => c.suit === ledSuit);
     return follow.length ? follow : h;
   };
+  
+  let loopSafety = 0; // ★ 安全弁
   while (trickNo < 10) {
+    loopSafety++;
+    if (loopSafety > 100) break; // 万が一の無限ループを防止
+
     if (trick.length < 5) {
       const legal = getLegal(active);
       if (!legal.length) break;
@@ -752,6 +758,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
       }
       if (!chosen) chosen = legal[Math.floor(Math.random() * legal.length)];
       hands[active] = hands[active].filter(c => c.id !== chosen.id);
+      
       if (trick.length > 0) {
         const ledSuit = trick[0].card.suit;
         if (chosen.suit !== ledSuit) {
@@ -759,7 +766,9 @@ function simulateWithPolicy(state, mySeat, contract, params) {
           voids[active][ledSuit] = true;
         }
       }
+      
       trick.push({ seat: active, card: chosen });
+      
       if (trick.length === 5) {
         const wEntry = winningEntry(contract, trickNo, trick);
         const w = wEntry.seat;
@@ -773,6 +782,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
       }
     }
   }
+  
   const nap = contract.nap, deputy = contract.deputy, isSolo = contract.solo, num = contract.num;
   const napPoints = points[nap] + (isSolo ? 0 : points[deputy]);
   const allyPoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
@@ -808,7 +818,8 @@ export function chooseCardWithMCTS(ctx) {
   
   const cParam = params.mctsExploration || 1.414;
   const startTime = Date.now();
-  const maxTimeMs = params.maxThinkTimeMs || 1500; // デフォルト1.5秒
+  // デフォルトを 1200ms に設定（スマホの負荷軽減）
+  const maxTimeMs = params.maxThinkTimeMs || 1200;
   
   let iterations = 0;
   while (iterations < 10000) {
@@ -830,6 +841,8 @@ export function chooseCardWithMCTS(ctx) {
     let active = (ctx.seat + 4) % 5;
     let trickNo = ctx.trickNo;
     const points = ctx.points ? ctx.points.slice() : [0,0,0,0,0];
+    
+    // simulateWithPolicy 内に無限ループ防止策を追加
     const win = simulateWithPolicy({ hands, trick, trickNo, active, points, voids: ctx.voids, playedCards: ctx.playedCards }, ctx.seat, ctx.contract, params);
     
     N[bestCard.id]++;
