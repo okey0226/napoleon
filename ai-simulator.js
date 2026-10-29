@@ -1,3 +1,4 @@
+// ai-simulator.js (完全版)
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, crossoverStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
@@ -168,6 +169,11 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       else if (placement[seat] === 2) matchRating += RANK_2_BONUS;
       else if (placement[seat] === 4) matchRating += RANK_4_PENALTY;
       else if (placement[seat] === 5) matchRating += RANK_5_PENALTY;
+      
+      // ★ 追加: NAPOとして規定枚数を達成した場合、追加のボーナスを与える
+      const napWins = contracts.filter(c => c.nap === seat && c.made).length;
+      matchRating += napWins * 3.0; // NAPO勝利への強いインセンティブ
+
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
   }
