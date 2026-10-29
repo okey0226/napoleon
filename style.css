@@ -585,7 +585,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .game-screen.auctioning .center-table{position:relative !important;top:auto !important;left:auto !important;transform:none !important;width:100% !important;height:auto !important;margin:0 !important;display:flex !important;flex-direction:column !important;align-items:center !important}
   .game-screen.auctioning .trick-cards,
   .game-screen.auctioning .center-caption{display:none !important}
-  .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important;margin-top:80px !important;margin-bottom:20px !important}
+  .game-screen.auctioning .kitty-view{position:relative !important;display:flex !important;justify-content:center !important;z-index:5 !important;order:-1 !important;margin-top:10px !important;margin-bottom:15px !important}
 
   .action-panel:not(#auction-panel){position:absolute !important;bottom:120px !important;top:auto !important;left:50% !important;transform:translateX(-50%) !important;width:94% !important;max-width:400px !important;padding:12px 14px !important;margin:0 !important;z-index:40 !important;background:rgba(9,26,22,.98) !important;border:1px solid rgba(225,188,112,.45) !important;border-radius:10px !important;box-shadow:0 4px 15px rgba(0,0,0,.6) !important}
 
@@ -1440,3 +1440,11 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 .training-game .hand .card.playable { cursor: pointer; outline: 1px solid rgba(225,188,112,.5); }
 .training-game .hand .card.playable:hover { transform: translateY(-10px); }
+
+/* ============================================================
+   ▼ 競り（オークション）パネルのスクロール対応
+   ============================================================ */
+#auction-panel {
+  max-height: min(65dvh, 550px);
+  overflow-y: auto;
+}
