@@ -231,7 +231,6 @@ function sendRoundLearn(wonRound) {
 }
 
 function startLocal(){
-  // ★ 修正: オンライン状態を完全にクリア
   g.onlineState = null;
   g.room = null;
   g.online = null;
@@ -291,7 +290,7 @@ function startLocal(){
 }
 
 function roundStart(){
-  clearTimers();clearTimeout(g.auction?.humanTimeout);clearTimeout(g.trickResetTimer);
+  clearTimers();clearTimeout(g.auction?.humanTimeout);
   clearInterval(g.autoNextTimer);
   g.waitingAutoPlay=false;
   g.active=-1;
@@ -858,7 +857,6 @@ function playTurn(){
   const trickLengthAtSchedule = g.trick.length;
 
   later(()=>{
-    // フェーズや手番が変わっていたら何もしない（次の playTurn を待つ）
     if (g.phase !== 'play' || g.active !== seatAtSchedule || g.trick.length !== trickLengthAtSchedule) return;
 
     try{
@@ -928,7 +926,11 @@ function play(i,c){
   $('trick-cards')?.append(cardEl(c,'trick-card played-seat-'+i));
   
   if(g.trick.length<5){
-    g.active=(i+4)%5; // 反時計回り
+    let next = (i+4)%5;
+    while(g.trick.some(t => t.player === next)) {
+      next = (next+4)%5;
+    }
+    g.active = next;
     playTurn();
     return
   }
@@ -972,7 +974,7 @@ function play(i,c){
   const expectedTrickNo = g.trickNo;
   g.trickResetTimer = setTimeout(()=>{
     g.trickResetTimer = null;
-    if (g.phase !== 'trick-end' || g.trickNo !== expectedTrickNo) return; // 既に次に進んでいたらスキップ
+    if (g.phase !== 'trick-end' || g.trickNo !== expectedTrickNo) return;
     g.trickNo++;
     if(g.trickNo>=10){
       finishGame();
