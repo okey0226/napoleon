@@ -472,7 +472,7 @@ function drawAuction(){
     if (lastAuctionDrawHash === currentHash && !p.classList.contains('hidden')) return;
     lastAuctionDrawHash = currentHash;
   }
-  if(g.auction){ const minV=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid); if(g.bid<minV) g.bid=minV; if(g.bid>20) g.bid=20; }
+  if(g.auction){ const minV=minViableBidAgainst(g.auction.high,g.suit,g.auction.minBid); if(g.bid<minV)g.bid=minV; if(g.bid>20) g.bid=20; }
   let h=g.auction.high,t=h.num<13?'なし':name(h.player)+' · '+h.num+h.suit;
   const ruleNote=g.round>=10?'<div class="micro-copy">オールラスト · 最低宣言 '+g.auction.minBid+' · 得点2倍 · 立ち必須</div>':'',historyPanel=bidHistoryHTML(g.bidHistory,i=>name(i)),appealPanel=g.appealInfo?'<div class="appeal-info">'+escapeHTML(g.appealInfo)+'</div>':'';
   p.classList.remove('hidden');
@@ -842,8 +842,8 @@ async function computeBotPlay(seat){
       }
     };
     aiWorker.addEventListener('message', handler);
-    // 計算回数を150回に増やして渡す（スマホの画面はフリーズしない）
-    const workerCtx = { ...ctx, params: { ...ctx.params, mctsSimulations: 150 } };
+    // 時間制限付きMCTSを実行するためmaxThinkTimeMsを渡す
+    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 1500 } };
     aiWorker.postMessage({ type: 'calculate', ctx: workerCtx });
   });
 }
