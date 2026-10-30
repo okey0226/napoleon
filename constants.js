@@ -41,32 +41,14 @@ export const defaultStrategy = () => ({
   napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9, sameColorSuitAvoid: 0.8,
   spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6,
   sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5, allySameTwoLeadChance: 0.55, allySameTwoWindow: 4,
-  
-  // 最強化パラメータ（MCTS・チーム連携）
   teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
   mctsSimulations: 150, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
-  
-  // NT専用戦略パラメータ
-  ntMightyHoldThreshold: 7,
-  ntMightyShadowWeight: 1.5,
-  ntAceLeadPriority: 1.2,
-  ntVoidExploitWeight: 1.5,
-  ntDeputyFeedChance: 0.8,
-  ntEarlyLeadAggression: 0.7,
-  ntLateGameSafety: 1.0,
-  
-  // ニューラルネット（線形価値関数）の重み
+  ntMightyHoldThreshold: 7, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
+  ntVoidExploitWeight: 1.5, ntDeputyFeedChance: 0.8, ntEarlyLeadAggression: 0.7, ntLateGameSafety: 1.0,
   nnWeights: {
-    bias: 0.0,
-    handStrength: 0.5,
-    trumpRemaining: 0.3,
-    pointsNeeded: -0.4,
-    trickNo: -0.2,
-    isNap: 0.3,
-    isDeputy: 0.1,
-    isAlly: -0.1,
-    hasMighty: 0.8
+    bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
+    isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
   }
 });
 
@@ -116,32 +98,19 @@ export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
   const placementBySeat = [];
   ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
   
-  // ★ ゼロサム（合計0）になるように調整
-  // 25 + 5 + 0 - 5 - 25 = 0
-  const baseDeltas = { 
-    1: 25,   // 1位：巨額ボーナス
-    2: 5,    // 2位：微増
-    3: 0,    // 3位：現状維持
-    4: -5,   // 4位：微減
-    5: -25   // 5位：致命的ペナルティ
-  };
+  // ゼロサム（合計0）
+  const baseDeltas = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
   
   return matchScores.map((s, i) => {
     const isAbandoned = abandoned.has(i);
     const rank = placementBySeat[i];
     const baseDelta = baseDeltas[rank] ?? 0;
-    const abandonPenalty = isAbandoned ? -30 : 0; // 放棄はさらに重く
+    const abandonPenalty = isAbandoned ? -30 : 0;
     const delta = baseDelta + abandonPenalty;
-    
     let outcome = 'loss';
     if (rank === 1) outcome = 'win';
     else if (rank === 2 || rank === 3) outcome = 'draw';
-
-    return {
-      outcome, 
-      delta, placement: rank, abandoned: isAbandoned, abandonPenalty, baseDelta,
-      breakdown: { rank, rounds: [] }
-    };
+    return { outcome, delta, placement: rank, abandoned: isAbandoned, abandonPenalty, baseDelta, breakdown: { rank, rounds: [] } };
   });
 };
 
