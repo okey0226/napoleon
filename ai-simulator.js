@@ -131,10 +131,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   const baseline = existing.length ? existing.map(r => sanitizeParams(r.params)) : [defaultStrategy()];
   const generation = existing.length ? Math.max(...existing.map(r => Number(r.generation) || 0)) + 1 : 1;
 
-  // ★ エリート戦略と交叉
   const nextPool = [];
   const eliteCount = Math.max(1, Math.floor(baseline.length * 0.2));
-  for (let i = 0; i < eliteCount; i++) nextPool.push(baseline[i]); // エリート保存
+  for (let i = 0; i < eliteCount; i++) nextPool.push(baseline[i]);
   
   while (nextPool.length < 10) {
     const pA = baseline[Math.floor(Math.random() * baseline.length)];
@@ -170,9 +169,8 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       else if (placement[seat] === 4) matchRating += RANK_4_PENALTY;
       else if (placement[seat] === 5) matchRating += RANK_5_PENALTY;
       
-      // ★ 追加: NAPOとして規定枚数を達成した場合、追加のボーナスを与える
       const napWins = contracts.filter(c => c.nap === seat && c.made).length;
-      matchRating += napWins * 3.0; // NAPO勝利への強いインセンティブ
+      matchRating += napWins * 3.0;
 
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
