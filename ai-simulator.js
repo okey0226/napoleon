@@ -3,10 +3,8 @@ import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mut
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard, winningEntry, colorStrength, ntHandStrength, handStrength } from './ai-tactics.js';
 
 function safeJsonParse(str, fallback = null) {
-  try {
-    if (typeof str !== 'string' || !str.trim()) return fallback;
-    return JSON.parse(str);
-  } catch (e) { return fallback; }
+  try { if (typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
+  catch (e) { return fallback; }
 }
 
 function computeBidStrength(hand, suit, params) {
