@@ -24,7 +24,7 @@ async function readResponse(res) {
 }
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
-const g={round:1,rate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{
+const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{
   bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
   teamCooperationWeight:1.5,feedBonusWeight:1.0,overkillPenalty:1.0,mctsSimulations:150,mctsExploration:1.414,handInferenceWeight:0.5,rolloutPolicyWeight:0.8,bayesUpdateRate:0.05,
   ntMightyHoldThreshold:7,ntMightyShadowWeight:1.5,ntAceLeadPriority:1.2,ntVoidExploitWeight:1.5,ntDeputyFeedChance:0.8,ntEarlyLeadAggression:0.7,ntLateGameSafety:1.0
@@ -268,6 +268,7 @@ function startLocal(){
   g.botLevel=3;
   g.round=1;
   g.rate=Number.isFinite(Number(g.account?.rating))?Number(g.account.rating):1000;
+  g.comRate=Number.isFinite(Number(g.account?.com_rating))?Number(g.account.com_rating):1000;
   g.elo=g.rate;
   g.mult=1;
   g.greenRedraws=0;
@@ -289,8 +290,8 @@ function startLocal(){
   g.players=Array.from({length:5},(_,i)=>({name:i?'COM '+i:'あなた',username:i?'COM '+i:'あなた',originalName:i?'COM '+i:'あなた',abandoned:false,bot:i>0,hand:[],taken:[],roundTaken:[],roundPoints:0}));
   screen('game-screen');
   const modeLabel=$('game-mode-label'); if(modeLabel)modeLabel.textContent='COM戦';
-  const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='RATE';
-  const ratLab=$('rating-label'); if(ratLab)ratLab.textContent=g.rate;
+  const ratCap=$('rating-caption'); if(ratCap)ratCap.textContent='COM RATE';
+  const ratLab=$('rating-label'); if(ratLab)ratLab.textContent=g.comRate;
   
   setTimeout(() => { g.intentionalLeave = false; }, 1000);
   roundStart()
@@ -1130,17 +1131,32 @@ function finishGame(){
   const replayAllLast=!!(finalRule&&scores[finalRule.bottomSeat]>0&&g.matchScores[finalRule.bottomSeat]===g.matchScores[finalRule.fourthSeat]);
   if(replayAllLast)g.playoff=true;
   const format=n=>(n>0?'+':'')+(Number.isInteger(n)?n:n.toFixed(1)),role=i=>i===c.nap?'NAP':!c.solo&&i===c.deputy?'DEPUTY':'ALLY',rows=g.players.map((_,i)=>'<div class="round-score-row"><span>'+name(i)+' · '+role(i)+'</span><strong class="'+(scores[i]<0?'score-down':'score-up')+'">ROUND Δ '+format(scores[i])+'<small>TOTAL '+format(g.matchScores[i])+'</small></strong></div>').join(''),final=g.round>=10&&!replayAllLast;
+  
   const ratings=final?matchRatingChanges(g.matchScores,[]):null;
-  let eloDelta=0,combinedDelta=0;
+  let combinedDelta=0;
   if(final&&ratings){
-    const oppElos=[1000,1000,1000,1000];
-    eloDelta=computeEloDelta(g.rate,oppElos,ratings[g.mySeat].outcome);
-    combinedDelta=ratings[g.mySeat].delta+eloDelta;
-    g.rate+=combinedDelta;
-    g.elo=g.rate;
-    const rl=$('rating-label');if(rl)rl.textContent=g.rate;
-    ratings[g.mySeat].delta=combinedDelta;
+    combinedDelta = ratings[g.mySeat].delta;
+    
+    if (!g.onlineState) {
+      g.comRate += combinedDelta;
+      const rl=$('rating-label'); if(rl) rl.textContent=g.comRate;
+      if (g.sessionToken) {
+        fetch('/api/account/update-com-rating', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-session-token': g.sessionToken },
+          body: JSON.stringify({ comRating: g.comRate })
+        }).catch(e => console.warn('COMレート保存失敗', e));
+      }
+      if (g.account) g.account.com_rating = g.comRate;
+    } else {
+      g.rate += combinedDelta;
+      g.elo = g.rate;
+      const rl=$('rating-label'); if(rl) rl.textContent=g.rate;
+    }
+    
+    ratings[g.mySeat].delta = combinedDelta;
   }
+
   if (final && ratings) {
     try {
       const rank = ratings[g.mySeat].placement;
@@ -1324,7 +1340,14 @@ async function loadAccount(){
   try{
     const r=await fetch('/api/account/me',{headers:{'x-session-token':token}});
     const { data } = await readResponse(r);
-    if(r.ok && data){ g.account=data;g.sessionToken=token;if(data.rating)g.rate=data.rating;renderAccount();renderHomeRating(g.account) }
+    if(r.ok && data){ 
+      g.account=data;
+      g.sessionToken=token;
+      if(data.rating)g.rate=data.rating; 
+      if(data.com_rating)g.comRate=data.com_rating; 
+      renderAccount();
+      renderHomeRating(g.account) 
+    }
     else if(r.status===401||r.status===404){ localStorage.removeItem('napoleon_session');g.sessionToken=null;renderHomeRating({unregistered:true}) }
   }catch{}
 }
