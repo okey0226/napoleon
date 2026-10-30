@@ -44,18 +44,17 @@ export const defaultStrategy = () => ({
   
   // 最強化パラメータ（MCTS・チーム連携）
   teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
-  // ★ 修正: シミュレーション回数を 150 に設定
   mctsSimulations: 150, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   
-  // ★ 追加: NT専用戦略パラメータ
-  ntMightyHoldThreshold: 7,      // このトリック数まではマイティを温存
-  ntMightyShadowWeight: 1.5,     // ♥Qの保持価値
-  ntAceLeadPriority: 1.2,        // 序盤のAリードの優先度
-  ntVoidExploitWeight: 1.5,      // 相手のボイドを突く重要度（連合軍用）
-  ntDeputyFeedChance: 0.8,       // NT時の副官のエサやり確率
-  ntEarlyLeadAggression: 0.7,    // 序盤のリード積極性
-  ntLateGameSafety: 1.0,         // 終盤の安全策の重み
+  // NT専用戦略パラメータ
+  ntMightyHoldThreshold: 7,
+  ntMightyShadowWeight: 1.5,
+  ntAceLeadPriority: 1.2,
+  ntVoidExploitWeight: 1.5,
+  ntDeputyFeedChance: 0.8,
+  ntEarlyLeadAggression: 0.7,
+  ntLateGameSafety: 1.0,
   
   // ニューラルネット（線形価値関数）の重み
   nnWeights: {
@@ -116,15 +115,30 @@ export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
   const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
   const placementBySeat = [];
   ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
-  const baseDeltas = { 1: 10, 2: 3, 3: 0, 4: -5, 5: -10 };
+  
+  // ★ ゼロサム（合計0）になるように調整
+  // 25 + 5 + 0 - 5 - 25 = 0
+  const baseDeltas = { 
+    1: 25,   // 1位：巨額ボーナス
+    2: 5,    // 2位：微増
+    3: 0,    // 3位：現状維持
+    4: -5,   // 4位：微減
+    5: -25   // 5位：致命的ペナルティ
+  };
+  
   return matchScores.map((s, i) => {
     const isAbandoned = abandoned.has(i);
     const rank = placementBySeat[i];
     const baseDelta = baseDeltas[rank] ?? 0;
-    const abandonPenalty = isAbandoned ? -20 : 0;
+    const abandonPenalty = isAbandoned ? -30 : 0; // 放棄はさらに重く
     const delta = baseDelta + abandonPenalty;
+    
+    let outcome = 'loss';
+    if (rank === 1) outcome = 'win';
+    else if (rank === 2 || rank === 3) outcome = 'draw';
+
     return {
-      outcome: isAbandoned ? 'loss' : (rank === 1 ? 'win' : 'loss'),
+      outcome, 
       delta, placement: rank, abandoned: isAbandoned, abandonPenalty, baseDelta,
       breakdown: { rank, rounds: [] }
     };
@@ -146,11 +160,9 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
   const isNapSide = seat === nap || (!solo && seat === deputy);
   let score = 0;
   if (isNapSide) {
-    // ★ NAPO側の勝利報酬を大きく、敗北ペナルティを小さくする
     score += won ? (1.5 + (num - 13) * 0.15) : -(0.8 + (num - 13) * 0.1);
     score += (takenPoints[seat] || 0) * 0.05;
   } else {
-    // ★ 連合軍側の勝利報酬を小さく、敗北ペナルティを大きくする
     score += !won ? (0.8 + (num - 13) * 0.1) : -1.2;
     score += (takenPoints[seat] || 0) * 0.05;
   }
@@ -179,7 +191,6 @@ export const PARAM_BOUNDS = {
   teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
   mctsSimulations: [10, 1000], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
   rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
-  // ★ NT専用バウンド
   ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
   ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
   ntLateGameSafety: [0.5, 2.0]
@@ -223,7 +234,7 @@ export const crossoverStrategy = (parentA, parentB) => {
   return child;
 };
 
-export const RANK_1_BONUS = 5;
-export const RANK_2_BONUS = 2;
-export const RANK_4_PENALTY = -2;
-export const RANK_5_PENALTY = -5;
+export const RANK_1_BONUS = 25;
+export const RANK_2_BONUS = 5;
+export const RANK_4_PENALTY = -5;
+export const RANK_5_PENALTY = -25;
