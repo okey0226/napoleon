@@ -44,8 +44,15 @@ export const defaultStrategy = () => ({
   teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
   mctsSimulations: 150, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
-  ntMightyHoldThreshold: 7, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
+  ntMightyHoldThreshold: 8, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
   ntVoidExploitWeight: 1.5, ntDeputyFeedChance: 0.8, ntEarlyLeadAggression: 0.7, ntLateGameSafety: 1.0,
+  // ★ 追加パラメータ
+  ntAceProtectLeadWeight: 1.5,
+  ntSameTwoGuardWeight: 1.2,
+  allyVoidExploitWeight: 1.0,
+  deputyBluffWeight: 0.8,
+  ntDeputyMightyHoldThreshold: 8,
+  ntMightyEmergencyTrick: 5,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -162,7 +169,11 @@ export const PARAM_BOUNDS = {
   rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
   ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
   ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
-  ntLateGameSafety: [0.5, 2.0]
+  ntLateGameSafety: [0.5, 2.0],
+  // ★ 追加パラメータの境界
+  ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
+  allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
+  ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9]
 };
 
 export const mutateStrategy = (base, rate) => {
