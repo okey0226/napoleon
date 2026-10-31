@@ -26,7 +26,8 @@ export const sortHand = (hand) => {
 };
 
 export const defaultStrategy = () => ({
-  bidThreshold: 4.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
+  // 競り
+  bidThreshold: 6.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
   deputyFeedBias: 0.5, opponentInferenceWeight: 0.4, suitConflictWeight: 0.6,
   mightyShadowWeight: 0.3, weakOpponentBoost: 0.3, bluffLossMultiplier: 0.6,
@@ -46,16 +47,17 @@ export const defaultStrategy = () => ({
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   ntMightyHoldThreshold: 8, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
   ntVoidExploitWeight: 1.5, ntDeputyFeedChance: 0.8, ntEarlyLeadAggression: 0.7, ntLateGameSafety: 1.0,
-  ntAceProtectLeadWeight: 1.5,
-  ntSameTwoGuardWeight: 1.2,
-  allyVoidExploitWeight: 1.0,
-  deputyBluffWeight: 0.8,
-  ntDeputyMightyHoldThreshold: 8,
-  ntMightyEmergencyTrick: 5,
-  napEarlyTrumpLeadWeight: 1.5,
-  napEarlyTrumpLeadMaxTrick: 3,
-  napEarlyTrumpMinCount: 4,
+  // NT特殊戦略
+  ntAceProtectLeadWeight: 1.5, ntSameTwoGuardWeight: 1.2, allyVoidExploitWeight: 1.0,
+  deputyBluffWeight: 0.8, ntDeputyMightyHoldThreshold: 8, ntMightyEmergencyTrick: 5,
+  // ナポレオンの序盤切り札リード
+  napEarlyTrumpLeadWeight: 1.5, napEarlyTrumpLeadMaxTrick: 3, napEarlyTrumpMinCount: 4,
+  // 副官のオーバートランプ
   deputyOvertrumpWeight: 1.8,
+  // ビッドシミュレーション（PIMC）
+  bidTimeBudgetMs: 400, bidMaxSamples: 500, bidSafetyMargin: 1.5, bidSimCount: 30,
+  // 計画精度評価（自己対戦学習用）
+  planAccuracyWeight: 1.0, overbidPenalty: 2.0, underbidPenalty: 0.5, planAccuracyBonus: 1.5,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -148,7 +150,7 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
 };
 
 export const PARAM_BOUNDS = {
-  bidThreshold: [2, 8], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
+  bidThreshold: [2, 10], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
   safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
   opponentInferenceWeight: [0.0, 1.0], suitConflictWeight: [0.0, 2.0],
@@ -176,7 +178,10 @@ export const PARAM_BOUNDS = {
   allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
   ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
   napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
-  napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0]
+  napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
+  bidTimeBudgetMs: [100, 1000], bidMaxSamples: [50, 1000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
+  planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0],
+  underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0]
 };
 
 export const mutateStrategy = (base, rate) => {
