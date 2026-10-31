@@ -85,6 +85,10 @@ function simulateOneMatch(localRng, startSeat) {
   let active = startSeat;
   let trickNo = 0;
   const allSnaps = [];
+  
+  // ダミーのビッド履歴とマッチスコア（クイズ生成用）
+  const matchBidHistory = [];
+  const matchScores = [0,0,0,0,0];
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -113,7 +117,13 @@ function simulateOneMatch(localRng, startSeat) {
         });
       }
       
-      const ctx = { hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy, discardedKitty: discarded, isRevealed: contract.revealedCall, params, call, currentNapPoints: 0, experience: null };
+      const ctx = { 
+        hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy, 
+        discardedKitty: discarded, isRevealed: contract.revealedCall, params, call, currentNapPoints: 0, experience: null,
+        // ★追加
+        bidHistory: matchBidHistory,
+        matchScores: matchScores
+      };
       const chosen = chooseCardToPlay(ctx) || legal[0];
       
       if (led && chosen.suit !== led) { if (!voids[seat]) voids[seat] = {}; voids[seat][led] = true; }
@@ -172,7 +182,10 @@ function genPlayQuestion(rng, idx) {
       hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract,
       playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
       deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
-      params, call: cap.contract.call, currentNapPoints: 0, experience: null
+      params, call: cap.contract.call, currentNapPoints: 0, experience: null,
+      // ★追加
+      bidHistory: [], // クイズ生成時はダミー
+      matchScores: [0,0,0,0,0]
     };
     const aiChoice = chooseCardToPlay(ctx);
     if (!aiChoice) return null;
