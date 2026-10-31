@@ -1,4 +1,4 @@
-// ai-tactics.js (完全版)
+// ai-tactics.js (完全版 / v1.2 競り緩和パッチ適用)
 import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, HONEST_BID_FIXED_BONUS, ALLY_LOSS_PENALTY, ALLY_WIN_BONUS, ALLY_BLOCK_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy, quantizeStrength, bidExperienceKey, callExperienceKey, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 const FACE = ['10', 'J', 'Q', 'K', 'A'];
@@ -360,7 +360,8 @@ export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKit
   const sure = computeSurePoints(hand, trump, openKitty);
   const pimcResult = estimateWinningPointsPIMC(hand, trump, params, bidHistory, mySeat, openKitty, 200);
   
-  const expected = Math.max(sure, pimcResult.expectedPoints * 0.9 + sure * 0.1);
+  // ★ 修正C: 単位統一（sureは「確実勝利トリック数」→ ×2 で点数換算）
+  const expected = Math.max(sure * 2.0, pimcResult.expectedPoints * 0.9 + sure * 2.0 * 0.1);
   
   const suitRunValues = [];
   for (const suit of SUITS) {
@@ -402,13 +403,15 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   if (!Number.isFinite(baseStr) || baseStr < bidThreshold) return null;
   
   const isFirstBid = (!currentHigh || currentHigh.num < 13);
-  if (isFirstBid && baseStr < bidThreshold + 1.0) return null;
+  // ★ 修正B: 初回宣言の追加要件 +1.0 → +0.5
+  if (isFirstBid && baseStr < bidThreshold + 0.5) return null;
   
   const currentHighNum = currentHigh?.num ?? 12;
   if (currentHighNum >= 15 && baseStr < bidThreshold + 2.0) return null;
   if (currentHighNum >= 17 && baseStr < bidThreshold + 4.0) return null;
 
-  let safetyMargin = params.bidSafetyMargin ?? 1.5;
+  // ★ 修正B: 安全マージンを半分に（最下限 0.3）
+  let safetyMargin = Math.max(0.3, (params.bidSafetyMargin ?? 1.5) * 0.5);
   if (matchScores && Array.isArray(matchScores)) {
     const sorted = [...matchScores].sort((a, b) => b - a);
     const myScore = matchScores[mySeat] || 0;
@@ -472,7 +475,8 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   });
 
   const best = candidates[0];
-  if (best && best.expected >= best.num + safetyMargin) {
+  // ★ 修正B: 最終条件を緩和（expected >= num のみで立候補）
+  if (best && best.expected >= best.num) {
     return { num: best.num, suit: best.suit, solo: best.solo, plan: best.plan };
   }
   return null;
