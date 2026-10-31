@@ -254,13 +254,12 @@ export default {
         return response(results);
       }
       
-            // ... 既存のコード（/api/ai/weights など） ...
-
+      // ... 既存のコード（/api/ai/weights など） ...
+      
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-
 // ===== [worker.js 2/2 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
@@ -900,5 +899,3 @@ export const room = {
   }
 };
 // ===== [worker.js 2/2 終了] =====
-// ===== [worker.js 1/2 終了] =====
-      // ... 以降のAPIも既存のまま ...
