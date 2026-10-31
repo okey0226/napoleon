@@ -10,8 +10,8 @@ database_id = "97c86f88-a3bc-4adb-b3c5-f1e986db26b4"
 [assets]
 directory = "."
 binding = "ASSETS"
-# WebSocket（/ws）は worker を経由させず、プラットフォームの room が直接処理する
 run_worker_first = ["/api/*"]
 
-# ▼ ここが最重要：5分おきに自動で自己対戦を回す設定 ▼
-
+# ▼ 追加：毎時0分に自己対戦を実行するCronトリガー
+[triggers]
+crons = ["0 * * * *"]
