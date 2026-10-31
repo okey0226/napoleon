@@ -46,7 +46,6 @@ export const defaultStrategy = () => ({
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   ntMightyHoldThreshold: 8, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
   ntVoidExploitWeight: 1.5, ntDeputyFeedChance: 0.8, ntEarlyLeadAggression: 0.7, ntLateGameSafety: 1.0,
-  // ★ 追加パラメータ
   ntAceProtectLeadWeight: 1.5,
   ntSameTwoGuardWeight: 1.2,
   allyVoidExploitWeight: 1.0,
@@ -109,7 +108,6 @@ export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
   const placementBySeat = [];
   ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
   
-  // ゼロサム（合計0）
   const baseDeltas = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
   
   return matchScores.map((s, i) => {
@@ -174,7 +172,6 @@ export const PARAM_BOUNDS = {
   ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
   ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
   ntLateGameSafety: [0.5, 2.0],
-  // ★ 追加パラメータの境界
   ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
   allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
   ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
