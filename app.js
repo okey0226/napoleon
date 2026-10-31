@@ -2,8 +2,8 @@
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay } from './ai-tactics.js';
 
-// ★ CPUコア数に応じてWorkerプールを作成 (最大4つ)
-const numWorkers = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+// ★ 修正: CPUコア数に応じてWorkerプールを作成 (最大8つ)
+const numWorkers = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
 const aiWorkers = [];
 for (let i = 0; i < numWorkers; i++) {
   aiWorkers.push(new Worker('./ai-worker.js', { type: 'module' }));
@@ -839,7 +839,7 @@ async function computeBotPlay(seat){
     const results = [];
     const handlers = [];
 
-    // 万が一全Workerが応答しなければ5秒でランダムフォールバック
+    // 万が一全Workerが応答しなければ6.5秒でランダムフォールバック
     const timeoutTimer = setTimeout(() => {
       if (isResolved) return;
       isResolved = true;
@@ -847,7 +847,7 @@ async function computeBotPlay(seat){
       console.warn('[computeBotPlay] All Workers timeout. Falling back to random.');
       const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
       resolve({ card: randomCard, source: 'タイムアウト(ランダム)' });
-    }, 5000);
+    }, 6500);
 
     const handleAllResults = () => {
       if (isResolved) return;
@@ -898,7 +898,8 @@ async function computeBotPlay(seat){
       }
     };
 
-    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 3000 } };
+    // ★ 修正: maxThinkTimeMs を 6000 に変更
+    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 6000 } };
 
     aiWorkers.forEach((worker, index) => {
       const handler = (e) => {
@@ -1140,6 +1141,7 @@ function finishGame(){
     if (!g.onlineState) {
       g.comRate += combinedDelta;
       const rl=$('rating-label'); if(rl) rl.textContent=g.comRate;
+      // ★ 修正: COMレートの保存処理
       if (g.sessionToken) {
         fetch('/api/account/update-com-rating', {
           method: 'POST',
