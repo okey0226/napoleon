@@ -1,4 +1,4 @@
-// ai-tactics.js (前半部分)
+// ai-tactics.js (前半)
 import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, HONEST_BID_FIXED_BONUS, ALLY_LOSS_PENALTY, ALLY_WIN_BONUS, ALLY_BLOCK_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy, quantizeStrength, bidExperienceKey, callExperienceKey, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 const FACE = ['10', 'J', 'Q', 'K', 'A'];
@@ -114,91 +114,300 @@ function computeBidEV(p, num, strength, params) {
   return Number.isFinite(napoleonEV - allyEV) ? napoleonEV - allyEV : 0;
 }
 
-export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null) {
+// ==========================================
+// 競り判断：高精度PIMC + 確実勝利数 + ビッドプラン
+// ==========================================
+
+function computeSureTricks(hand, trump, openKitty) {
+  let sure = 0;
+  const hqInPlay = (openKitty || []).some(c => c.id === '♥Q') || hand.some(c => c.id === '♥Q');
+  const hasMighty = hand.some(c => c.id === '♠A');
+  const trumpJ = trump !== 'NT' ? hand.find(c => c.rank === 'J' && c.suit === trump) : null;
+  const sameColorJ = trump !== 'NT' ? hand.find(c => c.rank === 'J' && c.suit !== trump && isSameColorSuit(c.suit, trump)) : null;
+  
+  if (hasMighty && !hqInPlay) sure += 1;
+  if (trumpJ) sure += 1;
+  else if (sameColorJ) sure += 0.6;
+  
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    if (hand.some(c => c.suit === suit && c.rank === 'A')) sure += 0.75;
+  }
+  if (trump !== 'NT' && hand.some(c => c.suit === trump && c.rank === 'A')) sure += 1;
+  
+  // スート枯れ期待値（AKQJ4のような連続リード）
+  sure += computeSuitRunWins(hand, trump) * 0.5;
+  
+  return sure;
+}
+
+function computeSuitRunWins(hand, trump) {
+  let totalRunWins = 0;
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    const myCards = hand.filter(c => c.suit === suit)
+      .sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
+    if (myCards.length < 2) continue;
+    
+    const remaining = 13 - myCards.length;
+    for (let i = 0; i < myCards.length; i++) {
+      const consumedByOthers = 4 * i;
+      const remainingOthers = Math.max(0, remaining - consumedByOthers);
+      
+      if (remainingOthers === 0) {
+        const cutRisk = trump !== 'NT' ? 0.2 : 0.05;
+        totalRunWins += (1 - cutRisk);
+      } else {
+        totalRunWins += 1.0;
+      }
+    }
+  }
+  return totalRunWins;
+}
+
+function smartRolloutPlay(seat, mySeat, hand, trick, trump, trickNo) {
+  const led = trick.length ? trick[0].card.suit : null;
+  const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
+  if (!legal.length) return null;
+  
+  const currentWinner = trick.length ? winningEntry({ suit: trump }, trickNo, trick) : null;
+  const isMyTeamWinning = currentWinner && currentWinner.seat === mySeat;
+  
+  if (trick.length === 0) {
+    return legal.reduce((best, c) => {
+      const cp = cardPower({ suit: trump }, trickNo, c, [{ card: c }]);
+      const bp = cardPower({ suit: trump }, trickNo, best, [{ card: best }]);
+      return cp > bp ? c : best;
+    }, legal[0]);
+  }
+  
+  if (isMyTeamWinning) {
+    return legal.reduce((best, c) => {
+      const cp = cardPower({ suit: trump }, trickNo, c, trick);
+      const bp = cardPower({ suit: trump }, trickNo, best, trick);
+      return cp < bp ? c : best;
+    }, legal[0]);
+  }
+  
+  const winning = legal.filter(c => {
+    const testTrick = [...trick, { seat, card: c }];
+    return winningEntry({ suit: trump }, trickNo, testTrick).seat === seat;
+  });
+  if (winning.length) {
+    return winning.reduce((best, c) => {
+      const cp = cardPower({ suit: trump }, trickNo, c, trick);
+      const bp = cardPower({ suit: trump }, trickNo, best, trick);
+      return cp < bp ? c : best;
+    }, winning[0]);
+  }
+  return legal.reduce((best, c) => {
+    const cp = cardPower({ suit: trump }, trickNo, c, trick);
+    const bp = cardPower({ suit: trump }, trickNo, best, trick);
+    return cp < bp ? c : best;
+  }, legal[0]);
+}
+
+function sampleOpponentHands(myHand, bidHistory, mySeat, openKitty) {
+  const used = new Set(myHand.map(c => c.id));
+  (openKitty || []).forEach(c => used.add(c.id));
+  const remaining = [];
+  for (const s of SUITS) for (const r of RANKS) {
+    const id = s + r;
+    if (!used.has(id)) remaining.push({ suit: s, rank: r, id });
+  }
+  
+  const suitWeights = [{}, {}, {}, {}, {}];
+  if (bidHistory) {
+    bidHistory.forEach(b => {
+      if (b.seat !== mySeat && b.suit !== 'NT') {
+        suitWeights[b.seat][b.suit] = (suitWeights[b.seat][b.suit] || 0) + (b.num - 12) * 0.4;
+      }
+    });
+  }
+  
+  const others = [[], [], [], []];
+  const otherSeats = [0, 1, 2, 3, 4].filter(s => s !== mySeat);
+  const perSeat = Math.floor(remaining.length / 4);
+  
+  const weighted = remaining.map(c => ({
+    card: c,
+    weight: otherSeats.reduce((w, s) => w + (suitWeights[s][c.suit] || 0), 0) + Math.random() * 3
+  })).sort((a, b) => b.weight - a.weight);
+  
+  for (let i = 0; i < 4; i++) {
+    const seat = otherSeats[i];
+    const seatCards = [];
+    for (let j = 0; j < perSeat; j++) {
+      const idx = weighted.findIndex(w => {
+        const ww = suitWeights[seat][w.card.suit] || 0;
+        return ww > 0 ? Math.random() < 0.7 : true;
+      });
+      const pick = idx >= 0 ? weighted.splice(idx, 1)[0] : weighted.shift();
+      if (pick) seatCards.push(pick.card);
+    }
+    others[i] = seatCards;
+  }
+  
+  return others;
+}
+
+function estimateWinningTricksPIMC(hand, trump, params, bidHistory, mySeat, openKitty, timeBudgetMs) {
+  const startTime = Date.now();
+  let totalWins = 0;
+  let samples = 0;
+  const maxSamples = params?.bidMaxSamples ?? 500;
+  
+  while (samples < maxSamples && Date.now() - startTime < timeBudgetMs) {
+    const others = sampleOpponentHands(hand, bidHistory, mySeat, openKitty);
+    const hands = [hand.map(c => ({ ...c })), ...others.map(h => h.map(c => ({ ...c })))];
+    let myWins = 0;
+    let active = mySeat;
+    const trickCount = hand.length;
+    
+    for (let t = 0; t < trickCount; t++) {
+      if (!hands[mySeat].length) break;
+      const trick = [];
+      for (let i = 0; i < 5; i++) {
+        const seat = (active + i) % 5;
+        const seatHand = hands[seat];
+        if (!seatHand.length) break;
+        const chosen = smartRolloutPlay(seat, mySeat, seatHand, trick, trump, t);
+        if (!chosen) break;
+        trick.push({ seat, card: chosen });
+        hands[seat] = seatHand.filter(c => c.id !== chosen.id);
+      }
+      if (trick.length < 5) break;
+      const winner = winningEntry({ suit: trump }, t, trick);
+      if (winner.seat === mySeat) myWins++;
+      active = winner.seat;
+    }
+    totalWins += myWins;
+    samples++;
+  }
+  
+  return samples > 0 ? totalWins / samples : 0;
+}
+
+export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty) {
+  const sure = computeSureTricks(hand, trump, openKitty);
+  const pimc = estimateWinningTricksPIMC(hand, trump, params, bidHistory, mySeat, openKitty, 200);
+  const expected = Math.max(sure, pimc * 0.85 + sure * 0.15);
+  
+  const suitRunValues = [];
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    const myCards = hand.filter(c => c.suit === suit)
+      .sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
+    if (myCards.length < 3) continue;
+    let consecutive = 0;
+    for (let i = 0; i < myCards.length; i++) {
+      const expectedRank = RANKS[RANKS.length - 1 - i];
+      if (myCards[i].rank === expectedRank) consecutive++;
+      else break;
+    }
+    const runValue = consecutive >= 3 ? consecutive * 0.8 : consecutive * 0.4;
+    suitRunValues.push({ suit, consecutive, runValue, cardCount: myCards.length });
+  }
+  suitRunValues.sort((a, b) => b.runValue - a.runValue);
+  
+  const runSuits = suitRunValues.filter(x => x.consecutive >= 3).map(x => x.suit);
+  const preserveSuits = suitRunValues.filter(x => x.consecutive < 3).map(x => x.suit);
+  
+  return {
+    trump,
+    expectedWins: expected,
+    sureWins: sure,
+    runSuits,
+    preserveSuits,
+    suitRunValues
+  };
+}
+
+export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null) {
   if (!Array.isArray(hand) || !hand.length) return null;
   if (!params) params = defaultStrategy();
-  let baseStr = handStrength(hand);
-  if (!Number.isFinite(baseStr) || baseStr < params.bidThreshold) return null;
+  
+  const baseStr = handStrength(hand);
+  const bidThreshold = params.bidThreshold ?? 6.0;
+  if (!Number.isFinite(baseStr) || baseStr < bidThreshold) return null;
+  
+  const isFirstBid = (!currentHigh || currentHigh.num < 13);
+  if (isFirstBid && baseStr < bidThreshold + 1.5) return null;
+  
+  const currentHighNum = currentHigh?.num ?? 12;
+  if (currentHighNum >= 15 && baseStr < bidThreshold + 3.0) return null;
+  if (currentHighNum >= 17 && baseStr < bidThreshold + 5.0) return null;
 
+  let safetyMargin = params.bidSafetyMargin ?? 1.5;
   if (matchScores && Array.isArray(matchScores)) {
-    const sorted = [...matchScores].sort((a,b)=>b-a);
+    const sorted = [...matchScores].sort((a, b) => b - a);
     const myScore = matchScores[mySeat] || 0;
     const rank = sorted.indexOf(myScore) + 1;
-    if (rank >= 4) baseStr += params.riskTolerance * 1.5;
-    else if (rank === 1) baseStr -= params.riskTolerance * 1.0;
+    if (rank >= 4) safetyMargin = Math.max(0.5, safetyMargin - 0.5);
+    else if (rank === 1) safetyMargin += 0.5;
   }
 
   const currentRound = Math.max(0, ...(bidHistory || []).map(b => b?.round || 0));
   const currentBids = (bidHistory || []).filter(b => b && b.round === currentRound);
   const targetMin = Math.max(minBid, (currentHigh?.num ?? 12) + 1, 13);
+  if (targetMin > 20) return null;
+
+  const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hand, suit, params) }));
+  suitScores.sort((a, b) => b.score - a.score);
+  const topSuits = suitScores.slice(0, 2).map(x => x.suit);
+  const ntScore = ntHandStrength(hand, params);
+  
+  const timeBudget = (params.bidTimeBudgetMs ?? 400) / (topSuits.length + 1);
   const candidates = [];
   
-  const missingStrong = ['♠A', '♠J', '♥J', '♦J', '♣J'].filter(id => !hand.some(c => c.id === id)).length;
-  const deputyBonus = missingStrong * 0.2;
-
-  const isBidViable = (num, p) => {
-    if (p < 0.48) return false;
-    if (num >= 19 && p < 0.72) return false;
-    if (num >= 18 && p < 0.66) return false;
-    if (num >= 17 && p < 0.60) return false;
-    if (num >= 16 && p < 0.55) return false;
-    if (num >= 15 && p < 0.50) return false;
-    if (num >= 14 && p < 0.48) return false;
-    return true;
-  };
-  const SUIT_ORDER = SUITS.slice().sort(() => Math.random() - 0.5);
-  for (const suit of SUIT_ORDER) {
-    const cs = colorStrength(hand, suit, params);
-    const adj = adjustStrengthForOpponents(cs, suit, currentBids, params, mySeat, 'color');
-    const strengthKey = quantizeStrength(cs);
-    for (let num = targetMin; num <= 20; num++) {
-      const baseP = estimatedWinRate(adj, num);
-      const expEntry = experience?.bids?.[bidExperienceKey(strengthKey, 'color', num)];
-      const p = blendWithExperience(baseP, expEntry);
-      if (!isBidViable(num, p)) continue;
-      const ev = computeBidEV(p, num, adj, params) + (deputyBonus * p);
-      if (Number.isFinite(ev)) candidates.push({ num, suit, solo: false, ev });
+  for (const suit of topSuits) {
+    const plan = evaluateBidPlan(hand, suit, params, currentBids, mySeat, openKitty);
+    const maxBid = Math.floor(plan.expectedWins - safetyMargin);
+    for (let num = targetMin; num <= Math.min(20, maxBid); num++) {
+      const p = estimatedWinRate(plan.expectedWins, num);
+      candidates.push({ num, suit, solo: false, expected: plan.expectedWins, p, plan });
     }
   }
-  const ntStr = ntHandStrength(hand, params);
-  const ntAdj = adjustStrengthForOpponents(ntStr, 'NT', currentBids, params, mySeat, 'nt');
-  const ntStrengthKey = quantizeStrength(ntStr);
-  for (let num = targetMin; num <= 20; num++) {
-    const baseP = estimatedWinRate(ntAdj, num);
-    const expEntry = experience?.bids?.[bidExperienceKey(ntStrengthKey, 'NT', num)];
-    const p = blendWithExperience(baseP, expEntry);
-    if (!isBidViable(num, p)) continue;
-    const boost = num >= params.highBidNtThreshold ? 1.15 : 1.0;
-    const ev = computeBidEV(p, num, ntAdj, params) * params.ntPreference * boost + (deputyBonus * p * 0.5);
-    if (Number.isFinite(ev)) candidates.push({ num, suit: 'NT', solo: false, ev });
+  
+  if (ntScore > 8) {
+    const ntPlan = evaluateBidPlan(hand, 'NT', params, currentBids, mySeat, openKitty);
+    const ntMaxBid = Math.floor(ntPlan.expectedWins - safetyMargin);
+    for (let num = targetMin; num <= Math.min(20, ntMaxBid); num++) {
+      const p = estimatedWinRate(ntPlan.expectedWins, num);
+      const ntBonus = num >= (params.highBidNtThreshold ?? 17) ? 1.1 : 1.0;
+      candidates.push({ num, suit: 'NT', solo: false, expected: ntPlan.expectedWins, p: p * ntBonus, plan: ntPlan });
+    }
   }
-  for (const suit of SUIT_ORDER) {
+  
+  for (const suit of topSuits) {
     const trumps = hand.filter(c => c.suit === suit);
-    if (trumps.length < 4) continue;
-    const ss = soloAdjustedStrength(hand, suit);
-    if (ss < 15.5) continue;
-    for (let num = targetMin; num <= 20; num++) {
-      const p = estimatedWinRate(ss, num);
-      if (!isBidViable(num, p)) continue;
-      if (num >= 17 && p < 0.75) continue;
-      if (num >= 16 && p < 0.70) continue;
-      if (num >= 15 && p < 0.65) continue;
-      if (num >= 14 && p < 0.60) continue;
-      const ev = computeBidEV(p, num, ss, params);
-      if (Number.isFinite(ev)) candidates.push({ num, suit, solo: true, ev });
+    if (trumps.length < 5) continue;
+    const plan = evaluateBidPlan(hand, suit, params, currentBids, mySeat, openKitty);
+    const expected = plan.expectedWins + 0.5;
+    const maxBid = Math.floor(expected - safetyMargin - 1.0);
+    if (maxBid < targetMin) continue;
+    for (let num = targetMin; num <= Math.min(20, maxBid); num++) {
+      const p = estimatedWinRate(expected, num);
+      if (p < 0.60) continue;
+      candidates.push({ num, suit, solo: true, expected, p, plan });
     }
   }
+
   if (!candidates.length) return null;
+
   candidates.sort((a, b) => {
-    const evDiff = b.ev - a.ev;
-    if (Math.abs(evDiff) < 0.15) return a.num - b.num;
-    return evDiff;
+    const diff = b.expected - a.expected;
+    if (Math.abs(diff) < 0.3) return a.num - b.num;
+    return diff;
   });
+
   const best = candidates[0];
-  const evThreshold = Math.max(0.8, 1.5 - params.riskTolerance);
-  if (best && Number.isFinite(best.ev) && best.ev >= evThreshold) return { num: best.num, suit: best.suit, solo: best.solo };
+  if (best && best.expected >= best.num + safetyMargin) {
+    return { num: best.num, suit: best.suit, solo: best.solo, plan: best.plan };
+  }
   return null;
 }
+// ai-tactics.js (後半)
 
 export function chooseDiscard(hand, trump) {
   if (!Array.isArray(hand)) return [];
@@ -327,10 +536,28 @@ function lowX(ctx, cards) {
   return best;
 }
 
+// ==========================================
+// ナポレオンのリード（ビッドプラン参照）
+// ==========================================
 function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call, discardedKitty, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
   const isNT = contract.suit === 'NT';
+  const plan = contract.bidPlan; // ★ ビッドプラン
+  
+  // ★ 序盤: ビッドプランに沿ったリード
+  if (plan && trickNo <= 3) {
+    // 1. プランの「上から回すスート」を最優先
+    for (const suit of (plan.runSuits || [])) {
+      const suitCards = legal.filter(c => c.suit === suit);
+      if (suitCards.length) {
+        return suitCards.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
+      }
+    }
+    // 2. プランにないスートで、A/Kを持っているならリード
+    const safeLeads = legal.filter(c => c.rank === 'A' && c.suit !== contract.suit);
+    if (safeLeads.length) return safeLeads[0];
+  }
   
   // 序盤の切り札リード（連合軍の切り札を枯らす）
   if (!isNT && trickNo <= (params.napEarlyTrumpLeadMaxTrick ?? 3)) {
@@ -448,8 +675,10 @@ function chooseNapoleonLead(ctx) {
   const finalCandidates = legal.filter(c => c.rank !== '2');
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
-// ai-tactics.js (後半部分)
 
+// ==========================================
+// ナポレオンのフォロー（チーム勝ち時の温存）
+// ==========================================
 function chooseNapoleonFollow(ctx) {
   const { hand, legal, trick, trickNo, contract, playedCards, voids, seat, currentNapPoints, params, call } = ctx;
   if (!legal || !legal.length) return null;
@@ -478,7 +707,7 @@ function chooseNapoleonFollow(ctx) {
   const urgency = needed / remainingTricks;
   
   if (isTeamWinning) {
-    // ★ 修正: チームが勝っている場合、強いカード（A, K, 指名札, J, 2）は温存する
+    // チームが勝っている場合、強いカード（A, K, 指名札, J, 2）は温存する
     const safeCards = legal.filter(c => 
       c.rank !== 'A' && c.rank !== 'K' && 
       c.id !== call?.id && 
@@ -486,7 +715,6 @@ function chooseNapoleonFollow(ctx) {
       c.rank !== '2'
     );
     if (safeCards.length) {
-      // 安全なカードの中でも得点札は出してよい（ただし強すぎないもの）
       const dumpFaces = safeCards.filter(c => isFace(c));
       if (dumpFaces.length) return dumpFaces.sort((a,b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
       return lowX(ctx, safeCards);
@@ -506,6 +734,9 @@ function chooseNapoleonFollow(ctx) {
   return lowX(ctx, legal);
 }
 
+// ==========================================
+// 副官のフォロー（温存 + オーバートランプ）
+// ==========================================
 export function chooseDeputyCard(ctx) {
   const { hand, legal, trick, trickNo, contract, call, seat, playedCards, voids, params, discardedKitty } = ctx;
   if (!legal || !legal.length) return null;
@@ -576,7 +807,7 @@ export function chooseDeputyCard(ctx) {
   const pointsInTrick = trick.filter(e => isFace(e.card)).length;
   const isEnemyWinning = current && !isTeamNap(current.seat, contract);
   
-  // ★ 修正: チーム（NAPまたは副官）が勝っている場合、強いカードを温存する
+  // ★ チーム（NAPまたは副官）が勝っている場合、強いカードを温存
   if (current && isTeamNap(current.seat, contract)) {
     const safeCards = legal.filter(c => 
       c.rank !== 'A' && c.rank !== 'K' && 
@@ -643,6 +874,9 @@ export function chooseDeputyCard(ctx) {
   return lowX(ctx, legal);
 }
 
+// ==========================================
+// 連合軍のリード・フォロー
+// ==========================================
 function estimateNapWeakSuit(playedCards, contract) {
   const counts = {};
   for (const c of (playedCards || []).filter(c => c.seat === contract.nap)) counts[c.suit] = (counts[c.suit] || 0) + 1;
