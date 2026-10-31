@@ -32,7 +32,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   let high = { num: 12, suit: '', player: -1, solo: false };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
-      const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s);
+      // ★修正: shouldBid に matchScores を渡す
+      const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s, null, matchScores);
       if (bid && bid.num > high.num) high = { ...bid, player: s };
     }
   }
@@ -74,7 +75,13 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
       const legal = trick.length === 0 ? hand : (hand.filter(c => c.suit === trick[0].card.suit).length ? hand.filter(c => c.suit === trick[0].card.suit) : hand);
       const currentWinner = trick.length ? winningEntry(contractBase, trickNo, trick) : null;
       const isCurrentNapWinning = currentWinner ? (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy)) : false;
-      const ctx = { hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy, params: params[seat] || defaultStrategy(), discardedKitty: discard, isMySideNap: seat === nap || (revealed && seat === deputy), isCurrentNapWinning, isRevealed: revealed, isNapLeading: trick.length > 0 && trick[0].seat === nap, lastSeat: trick.length === 4, call: call };
+      
+      const ctx = { 
+        hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy, params: params[seat] || defaultStrategy(), 
+        discardedKitty: discard, isMySideNap: seat === nap || (revealed && seat === deputy), isCurrentNapWinning, isRevealed: revealed, 
+        isNapLeading: trick.length > 0 && trick[0].seat === nap, lastSeat: trick.length === 4, call: call,
+        bidHistory: matchBidHistory, matchScores: matchScores
+      };
       let chosen;
       if (!contractBase.solo && revealed && seat === deputy) chosen = chooseDeputyCard(ctx);
       else chosen = chooseCardToPlay(ctx);
