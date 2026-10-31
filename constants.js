@@ -53,6 +53,10 @@ export const defaultStrategy = () => ({
   deputyBluffWeight: 0.8,
   ntDeputyMightyHoldThreshold: 8,
   ntMightyEmergencyTrick: 5,
+  napEarlyTrumpLeadWeight: 1.5,
+  napEarlyTrumpLeadMaxTrick: 3,
+  napEarlyTrumpMinCount: 4,
+  deputyOvertrumpWeight: 1.8,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -173,7 +177,9 @@ export const PARAM_BOUNDS = {
   // ★ 追加パラメータの境界
   ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
   allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
-  ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9]
+  ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
+  napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
+  napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0]
 };
 
 export const mutateStrategy = (base, rate) => {
