@@ -1,4 +1,4 @@
-// ===== [worker.js 1/2 開始] =====
+// ===== [worker.js 完全版 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
 import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
@@ -260,6 +260,7 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
+
 // ===== [worker.js 2/2 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
@@ -600,7 +601,8 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version; m.botThinkAt = 0;
   if (a.high.player === seat) { if (a.active.length === 1) auctionDone(m, seat, room); return; }
   const h = m.seats[seat].hand, params = m.botStrategy || defaultStrategy(), currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
-  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null);
+  // ★修正: matchScores を渡す
+  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores);
   if (bid && validBid(m, bid.num, bid.suit)) { a.botBids[seat]++; doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); if (m.phase === "auction") a.botAt[seat] = Date.now() + 2500 + Math.random() * 1800; return; }
   if (a.high.player === seat) { if (a.active.length === 1) doApprove(m, seat, room); return; }
   doApprove(m, seat, room);
@@ -637,7 +639,10 @@ function botAction(m, room) {
       lastSeat: m.trick.length === 4, 
       params, call: m.contract.call, currentNapPoints, experience,
       points: m.seats.map(s => s.points || 0),
-      allianceKittyPoints: m.allianceKittyPoints || 0
+      allianceKittyPoints: m.allianceKittyPoints || 0,
+      // ★追加
+      bidHistory: m.bidHistory || [],
+      matchScores: m.matchScores || [0,0,0,0,0]
     };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
@@ -898,4 +903,4 @@ export const room = {
     room.broadcast(presence);
   }
 };
-// ===== [worker.js 2/2 終了] =====
+// ===== [worker.js 完全版 終わり] =====
