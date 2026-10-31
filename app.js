@@ -1,4 +1,4 @@
-// ===== [app.js 完全版 前半] =====
+// ===== [app.js 前半 開始] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
 import { shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard, winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay } from './ai-tactics.js';
 
@@ -930,7 +930,9 @@ async function computeBotPlay(seat){
     });
   });
 }
+// ===== [app.js 前半 終了]
 
+// ===== [app.js 後半 開始] =====
 function playTurn(){
   if(g.phase!=='play')return;
   drawSeats();
@@ -1810,3 +1812,6 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
+
+
+  
