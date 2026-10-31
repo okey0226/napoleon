@@ -1,4 +1,4 @@
-// ===== [worker.js 完全版 開始] =====
+// ===== [worker.js 前半 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
 import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
@@ -261,7 +261,7 @@ export default {
   }
 };
 
-// ===== [worker.js 2/2 開始] =====
+// ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
 
@@ -903,4 +903,4 @@ export const room = {
     room.broadcast(presence);
   }
 };
-// ===== [worker.js 完全版 終わり] =====
+// ===== [worker.js 後半 終了] =====
