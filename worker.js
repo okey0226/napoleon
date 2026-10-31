@@ -103,11 +103,24 @@ async function forceInitDB(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    ctx.waitUntil(runSelfPlayBatch(env, 1000).catch(e => console.error("scheduled self-play failed", e)));
+    // ★修正: 50マッチに減らしてタイムアウトを防ぐ
+    ctx.waitUntil(runSelfPlayBatch(env, 50).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // ★追加: 手動で自己対戦を実行するためのデバッグ用API
+    if (request.method === "GET" && url.pathname === "/api/dev/run-selfplay") {
+      try {
+        await forceInitDB(env);
+        const result = await runSelfPlayBatch(env, 10); // テスト用に10マッチ
+        return response({ ok: true, message: "Self-play executed", result });
+      } catch (e) {
+        return response({ error: e.message, stack: e.stack }, { status: 500 });
+      }
+    }
+
     if (request.method === "GET" && url.pathname === "/api/setup-db") {
       try {
         await forceInitDB(env);
@@ -262,6 +275,7 @@ export default {
   }
 };
 // ===== [worker.js 前半 終了] =====
+
 
 // ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
