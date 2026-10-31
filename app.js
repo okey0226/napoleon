@@ -25,12 +25,14 @@ async function readResponse(res) {
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
 const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{
-  bidThreshold:4.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
+  bidThreshold:6.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
   teamCooperationWeight:1.5,feedBonusWeight:1.0,overkillPenalty:1.0,mctsSimulations:150,mctsExploration:1.414,handInferenceWeight:0.5,rolloutPolicyWeight:0.8,bayesUpdateRate:0.05,
   ntMightyHoldThreshold:8,ntMightyShadowWeight:1.5,ntAceLeadPriority:1.2,ntVoidExploitWeight:1.5,ntDeputyFeedChance:0.8,ntEarlyLeadAggression:0.7,ntLateGameSafety:1.0,
   ntAceProtectLeadWeight:1.5,ntSameTwoGuardWeight:1.2,allyVoidExploitWeight:1.0,deputyBluffWeight:0.8,ntDeputyMightyHoldThreshold:8,ntMightyEmergencyTrick:5,
-  napEarlyTrumpLeadWeight:1.5,napEarlyTrumpLeadMaxTrick:3,napEarlyTrumpMinCount:4,deputyOvertrumpWeight:1.8
-},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null};
+  napEarlyTrumpLeadWeight:1.5,napEarlyTrumpLeadMaxTrick:3,napEarlyTrumpMinCount:4,deputyOvertrumpWeight:1.8,
+  bidTimeBudgetMs:400,bidMaxSamples:500,bidSafetyMargin:1.5,bidSimCount:30,
+  planAccuracyWeight:1.0,overbidPenalty:2.0,underbidPenalty:0.5,planAccuracyBonus:1.5
+},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[]};
 let toastTimer;
 let lastAuctionDrawHash = '';
 
@@ -112,7 +114,7 @@ function openGameLog(){renderGameLog();$('game-log-dialog')?.showModal()}
 
 function addDebugLog(type,data){if(!g.matchDebugLog)g.matchDebugLog=[];const entry={t:Date.now(),type};if(data&&typeof data==='object'){for(const k in data){try{entry[k]=data[k]}catch{}}}g.matchDebugLog.push(entry);if(g.matchDebugLog.length>3000)g.matchDebugLog.shift()}
 function sanitizeForLog(obj,depth=0){if(depth>6)return'[deep]';if(obj===null||obj===undefined)return obj;const t=typeof obj;if(t==='function')return'[fn]';if(t==='string'||t==='number'||t==='boolean')return obj;if(Array.isArray(obj))return obj.map(x=>sanitizeForLog(x,depth+1));if(t==='object'){const out={};for(const k in obj){try{out[k]=sanitizeForLog(obj[k],depth+1)}catch{out[k]='[err]'}}return out}return String(obj)}
-function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),discardedKitty:(g.discardedKitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
+function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid,bidPlan:g.contract.bidPlan}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),discardedKitty:(g.discardedKitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
 function downloadLog(){try{const payload=buildLogPayload();const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const ts=new Date().toISOString().replace(/[:.]/g,'-');a.href=url;a.download='napoleon-log-'+ts+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);toast('ログをダウンロードしました')}catch(e){console.error('download failed',e);toast('ダウンロードに失敗しました: '+e.message)}}
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards,discardedKitty:g.discardedKitty||[]}}
@@ -309,6 +311,7 @@ function roundStart(){
   g.allianceKittyPoints=0;
   g.discard = new Set();
   g.selectedCard = null;
+  g.bidHistory = [];
   stopTurnTimer();
   $('game-screen')?.classList.remove('discarding');
   $('hand')?.classList.remove('discard-mode');
@@ -449,7 +452,7 @@ function auctionStart(){
   showOpenKitty();
   g.appealInfo='';
   const rule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null;
-  g.auction={active:rule?rule.eligible:[0,1,2,3,4],minBid:rule?.minBid||13,high:{num:12,suit:'',player:-1,solo:false},version:0,autoApprove:Array(5).fill(false),botBids:Array(5).fill(0),botSeen:Array(5).fill(-1),requiredBidSeat:null};
+  g.auction={active:rule?rule.eligible:[0,1,2,3,4],minBid:rule?.minBid||13,high:{num:12,suit:'',player:-1,solo:false},version:0,autoApprove:Array(5).fill(false),botBids:Array(5).fill(0),botSeen:Array(5).fill(-1),requiredBidSeat:null,bidPlans:{}};
   g.bid=g.auction.minBid;
   g.active=-1;
   if (!rule) { enterAuction(); return; }
@@ -500,7 +503,10 @@ function removeBid(i){g.auction.active=g.auction.active.filter(x=>x!==i)}
 function scheduleComBids(){
   if(g.phase!=='auction')return;
   const version=g.auction.version;
-  for(let i=1;i<5;i++){ if(g.auction.active.includes(i) && g.auction.botSeen[i]<version) later(()=>comBid(i,version), 300+Math.random()*1000); }
+  for(let i=1;i<5;i++){ 
+    if(g.auction.active.includes(i) && g.auction.botSeen[i]<version) 
+      later(()=>comBid(i,version), 500+Math.random()*800); 
+  }
 }
 
 function humanApprove(forced=false){
@@ -560,8 +566,8 @@ function comBid(i,version){
   if(g.auction.high.player===i){ if(g.auction.active.length===1)auctionEnd(i); return; }
   const h=g.players[i].hand;
   const currentBids=(g.bidHistory||[]).filter(b=>b.round===g.round);
-  // ★ 修正: shouldBid に matchScores を渡す
-  const aiBid=shouldBid(h,g.auction.high,g.auction.minBid||13,g.aiWeights,currentBids,i,g.aiExperience,g.matchScores);
+  // ★ 修正: shouldBid に matchScores と openKitty を渡す
+  const aiBid=shouldBid(h,g.auction.high,g.auction.minBid||13,g.aiWeights,currentBids,i,g.aiExperience,g.matchScores,g.kitty);
   const forcedStand=(g.auction.requiredBidSeat===i)||(g.round>=10&&g.auction.high.num<13&&g.auction.active[0]===i);
   let b=null;
   if(aiBid&&beatsBid(aiBid.num,aiBid.suit)){ b={num:aiBid.num,suit:aiBid.suit,solo:aiBid.solo===true}; }
@@ -572,6 +578,11 @@ function comBid(i,version){
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.botBids[i]++;
     g.auction.high={num:b.num,suit:b.suit,player:i,solo:b.solo===true};
+    // ★ 追加: ビッドプランを保存
+    if (aiBid && aiBid.plan) {
+      g.auction.bidPlans = g.auction.bidPlans || {};
+      g.auction.bidPlans[i] = aiBid.plan;
+    }
     if(g.auction.requiredBidSeat===i)g.auction.requiredBidSeat=null;
     g.auction.version++;
     g.active=i;
@@ -602,7 +613,8 @@ function auctionEnd(w){
   const suit=g.auction.high.suit;
   const strengthAtBid=suit==='NT'?ntHandStrength(g.players[w].hand,g.aiWeights):colorStrength(g.players[w].hand,suit,g.aiWeights);
   const isSoloBid = g.auction.high.solo === true;
-  g.contract={nap:w,num:g.auction.high.num,suit,deputy:-1,solo:isSoloBid,revealTrickNo:null,strengthAtBid};
+  // ★ 追加: ビッドプランをcontractに保存
+  g.contract={nap:w,num:g.auction.high.num,suit,deputy:-1,solo:isSoloBid,revealTrickNo:null,strengthAtBid,bidPlan:g.auction.bidPlans?.[w]||null};
   if (w === g.mySeat && g.humanRoundLog) g.humanRoundLog.bid = { strengthKey: quantizeStrength(strengthAtBid), trumpType: suit === 'NT' ? 'NT' : 'color', num: g.auction.high.num };
   addDebugLog('contract-set',{nap:w,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,strengthAtBid,highBid:g.auction.high,bidHistory:sanitizeForLog(g.bidHistory)});
   addGameLog(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言を確定');
@@ -812,13 +824,13 @@ function cardPower(entry,trick,trickNo=0,strictAllSame=false){
 }
 function winning(trick=g.trick,strictAllSame=false){return trick.reduce((best,e)=>cardPower(e,trick,g.trickNo,strictAllSame)>cardPower(best,trick,g.trickNo,strictAllSame)?e:best,trick[0])}
 
-// ★ 修正: 並列Workerに渡すctxに bidHistory と matchScores を追加
+// ★ 修正: 並列Workerに渡すctxに bidHistory / matchScores / bidPlan を追加
 async function computeBotPlay(seat){
   const hand=g.players[seat].hand;
   const legalCardsList=legal(seat);
   if(!legalCardsList.length) return { card: null, source: 'エラー(手札なし)' };
 
-  const contract={nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,revealedCall:g.contract.revealedCall,call:g.contract.call};
+  const contract={nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,revealedCall:g.contract.revealedCall,call:g.contract.call,bidPlan:g.contract.bidPlan};
   const trick=g.trick.map(x=>({seat:x.player,card:x.card}));
   const deputyPts=(!g.contract.solo&&g.contract.deputy>=0)?(g.points[g.contract.deputy]||0):0;
   const currentNapPoints=(g.points[g.contract.nap]||0)+deputyPts;
@@ -930,7 +942,7 @@ async function computeBotPlay(seat){
     });
   });
 }
-// ===== [app.js 前半 終了]
+// ===== [app.js 前半 終了] =====
 
 // ===== [app.js 後半 開始] =====
 function playTurn(){
@@ -1812,6 +1824,3 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
-
-
-  
