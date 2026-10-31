@@ -58,6 +58,10 @@ export const defaultStrategy = () => ({
   bidTimeBudgetMs: 400, bidMaxSamples: 500, bidSafetyMargin: 1.5, bidSimCount: 30,
   // 計画精度評価（自己対戦学習用）
   planAccuracyWeight: 1.0, overbidPenalty: 2.0, underbidPenalty: 0.5, planAccuracyBonus: 1.5,
+  // ★ 追加: 負け周数ごとの想定失点数テーブル（後で自己対戦で最適化可能）
+  // 添字が「負け周数」、値が「その周で失うと想定される得点札の枚数」
+  lossPointMap: [0, 3, 5, 6, 7, 9, 11, 13, 15, 17, 20],
+  
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -181,7 +185,11 @@ export const PARAM_BOUNDS = {
   napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
   bidTimeBudgetMs: [100, 1000], bidMaxSamples: [50, 1000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
   planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0],
-  underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0]
+  underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
+  // lossPointMapの各要素の境界（配列のため個別に定義）
+  lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
+  lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
+  lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20]
 };
 
 export const mutateStrategy = (base, rate) => {
@@ -194,6 +202,21 @@ export const mutateStrategy = (base, rate) => {
       }
       continue;
     }
+    // lossPointMap の突然変異（配列）
+    if (k === 'lossPointMap') {
+      out.lossPointMap = [...out.lossPointMap];
+      for (let i = 1; i < out.lossPointMap.length; i++) {
+        if (Math.random() < 0.1) {
+          const delta = (Math.random() * 2 - 1) * rate;
+          let val = out.lossPointMap[i] + delta;
+          const [min, max] = PARAM_BOUNDS[`lossPointMap_${i}`] || [0, 20];
+          val = Math.max(min, Math.min(max, val));
+          out.lossPointMap[i] = Math.round(val);
+        }
+      }
+      continue;
+    }
+    
     if (Math.random() < 0.1) {
       const delta = (Math.random() * 2 - 1) * rate;
       let val = out[k] * (1 + delta);
@@ -215,6 +238,10 @@ export const crossoverStrategy = (parentA, parentB) => {
       for (const nk of Object.keys(parentA.nnWeights)) {
         child.nnWeights[nk] = Math.random() < 0.5 ? parentA.nnWeights[nk] : parentB.nnWeights[nk];
       }
+      continue;
+    }
+    if (k === 'lossPointMap') {
+      child.lossPointMap = parentA.lossPointMap.map((v, i) => Math.random() < 0.5 ? v : parentB.lossPointMap[i]);
       continue;
     }
     if (Math.random() < 0.5) child[k] = parentB[k];
