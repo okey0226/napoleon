@@ -12,7 +12,25 @@ function computeBidStrength(hand, suit, params) {
   return colorStrength(hand, suit, params);
 }
 
-function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy) {
+// ★ 追加: 計画精度を計算
+function computePlanAccuracy(plan, actualWins, params) {
+  if (!plan || !Number.isFinite(plan.expectedWins)) return 0;
+  const diff = plan.expectedWins - actualWins;
+  const w = params.planAccuracyWeight ?? 1.0;
+  if (diff > 1.5) {
+    // 過大評価: 期待 > 実績 + 1.5
+    return -Math.min(params.overbidPenalty ?? 2.0, (diff - 1.5) * 1.5) * w;
+  } else if (diff < -2.0) {
+    // 過小評価: 期待 < 実績 - 2.0
+    return -Math.min(params.underbidPenalty ?? 0.5, (-diff - 2.0) * 0.5) * w;
+  } else if (Math.abs(diff) <= 1.0) {
+    // 正確: |期待 - 実績| <= 1.0
+    return (params.planAccuracyBonus ?? 1.5) * w;
+  }
+  return 0;
+}
+
+function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid, revealTrickNo, takenPoints, nap, deputy, plan, actualWins) {
   const pts = takenPoints || [0, 0, 0, 0, 0];
   const roundData = { nap, deputy, solo: !!solo, num, won: !!won, points: (pts[nap] || 0) + (solo ? 0 : (pts[deputy] || 0)), revealTrickNo, takenPoints: pts, strengthAtBid };
   const napDelta = rateRound(nap, roundData, params, 1);
@@ -21,7 +39,19 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
   for (let s = 0; s < 5; s++) { if (s !== nap && (solo || s !== deputy)) { allySeat = s; break; } }
   const allyDelta = allySeat >= 0 ? rateRound(allySeat, roundData, params, 1) : 0;
   const totalAlliancePoints = pts.reduce((n, v, i) => (i === nap || (!solo && i === deputy)) ? n : n + (v || 0), 0);
-  return { napDelta, deputyDelta, allyDelta, avgAlliancePoints: totalAlliancePoints / (solo ? 4 : 3), p: estimatedWinRate(strengthAtBid, num), diff: Math.max(0, num - 12) };
+  
+  // ★ 追加: 計画精度
+  const planAccuracy = computePlanAccuracy(plan, actualWins, params);
+  
+  return { 
+    napDelta, deputyDelta, allyDelta, 
+    avgAlliancePoints: totalAlliancePoints / (solo ? 4 : 3), 
+    p: estimatedWinRate(strengthAtBid, num), 
+    diff: Math.max(0, num - 12),
+    planAccuracy,
+    expectedWins: plan?.expectedWins ?? null,
+    actualWins
+  };
 }
 
 function simRound(hands, round, matchScores, params, matchBidHistory) {
@@ -29,23 +59,24 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
   const currentBids = matchBidHistory.filter(b => b.round === round);
-  let high = { num: 12, suit: '', player: -1, solo: false };
+  let high = { num: 12, suit: '', player: -1, solo: false, plan: null };
   for (let r = 0; r < 2; r++) {
     for (let s = 0; s < 5; s++) {
-      // ★修正: shouldBid に matchScores を渡す
-      const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s, null, matchScores);
+      // ★修正: shouldBid の新シグネチャ (matchScores, openKitty) に対応
+      const bid = shouldBid(hands[s], high, 13, params[s], currentBids, s, null, matchScores, kitty);
       if (bid && bid.num > high.num) high = { ...bid, player: s };
     }
   }
-  if (high.player < 0) high = { num: 13, suit: SUITS[0], player: matchScores.indexOf(Math.min(...matchScores)), solo: false };
+  if (high.player < 0) high = { num: 13, suit: SUITS[0], player: matchScores.indexOf(Math.min(...matchScores)), solo: false, plan: null };
 
   const nap = high.player, trump = high.suit, num = high.num;
   const isSoloBid = high.solo === true;
+  const plan = high.plan; // ★ ビッドプランを保存
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
   matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
   if (matchBidHistory.length > 50) matchBidHistory.shift();
 
-  const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false };
+  const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
   hands[nap].push(...kitty); sortHand(hands[nap]);
   const discard = chooseDiscard(hands[nap], trump);
   hands[nap] = hands[nap].filter(c => !discard.some(x => x.id === c.id));
@@ -66,6 +97,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   const roundPts = [0, 0, 0, 0, 0];
   const played = [], voids = [{}, {}, {}, {}, {}];
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
+  let napTricks = 0; // ★ NAP軍の勝利トリック数
+  let deputyTricks = 0;
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -96,6 +129,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     const w = winningEntry(contractBase, trickNo, trick);
     const taken = trick.filter(e => ['10', 'J', 'Q', 'K', 'A'].includes(e.card.rank)).length;
     roundPts[w.seat] += taken;
+    if (w.seat === nap) napTricks++;
+    else if (!contractBase.solo && w.seat === deputy) deputyTricks++;
     active = w.seat;
     trickNo++;
     const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
@@ -114,7 +149,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   else { sc[deputy] = sign * unit; for (let i = 0; i < 5; i++) if (i !== nap && i !== deputy) sc[i] = -sign * unit; }
   for (let i = 0; i < 5; i++) matchScores[i] += sc[i];
 
-  return { nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts, strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1, rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy) };
+  const actualWins = napTricks + deputyTricks; // ★ 実際の勝利トリック数
+  
+  return { 
+    nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts, 
+    strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1, 
+    plan, expectedWins: plan?.expectedWins ?? null, actualWins,
+    rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins) 
+  };
 }
 
 export async function runSelfPlayBatch(env, matchCount = 1000) {
@@ -149,7 +191,8 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   }
   const pool = nextPool;
 
-  const stats = pool.map(() => ({ n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0, bidSum: 0, bidN: 0, soloBidN: 0 }));
+  // ★ 修正: planAcc を追加
+  const stats = pool.map(() => ({ n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0, bidSum: 0, bidN: 0, soloBidN: 0, planAccSum: 0, planAccN: 0, overbidN: 0, underbidN: 0 }));
 
   for (let i = 0; i < matchCount; i++) {
     const seatIdx = [], seatParams = [];
@@ -165,7 +208,21 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       st.n++;
       let matchRating = 0;
       for (const c of contracts) {
-        if (c.nap === seat) { st.napN++; st.bidSum += c.num; st.bidN++; if (c.made) st.napW++; if (c.solo) st.soloBidN++; matchRating += c.rating.napDelta || 0; }
+        if (c.nap === seat) { 
+          st.napN++; st.bidSum += c.num; st.bidN++; 
+          if (c.made) st.napW++; 
+          if (c.solo) st.soloBidN++; 
+          matchRating += c.rating.napDelta || 0; 
+          matchRating += c.rating.planAccuracy || 0;
+          // ★ 計画精度を集計
+          if (c.expectedWins != null && c.actualWins != null) {
+            const diff = c.expectedWins - c.actualWins;
+            st.planAccSum += (Math.abs(diff) <= 1.0 ? 1 : 0);
+            st.planAccN++;
+            if (diff > 1.5) st.overbidN++;
+            if (diff < -2.0) st.underbidN++;
+          }
+        }
         else if (!c.solo && c.deputy === seat) { st.depN++; if (c.made) st.depW++; matchRating += c.rating.deputyDelta || 0; }
         else { st.alN++; if (!c.made) st.alW++; matchRating += c.rating.allyDelta || 0; }
       }
@@ -191,8 +248,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     const depRate = st.depN ? st.depW / st.depN : 0;
     const alRate = st.alN ? st.alW / st.alN : 0;
     const avgBid = st.bidN ? st.bidSum / st.bidN : 0;
+    const avgPlanAcc = st.planAccN ? st.planAccSum / st.planAccN : 0; // ★ 計画精度
 
-    statements.push(env.DB.prepare("INSERT INTO ai_strategy_log(generation,params,nap_win_rate,deputy_win_rate,alliance_win_rate,overall_win_rate,avg_rating_delta,matches,avg_bid,parent_id) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(generation, JSON.stringify(pool[i]), napRate, depRate, alRate, napRate, avgRating, st.n, avgBid, parentIds[i] || null));
+    statements.push(env.DB.prepare("INSERT INTO ai_strategy_log(generation,params,nap_win_rate,deputy_win_rate,alliance_win_rate,overall_win_rate,avg_rating_delta,matches,avg_bid,parent_id,avg_plan_accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(generation, JSON.stringify(pool[i]), napRate, depRate, alRate, napRate, avgRating, st.n, avgBid, parentIds[i] || null, avgPlanAcc));
   }
   if (statements.length) await env.DB.batch(statements);
 
@@ -214,10 +272,14 @@ export function generateInsights(strategies) {
   const base = defaultStrategy();
   const topParams = safeJsonParse(strategies[0].params, {}) || {};
   const top = { ...base, ...topParams };
-  const names = { bidThreshold: '立ち強度', riskTolerance: 'リスク許容', leadAggression: 'リード積極性', followAggression: 'フォロー積極性', trumpBonus: '切り札評価', mightyBonus: 'マイティ評価', safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し', teamCooperationWeight: 'チーム連携', feedBonusWeight: 'エサやり', overkillPenalty: 'オーバーキル抑制', mctsSimulations: 'MCTS探索回数', mctsExploration: 'MCTS探索幅', handInferenceWeight: '手札推測', rolloutPolicyWeight: 'ロールアウト方策' };
+  const names = { bidThreshold: '立ち強度', riskTolerance: 'リスク許容', leadAggression: 'リード積極性', followAggression: 'フォロー積極性', trumpBonus: '切り札評価', mightyBonus: 'マイティ評価', safeAceWeight: 'A温存', roleCardPreservation: '役札温存', deputyFeedBias: '副官の絵札回し', teamCooperationWeight: 'チーム連携', feedBonusWeight: 'エサやり', overkillPenalty: 'オーバーキル抑制', mctsSimulations: 'MCTS探索回数', mctsExploration: 'MCTS探索幅', handInferenceWeight: '手札推測', rolloutPolicyWeight: 'ロールアウト方策', planAccuracyWeight: '計画精度の重み', overbidPenalty: '過大評価ペナルティ', underbidPenalty: '過小評価ペナルティ', planAccuracyBonus: '計画精度ボーナス' };
   const deltas = Object.entries(PARAM_BOUNDS).map(([k, [lo, hi]]) => { const cur = top[k] ?? base[k]; return { key: k, name: names[k] || k, delta: (cur - base[k]) / (hi - lo), cur, baseVal: base[k] }; }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   const insights = deltas.slice(0, 3).map(d => ({ title: `${d.name}（${d.delta > 0 ? '増加' : '減少'}）`, detail: `初期値 ${d.baseVal.toFixed(2)} → ${d.cur.toFixed(2)}。改善に寄与した主要パラメータ。` }));
   insights.push({ title: '役割別勝率（最上位戦略）', detail: `ナポレオン時 ${(Number(strategies[0].nap_win_rate || 0) * 100).toFixed(1)}% / 副官時 ${(Number(strategies[0].deputy_win_rate || 0) * 100).toFixed(1)}% / 連合軍時 ${(Number(strategies[0].alliance_win_rate || 0) * 100).toFixed(1)}%` });
+  // ★ 追加: 計画精度のインサイト
+  if (strategies[0].avg_plan_accuracy != null) {
+    insights.push({ title: '計画精度', detail: `競りで立てた計画と実績の一致率: ${(Number(strategies[0].avg_plan_accuracy || 0) * 100).toFixed(1)}%` });
+  }
   const delta = Number(strategies[0].avg_rating_delta || 0);
   insights.push({ title: '平均レート上昇', detail: `1マッチあたり ${delta > 0 ? '+' : ''}${delta.toFixed(2)} pt（${strategies[0].matches}マッチの平均）。` });
   return insights;
