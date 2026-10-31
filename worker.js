@@ -43,6 +43,7 @@ export const schema = [
   "ALTER TABLE players ADD COLUMN infinite_food TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN favorite_standing TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN com_rating INTEGER DEFAULT 1000",
+  "ALTER TABLE ai_strategy_log ADD COLUMN avg_plan_accuracy REAL DEFAULT 0",
   ...quizSchema
 ];
 
@@ -260,6 +261,8 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
+// ===== [worker.js 前半 終了] =====
+
 // ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
@@ -371,7 +374,7 @@ function publicState(m) {
     kitty: m.phase === "auction" ? m.kitty : [],
     revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
-    contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call } : null,
+    contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call, bidPlan: m.contract.bidPlan } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
     trickNo: m.trickNo, deadline: m.deadline, result: m.result || null
   };
@@ -380,8 +383,8 @@ function legalCards(m, seat) { const h = m.seats[seat].hand; if (!m.trick.length
 function publish(m, room) { const pub = publicState(m); for (let seat = 0; seat < m.seats.length; seat++) { const p = m.seats[seat]; if (!p.connId) continue; const c = conns.get(p.connId); if (!c) continue; const view = m.phase === "call" && seat === m.active ? { ...pub, kitty: m.kitty } : pub; try { sendSafe(c, { type: "game-state", state: view, you: seat }); sendSafe(c, { type: "private-hand", hand: p.hand, legal: m.phase === "play" && m.active === seat ? legalCards(m, seat).map(x => x.id) : [] }); } catch (error) { console.warn("match publish failed", m.id, c.id, error); } } }
 function tell(m, room, text) { m.notice = text; publish(m, room); }
 function validBid(m, n, s) { const h = m.auction.high; return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit])); }
-function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat)) return; if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) { if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.round >= 10 && m.auction.high.num < 13) { const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0]; if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.auction.high.player === seat) { if (m.auction.active.length === 1) auctionDone(m, seat, room); else if (forced && !m.auction.autoApprove[seat]) { m.auction.autoApprove[seat] = true; m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。"; publish(m, room); } return; } m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.active = m.auction.active.filter(x => x !== seat); m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。"; if (!m.auction.active.length) { auctionDone(m, -1, room); return; } if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) { const last = m.auction.active[0]; if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; } m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。"; } m.auction.active.forEach(i => { if (m.seats[i].bot) { m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1); m.auction.botAt[i] = Date.now() + 500 + Math.random() * 1300; } }); publish(m, room); }
-function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 400 + Math.random() * 1600; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
+function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat)) return; if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) { if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.round >= 10 && m.auction.high.num < 13) { const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0]; if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.auction.high.player === seat) { if (m.auction.active.length === 1) auctionDone(m, seat, room); else if (forced && !m.auction.autoApprove[seat]) { m.auction.autoApprove[seat] = true; m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。"; publish(m, room); } return; } m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.active = m.auction.active.filter(x => x !== seat); m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。"; if (!m.auction.active.length) { auctionDone(m, -1, room); return; } if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) { const last = m.auction.active[0]; if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; } m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。"; } m.auction.active.forEach(i => { if (m.seats[i].bot) { m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1); m.auction.botAt[i] = Date.now() + 2000 + Math.random() * 1500; } }); publish(m, room); }
+function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 2500 + Math.random() * 2000; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
 function appealDetails(hand) { const held = ['♣J', '♦J', '♥J', '♠J', '♠A'].filter(id => hand.some(card => card.id === id)); return held.length ? held.join(' ') : 'なし'; }
 function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
 function answerAppealOffer(m, seat, appeal, room) {
@@ -405,7 +408,8 @@ function auctionDone(m, seat, room) {
   const bs = defaultStrategy();
   const strengthAtBid = m.auction.high.suit === 'NT' ? ntHandStrength(m.seats[seat].hand, bs) : colorStrength(m.seats[seat].hand, m.auction.high.suit, bs);
   const isSoloBid = m.auction.high.solo === true;
-  m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid };
+  // ★ 追加: ビッドプランをcontractに保存
+  m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid, bidPlan: m.auction.bidPlans?.[seat] || null };
   beginDiscard(m, seat, room);
 }
 function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
@@ -600,9 +604,16 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version; m.botThinkAt = 0;
   if (a.high.player === seat) { if (a.active.length === 1) auctionDone(m, seat, room); return; }
   const h = m.seats[seat].hand, params = m.botStrategy || defaultStrategy(), currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
-  // ★修正: matchScores を渡す
-  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores);
-  if (bid && validBid(m, bid.num, bid.suit)) { a.botBids[seat]++; doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); if (m.phase === "auction") a.botAt[seat] = Date.now() + 2500 + Math.random() * 1800; return; }
+  // ★ 修正: matchScores と openKitty を渡す
+  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores, m.kitty);
+  if (bid && validBid(m, bid.num, bid.suit)) { 
+    a.botBids[seat]++; 
+    // ★ 追加: ビッドプランを保存
+    if (bid.plan) { a.bidPlans = a.bidPlans || {}; a.bidPlans[seat] = bid.plan; }
+    doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); 
+    if (m.phase === "auction") a.botAt[seat] = Date.now() + 3500 + Math.random() * 2500; 
+    return; 
+  }
   if (a.high.player === seat) { if (a.active.length === 1) doApprove(m, seat, room); return; }
   doApprove(m, seat, room);
 }
@@ -830,7 +841,7 @@ export const room = {
       if (m.phase === "prep" && now >= m.deadline) {
         const rule = m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null;
         m.phase = "auction";
-        m.auction = { active: rule ? rule.eligible : [0, 1, 2, 3, 4], minBid: rule?.minBid || 13, high: { num: 12, suit: "", player: -1, solo: false }, version: 0, startedAt: now, lastAction: Array(5).fill(now), autoApprove: Array(5).fill(false), botBids: Array(5).fill(0), botSeen: Array(5).fill(-1), botAt: m.seats.map(() => now + 500 + Math.random() * 2200), requiredBidSeat: null };
+        m.auction = { active: rule ? rule.eligible : [0, 1, 2, 3, 4], minBid: rule?.minBid || 13, high: { num: 12, suit: "", player: -1, solo: false }, version: 0, startedAt: now, lastAction: Array(5).fill(now), autoApprove: Array(5).fill(false), botBids: Array(5).fill(0), botSeen: Array(5).fill(-1), botAt: m.seats.map(() => now + 500 + Math.random() * 2200), requiredBidSeat: null, bidPlans: {} };
         m.active = -1; m.deadline = 0;
         if (rule) { m.appeal = { bottomSeat: rule.bottomSeat, fourthSeat: rule.fourthSeat }; m.appealInfo = ""; m.phase = "appeal-offer"; m.active = rule.bottomSeat; m.deadline = now + 30000; m.notice = "5位は4位にJ・マイティの所持を尋ねられます。"; publish(m, room); if (m.seats[rule.bottomSeat].bot) answerAppealOffer(m, rule.bottomSeat, true, room); }
         else { m.appeal = null; m.appealInfo = ""; m.notice = "競り開始です。宣言するか、承認して競りを降りてください。"; publish(m, room); }
