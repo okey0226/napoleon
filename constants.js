@@ -27,7 +27,7 @@ export const sortHand = (hand) => {
 
 export const defaultStrategy = () => ({
   // 競り
-  bidThreshold: 6.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
+  bidThreshold: 4.5, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
   deputyFeedBias: 0.5, opponentInferenceWeight: 0.4, suitConflictWeight: 0.6,
   mightyShadowWeight: 0.3, weakOpponentBoost: 0.3, bluffLossMultiplier: 0.6,
