@@ -25,12 +25,15 @@ async function readResponse(res) {
 
 const CALIBRATION={13:0.62,14:0.55,15:0.45,16:0.35,17:0.25,18:0.15,19:0.08,20:0.04};
 const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights:{
-  bidThreshold:6.0,riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
+  bidThreshold:4.0,           // ★ 修正A: 6.0 → 4.0（競り緩和）
+  riskTolerance:0.5,leadAggression:0.6,followAggression:0.4,trumpBonus:0.6,mightyBonus:2.0,safeAceWeight:0.7,roleCardPreservation:0.6,deputyFeedBias:0.5,opponentInferenceWeight:0.4,suitConflictWeight:0.6,mightyShadowWeight:0.3,weakOpponentBoost:0.3,bluffLossMultiplier:0.6,cooperationBonus:0.5,ntPreference:0.85,ntSuitLengthBonus:1.2,ntAceWeight:1.5,ntMightyBonus:2.5,highBidNtThreshold:17,aceWeakSuitBonus:0.3,aceShortBonus:0.15,aceLongPenalty:0.15,sameTwoAceCounter:0.3,sameTwoShortBonus:0.4,sameTwoLongPenalty:0.25,sameTwoHighBidBonus:0.2,trumpExhaustionThreshold:3,baitModeWindow:2,baitMinTrumps:4,strongTrumpLeadAggression:0.7,aceCashUrgency:1.0,pointCardSafetyThreshold:0.5,tenHoldThreshold:0.6,nonTrumpAceWaiting:0.5,baitBackJWindow:3,baitBackJChance:0.6,faceCardOnNapWin:0.9,preserveNextStronger:0.9,deputyRevealUrgency:0.5,deputyCoverWeight:0.5,sameTwoDeputyBonus:0.5,allyFaceCardBonus:0.9,napWeaknessLeadWeight:0.8,trumpAvoidWeight:0.9,sameColorSuitAvoid:0.8,spadeLeadPriority:0.7,nonDeclaredSuitWeight:0.6,queenHoardWeight:0.6,sameTwoHoardWeight:0.5,allyYieldBonus:0.5,allySameTwoLeadChance:0.55,allySameTwoWindow:4,
   teamCooperationWeight:1.5,feedBonusWeight:1.0,overkillPenalty:1.0,mctsSimulations:150,mctsExploration:1.414,handInferenceWeight:0.5,rolloutPolicyWeight:0.8,bayesUpdateRate:0.05,
   ntMightyHoldThreshold:8,ntMightyShadowWeight:1.5,ntAceLeadPriority:1.2,ntVoidExploitWeight:1.5,ntDeputyFeedChance:0.8,ntEarlyLeadAggression:0.7,ntLateGameSafety:1.0,
   ntAceProtectLeadWeight:1.5,ntSameTwoGuardWeight:1.2,allyVoidExploitWeight:1.0,deputyBluffWeight:0.8,ntDeputyMightyHoldThreshold:8,ntMightyEmergencyTrick:5,
   napEarlyTrumpLeadWeight:1.5,napEarlyTrumpLeadMaxTrick:3,napEarlyTrumpMinCount:4,deputyOvertrumpWeight:1.8,
-  bidTimeBudgetMs:400,bidMaxSamples:500,bidSafetyMargin:1.5,bidSimCount:30,
+  bidTimeBudgetMs:400,bidMaxSamples:500,
+  bidSafetyMargin:0.5,       // ★ 修正A: 1.5 → 0.5（競り緩和）
+  bidSimCount:30,
   planAccuracyWeight:1.0,overbidPenalty:2.0,underbidPenalty:0.5,planAccuracyBonus:1.5
 },players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[]};
 let toastTimer;
@@ -572,6 +575,14 @@ function comBid(i,version){
   let b=null;
   if(aiBid&&beatsBid(aiBid.num,aiBid.suit)){ b={num:aiBid.num,suit:aiBid.suit,solo:aiBid.solo===true}; }
   else if(forcedStand){ const suit=strongestSuit(h);const num=g.auction.minBid||13; b={num,suit,solo:false}; }
+  // ★ 修正D: デッドロック保険（誰も立っていない時の強制立候補）
+  else if (!g.auction.high || g.auction.high.num < 13) {
+    if (Math.random() < 0.2) {
+      const suit = strongestSuit(h);
+      b = { num: g.auction.minBid || 13, suit, solo: false };
+      addDebugLog('comBid-deadlock-breaker', { seat: i, suit, num: b.num });
+    }
+  }
   if(b){
     g.bidHistory.push({round:g.round,seat:i,num:b.num,suit:b.suit});
     addGameLog(name(i)+'が'+b.num+b.suit+'を宣言');
