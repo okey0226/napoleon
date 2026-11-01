@@ -27,7 +27,7 @@ export const sortHand = (hand) => {
 
 export const defaultStrategy = () => ({
   // 競り
-  bidThreshold: 4.5, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
+  bidThreshold: 3.5, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
   deputyFeedBias: 0.5, opponentInferenceWeight: 0.4, suitConflictWeight: 0.6,
   mightyShadowWeight: 0.3, weakOpponentBoost: 0.3, bluffLossMultiplier: 0.6,
@@ -55,12 +55,12 @@ export const defaultStrategy = () => ({
   // 副官のオーバートランプ
   deputyOvertrumpWeight: 1.8,
   // ビッドシミュレーション（PIMC）
-  bidTimeBudgetMs: 400, bidMaxSamples: 500, bidSafetyMargin: 1.5, bidSimCount: 30,
+  bidTimeBudgetMs: 400, bidMaxSamples: 500, bidSafetyMargin: 0.5, bidSimCount: 30,
   // 計画精度評価（自己対戦学習用）
   planAccuracyWeight: 1.0, overbidPenalty: 2.0, underbidPenalty: 0.5, planAccuracyBonus: 1.5,
-  // ★ 追加: 負け周数ごとの想定失点数テーブル（後で自己対戦で最適化可能）
-  // 添字が「負け周数」、値が「その周で失うと想定される得点札の枚数」
-  lossPointMap: [0, 3, 5, 6, 7, 9, 11, 13, 15, 17, 20],
+  // 勝ち周・負け周ごとの想定得点/失点テーブル
+  winPointMap: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
+  lossPointMap: [0, 2, 4, 5, 7, 9, 11, 13, 15, 17, 20],
   
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
@@ -186,7 +186,9 @@ export const PARAM_BOUNDS = {
   bidTimeBudgetMs: [100, 1000], bidMaxSamples: [50, 1000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
   planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0],
   underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
-  // lossPointMapの各要素の境界（配列のため個別に定義）
+  winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
+  winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
+  winPointMap_8: [8, 20], winPointMap_9: [9, 20], winPointMap_10: [10, 20],
   lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
   lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
   lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20]
@@ -202,16 +204,15 @@ export const mutateStrategy = (base, rate) => {
       }
       continue;
     }
-    // lossPointMap の突然変異（配列）
-    if (k === 'lossPointMap') {
-      out.lossPointMap = [...out.lossPointMap];
-      for (let i = 1; i < out.lossPointMap.length; i++) {
+    if (k === 'lossPointMap' || k === 'winPointMap') {
+      out[k] = [...out[k]];
+      for (let i = 1; i < out[k].length; i++) {
         if (Math.random() < 0.1) {
           const delta = (Math.random() * 2 - 1) * rate;
-          let val = out.lossPointMap[i] + delta;
-          const [min, max] = PARAM_BOUNDS[`lossPointMap_${i}`] || [0, 20];
+          let val = out[k][i] + delta;
+          const [min, max] = PARAM_BOUNDS[`${k}_${i}`] || [0, 20];
           val = Math.max(min, Math.min(max, val));
-          out.lossPointMap[i] = Math.round(val);
+          out[k][i] = Math.round(val);
         }
       }
       continue;
@@ -240,8 +241,8 @@ export const crossoverStrategy = (parentA, parentB) => {
       }
       continue;
     }
-    if (k === 'lossPointMap') {
-      child.lossPointMap = parentA.lossPointMap.map((v, i) => Math.random() < 0.5 ? v : parentB.lossPointMap[i]);
+    if (k === 'lossPointMap' || k === 'winPointMap') {
+      child[k] = parentA[k].map((v, i) => Math.random() < 0.5 ? v : parentB[k][i]);
       continue;
     }
     if (Math.random() < 0.5) child[k] = parentB[k];
