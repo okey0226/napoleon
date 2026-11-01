@@ -103,7 +103,6 @@ async function forceInitDB(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    // ★修正: 50マッチに減らしてタイムアウトを防ぐ
     ctx.waitUntil(runSelfPlayBatch(env, 50).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
@@ -268,15 +267,11 @@ export default {
         return response(results);
       }
       
-      // ... 既存のコード（/api/ai/weights など） ...
-      
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
 // ===== [worker.js 前半 終了] =====
-
-
 // ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
@@ -422,7 +417,6 @@ function auctionDone(m, seat, room) {
   const bs = defaultStrategy();
   const strengthAtBid = m.auction.high.suit === 'NT' ? ntHandStrength(m.seats[seat].hand, bs) : colorStrength(m.seats[seat].hand, m.auction.high.suit, bs);
   const isSoloBid = m.auction.high.solo === true;
-  // ★ 追加: ビッドプランをcontractに保存
   m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid, bidPlan: m.auction.bidPlans?.[seat] || null };
   beginDiscard(m, seat, room);
 }
@@ -618,11 +612,10 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version; m.botThinkAt = 0;
   if (a.high.player === seat) { if (a.active.length === 1) auctionDone(m, seat, room); return; }
   const h = m.seats[seat].hand, params = m.botStrategy || defaultStrategy(), currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
-  // ★ 修正: matchScores と openKitty を渡す
-  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores, m.kitty);
+  // ★ 修正: playedCards と voids を渡す
+  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores, m.kitty, m.playedCards, m.voids);
   if (bid && validBid(m, bid.num, bid.suit)) { 
     a.botBids[seat]++; 
-    // ★ 追加: ビッドプランを保存
     if (bid.plan) { a.bidPlans = a.bidPlans || {}; a.bidPlans[seat] = bid.plan; }
     doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); 
     if (m.phase === "auction") a.botAt[seat] = Date.now() + 3500 + Math.random() * 2500; 
@@ -664,7 +657,6 @@ function botAction(m, room) {
       params, call: m.contract.call, currentNapPoints, experience,
       points: m.seats.map(s => s.points || 0),
       allianceKittyPoints: m.allianceKittyPoints || 0,
-      // ★追加
       bidHistory: m.bidHistory || [],
       matchScores: m.matchScores || [0,0,0,0,0]
     };
