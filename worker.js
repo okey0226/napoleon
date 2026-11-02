@@ -1,6 +1,11 @@
 // ===== [worker.js 前半 開始] =====
-import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS } from './constants.js';
-import { winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard, isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength } from './ai-tactics.js';
+import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS, isSameColorSuit, sameColorSuitOf } from './constants.js';
+import {
+  winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard,
+  isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength,
+  computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
+  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer
+} from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 import { handleQuizRequest, quizSchema } from './quiz-api.js';
 
@@ -109,11 +114,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ★追加: 手動で自己対戦を実行するためのデバッグ用API
     if (request.method === "GET" && url.pathname === "/api/dev/run-selfplay") {
       try {
         await forceInitDB(env);
-        const result = await runSelfPlayBatch(env, 10); // テスト用に10マッチ
+        const result = await runSelfPlayBatch(env, 10);
         return response({ ok: true, message: "Self-play executed", result });
       } catch (e) {
         return response({ error: e.message, stack: e.stack }, { status: 500 });
@@ -274,7 +278,13 @@ export default {
 // ===== [worker.js 前半 終了] =====
 // ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
-async function getProfile(env, conn) { const userId = conn.authUserId || conn.userId; if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" }; const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first(); return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null }; }
+
+async function getProfile(env, conn) {
+  const userId = conn.authUserId || conn.userId;
+  if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" };
+  const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first();
+  return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null };
+}
 
 async function beginMatch(kind, roomCode, group, room, env) {
   if (kind === "ranked") {
@@ -289,6 +299,7 @@ async function beginMatch(kind, roomCode, group, room, env) {
     }
   }
   const id = Math.random().toString(36).slice(2, 12).toUpperCase();
+  const newBidSignals = () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 });
   const seats = group.map(x => ({
     connId: x.id, originalConnId: x.id,
     originalUserId: x.player.userId || null,
@@ -296,9 +307,16 @@ async function beginMatch(kind, roomCode, group, room, env) {
     originalPlayerId: x.player.playerId || "player",
     browserId: x.browserId || null,
     disconnectedAt: null, abandoned: false,
-    player: x.player, bot: false, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0
+    player: x.player, bot: false, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0,
+    bidSignals: newBidSignals()
   }));
-  while (seats.length < 5) seats.push({ connId: null, originalConnId: null, originalUserId: null, originalPlayerName: null, originalPlayerId: null, browserId: null, disconnectedAt: null, abandoned: false, player: { username: "COM " + (seats.length + 1), playerId: "COM", rating: 1000, games: 0 }, bot: true, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0 });
+  while (seats.length < 5) seats.push({
+    connId: null, originalConnId: null, originalUserId: null, originalPlayerName: null, originalPlayerId: null,
+    browserId: null, disconnectedAt: null, abandoned: false,
+    player: { username: "COM " + (seats.length + 1), playerId: "COM", rating: 1000, games: 0 },
+    bot: true, hand: [], points: 0, taken: [], roundTaken: [], roundPoints: 0,
+    bidSignals: newBidSignals()
+  });
   const m = {
     id, kind, code: roomCode, seats: seats.slice(0, 5), created: Date.now(), botLevel: 3,
     matchScores: Array(5).fill(0), matchArt: Array(5).fill(0), matchContracts: [], bidHistory: [],
@@ -308,20 +326,32 @@ async function beginMatch(kind, roomCode, group, room, env) {
     phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], openKitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
     auction: null, contract: null, deadline: Date.now() + 7000, lastBot: 0, botThinkAt: 0, humanAutoPlayAt: null,
     notice: "配札しました。競り開始まで7秒です。",
-    playedCards: [], voids: [{}, {}, {}, {}, {}], allianceKittyPoints: 0
+    playedCards: [], voids: [{}, {}, {}, {}, {}], allianceKittyPoints: 0,
+    properBids: [13, 13, 13, 13, 13],
+    properPlans: [null, null, null, null, null],
+    auctionStartAt: 0,
+    properRecomputed: false
   };
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
-  if (env?.DB) { loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {}); loadExperience(env).then(e => { m.botExperience = e; }).catch(() => {}); }
+  if (env?.DB) {
+    loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {});
+    loadExperience(env).then(e => { m.botExperience = e; }).catch(() => {});
+  }
   const players = m.seats.map((x, seat) => ({ seat, id: x.player.playerId, username: x.player.username, rating: x.player.rating, bot: x.bot, abandoned: false }));
   group.forEach((x, seat) => sendSafe(x.conn, { type: "matched", matchId: id, mode: kind, code: roomCode || null, players, seat, botCount: 5 - group.length }));
   deal(m);
   publish(m, room);
 }
+
 function deal(m) {
   m.lastTrickWinner = null; m.humanAutoPlayAt = null; m.botThinkAt = null;
   const d = shuffledDeck();
-  m.seats.forEach(p => { p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0; sortHand(p.hand); });
+  m.seats.forEach(p => {
+    p.hand = d.splice(0, 10); p.points = 0; p.taken = []; p.roundTaken = []; p.roundPoints = 0;
+    sortHand(p.hand);
+    p.bidSignals = { sent: null, received: [], sameColorCount: 0, lastBidAt: 0 };
+  });
   m.kitty = d.splice(0, 2);
   m.openKitty = m.kitty.slice();
   m.discardedKitty = [];
@@ -331,6 +361,10 @@ function deal(m) {
   m.deadline = Date.now() + 7000;
   m.playedCards = []; m.voids = [{}, {}, {}, {}, {}]; m.allianceKittyPoints = 0;
   m.notice = "競り開始まで7秒です。";
+  m.properBids = [13, 13, 13, 13, 13];
+  m.properPlans = [null, null, null, null, null];
+  m.auctionStartAt = 0;
+  m.properRecomputed = false;
   const green = m.seats.findIndex(p => !p.hand.some(c => ["10", "J", "Q", "K", "A"].includes(c.rank)));
   if (green >= 0 && m.redraws < 5) {
     m.redraws++; m.mult = m.mult + 1; m.phase = "redeal";
@@ -338,8 +372,17 @@ function deal(m) {
     m.deadline = Date.now() + 1800;
   }
 }
-function finalAuctionRule(scores, mult = 1) { const ranked = scores.map((score, seat) => ({ score, seat })).sort((a, b) => a.score - b.score || a.seat - b.seat), cutoff = ranked[1]?.score ?? 0, gap = Math.max(0, (ranked[1]?.score ?? 0) - (ranked[0]?.score ?? 0)), rawMin = 13 + Math.floor(gap / (6 * Math.max(1, mult))); return { eligible: ranked.filter(x => x.score <= cutoff).map(x => x.seat), bottomSeat: ranked[0]?.seat, fourthSeat: ranked[1]?.seat, thirdSeat: ranked[2]?.seat, thirdScore: ranked[2]?.score, minBid: Math.min(20, rawMin), canOvertake: rawMin <= 20 }; }
+
+function finalAuctionRule(scores, mult = 1) {
+  const ranked = scores.map((score, seat) => ({ score, seat })).sort((a, b) => a.score - b.score || a.seat - b.seat);
+  const cutoff = ranked[1]?.score ?? 0;
+  const gap = Math.max(0, (ranked[1]?.score ?? 0) - (ranked[0]?.score ?? 0));
+  const rawMin = 13 + Math.floor(gap / (6 * Math.max(1, mult)));
+  return { eligible: ranked.filter(x => x.score <= cutoff).map(x => x.seat), bottomSeat: ranked[0]?.seat, fourthSeat: ranked[1]?.seat, thirdSeat: ranked[2]?.seat, thirdScore: ranked[2]?.score, minBid: Math.min(20, rawMin), canOvertake: rawMin <= 20 };
+}
+
 function soloMinimumBid(gap, mult) { return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult))); }
+
 function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
   const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i);
   const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s;
@@ -360,8 +403,38 @@ function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
   }
   return null;
 }
-function isSoloForcedInMatch(m) { if (m.round < 10 || !m.contract) return false; const ranked = m.matchScores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i); const bottomSeat = ranked[0].i; if (m.contract.nap !== bottomSeat) return false; const fourthSeat = ranked[1].i; const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat); return r?.soloRequired === true; }
-function isSafeToCashAceInMatch(m, suit, seat) { if (!m.contract) return false; if (suit === '♠') return true; if (m.trickNo > 0) { const twoPlayed = m.playedCards.some(c => c.id === suit + '2') || (m.discardedKitty || []).some(c => c.id === suit + '2'); if (!twoPlayed) { const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]); if (!anyVoid) return false; } } if (m.contract.suit !== 'NT' && m.contract.suit !== suit) { for (let s = 0; s < 5; s++) { if (s === seat) continue; if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; } else { if (s === m.contract.nap) continue; } if (m.voids[s] && m.voids[s][suit]) return false; } } return true; }
+
+function isSoloForcedInMatch(m) {
+  if (m.round < 10 || !m.contract) return false;
+  const ranked = m.matchScores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i);
+  const bottomSeat = ranked[0].i;
+  if (m.contract.nap !== bottomSeat) return false;
+  const fourthSeat = ranked[1].i;
+  const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat);
+  return r?.soloRequired === true;
+}
+
+function isSafeToCashAceInMatch(m, suit, seat) {
+  if (!m.contract) return false;
+  if (suit === '♠') return true;
+  if (m.trickNo > 0) {
+    const twoPlayed = m.playedCards.some(c => c.id === suit + '2') || (m.discardedKitty || []).some(c => c.id === suit + '2');
+    if (!twoPlayed) {
+      const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]);
+      if (!anyVoid) return false;
+    }
+  }
+  if (m.contract.suit !== 'NT' && m.contract.suit !== suit) {
+    for (let s = 0; s < 5; s++) {
+      if (s === seat) continue;
+      if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; }
+      else { if (s === m.contract.nap) continue; }
+      if (m.voids[s] && m.voids[s][suit]) return false;
+    }
+  }
+  return true;
+}
+
 function publicState(m) {
   return {
     matchId: m.id, mode: m.kind, code: m.code, botLevel: m.botLevel, phase: m.phase, round: m.round, mult: m.mult,
@@ -388,20 +461,122 @@ function publicState(m) {
     trickNo: m.trickNo, deadline: m.deadline, result: m.result || null
   };
 }
-function legalCards(m, seat) { const h = m.seats[seat].hand; if (!m.trick.length) return h; const led = m.trick[0].card.suit, follow = h.filter(c => c.suit === led); return follow.length ? follow : h; }
-function publish(m, room) { const pub = publicState(m); for (let seat = 0; seat < m.seats.length; seat++) { const p = m.seats[seat]; if (!p.connId) continue; const c = conns.get(p.connId); if (!c) continue; const view = m.phase === "call" && seat === m.active ? { ...pub, kitty: m.kitty } : pub; try { sendSafe(c, { type: "game-state", state: view, you: seat }); sendSafe(c, { type: "private-hand", hand: p.hand, legal: m.phase === "play" && m.active === seat ? legalCards(m, seat).map(x => x.id) : [] }); } catch (error) { console.warn("match publish failed", m.id, c.id, error); } } }
+
+function legalCards(m, seat) {
+  const h = m.seats[seat].hand;
+  if (!m.trick.length) return h;
+  const led = m.trick[0].card.suit, follow = h.filter(c => c.suit === led);
+  return follow.length ? follow : h;
+}
+
+function publish(m, room) {
+  const pub = publicState(m);
+  for (let seat = 0; seat < m.seats.length; seat++) {
+    const p = m.seats[seat]; if (!p.connId) continue;
+    const c = conns.get(p.connId); if (!c) continue;
+    const view = m.phase === "call" && seat === m.active ? { ...pub, kitty: m.kitty } : pub;
+    try {
+      sendSafe(c, { type: "game-state", state: view, you: seat });
+      sendSafe(c, { type: "private-hand", hand: p.hand, legal: m.phase === "play" && m.active === seat ? legalCards(m, seat).map(x => x.id) : [] });
+    } catch (error) { console.warn("match publish failed", m.id, c.id, error); }
+  }
+}
+
 function tell(m, room, text) { m.notice = text; publish(m, room); }
-function validBid(m, n, s) { const h = m.auction.high; return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit])); }
-function doApprove(m, seat, room, forced = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat)) return; if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) { if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.round >= 10 && m.auction.high.num < 13) { const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0]; if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room); return; } if (m.auction.high.player === seat) { if (m.auction.active.length === 1) auctionDone(m, seat, room); else if (forced && !m.auction.autoApprove[seat]) { m.auction.autoApprove[seat] = true; m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。"; publish(m, room); } return; } m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.active = m.auction.active.filter(x => x !== seat); m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。"; if (!m.auction.active.length) { auctionDone(m, -1, room); return; } if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) { const last = m.auction.active[0]; if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; } m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。"; } m.auction.active.forEach(i => { if (m.seats[i].bot) { m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1); m.auction.botAt[i] = Date.now() + 2000 + Math.random() * 1500; } }); publish(m, room); }
-function doBid(m, seat, n, s, room, solo = false) { if (m.phase !== "auction" || !m.auction.active.includes(seat) || m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat || !validBid(m, n, s)) return; m.bidHistory.push({ round: m.round, seat, num: n, suit: s }); if (m.bidHistory.length > 50) m.bidHistory.shift(); m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; m.auction.high = { num: n, suit: s, player: seat, solo: solo === true }; if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null; m.auction.version++; m.active = seat; m.auction.botAt.forEach((_, i) => { if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 2500 + Math.random() * 2000; }); for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true); if (m.phase !== "auction") return; m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。"; if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; } publish(m, room); }
-function appealDetails(hand) { const held = ['♣J', '♦J', '♥J', '♠J', '♠A'].filter(id => hand.some(card => card.id === id)); return held.length ? held.join(' ') : 'なし'; }
-function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) { m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0; m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room); }
+
+function validBid(m, n, s) {
+  const h = m.auction.high;
+  return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit]));
+}
+
+function doApprove(m, seat, room, forced = false) {
+  if (m.phase !== "auction" || !m.auction.active.includes(seat)) return;
+  if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) {
+    if (forced && seat === m.auction.requiredBidSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room);
+    return;
+  }
+  if (m.round >= 10 && m.auction.high.num < 13) {
+    const forcedSeat = m.auction.requiredBidSeat ?? m.auction.active[0];
+    if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room);
+    return;
+  }
+  if (m.auction.high.player === seat) {
+    if (m.auction.active.length === 1) {
+      // Q28=B: 全員承認後、適正値まで段階上げを続ける
+      const properBid = m.properBids[seat] || 13;
+      if (m.auction.high.num < properBid) {
+        const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
+        m.auction.botAt[seat] = Date.now() + pacingMs;
+        m.auction.botSeen[seat] = -1;
+        m.notice = m.seats[seat].player.username + "が適正値（" + properBid + "）まで段階上げ中…";
+        publish(m, room);
+        return;
+      }
+      auctionDone(m, seat, room);
+    } else if (forced && !m.auction.autoApprove[seat]) {
+      m.auction.autoApprove[seat] = true;
+      m.notice = m.seats[seat].player.username + "は30秒操作がなかったため、自動承認待ちです。";
+      publish(m, room);
+    }
+    return;
+  }
+  m.auction.lastAction[seat] = Date.now();
+  m.auction.autoApprove[seat] = false;
+  m.auction.active = m.auction.active.filter(x => x !== seat);
+  m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。";
+  if (!m.auction.active.length) { auctionDone(m, -1, room); return; }
+  if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) {
+    const last = m.auction.active[0];
+    if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; }
+    m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。";
+  }
+  m.auction.active.forEach(i => {
+    if (m.seats[i].bot) {
+      m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1);
+      m.auction.botAt[i] = Date.now() + 4000;
+    }
+  });
+  publish(m, room);
+}
+
+function doBid(m, seat, n, s, room, solo = false) {
+  if (m.phase !== "auction" || !m.auction.active.includes(seat) || (m.auction.requiredBidSeat !== null && m.auction.requiredBidSeat !== seat) || !validBid(m, n, s)) return;
+  m.bidHistory.push({ round: m.round, seat, num: n, suit: s });
+  if (m.bidHistory.length > 50) m.bidHistory.shift();
+  m.auction.lastAction[seat] = Date.now();
+  m.auction.autoApprove[seat] = false;
+  m.auction.high = { num: n, suit: s, player: seat, solo: solo === true };
+  if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null;
+  m.auction.version++;
+  m.active = seat;
+  if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
+  m.auction.botAt.forEach((_, i) => {
+    if (m.seats[i].bot && i !== seat && m.auction.active.includes(i)) m.auction.botAt[i] = Date.now() + 4000;
+  });
+  for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true);
+  if (m.phase !== "auction") return;
+  m.notice = m.seats[seat].player.username + "が" + n + s + "を宣言しました。";
+  if (n === 20 && s === "NT") { auctionDone(m, seat, room); return; }
+  publish(m, room);
+}
+
+function appealDetails(hand) {
+  const held = ['♣J', '♦J', '♥J', '♠J', '♠A'].filter(id => hand.some(card => card.id === id));
+  return held.length ? held.join(' ') : 'なし';
+}
+
+function enterAuctionAfterAppeal(m, room, requiredBidSeat = null) {
+  m.auction.requiredBidSeat = requiredBidSeat; m.phase = 'auction'; m.active = -1; m.deadline = 0;
+  m.notice = m.appealInfo || '競り開始です。宣言するか、承認して競りを降りてください。'; publish(m, room);
+}
+
 function answerAppealOffer(m, seat, appeal, room) {
   if (m.phase !== 'appeal-offer' || seat !== m.appeal?.bottomSeat) return;
   if (!appeal) { m.appealInfo = '5位はアピールせず競りへ'; m.phase = 'auction'; m.active = -1; m.notice = '競り開始です。'; m.auction.high = { num: 12, suit: '', player: -1, solo: false }; m.auction.requiredBidSeat = null; publish(m, room); return; }
   m.phase = 'appeal-response'; m.active = m.appeal.fourthSeat; m.deadline = Date.now() + 30000; m.notice = '5位がアピールしました。4位はJ・マイティを申告するか、申告せず立てます。'; publish(m, room);
   if (m.seats[m.active].bot) answerAppealResponse(m, m.active, 'declare', room);
 }
+
 function answerAppealResponse(m, seat, choice, room) {
   if (m.phase !== 'appeal-response' || seat !== m.appeal?.fourthSeat) return;
   const bottom = m.appeal.bottomSeat, fourth = m.appeal.fourthSeat, rule = finalAuctionRule(m.matchScores, m.mult);
@@ -409,19 +584,66 @@ function answerAppealResponse(m, seat, choice, room) {
   else { m.appealInfo = (m.seats[seat].player.playerId || m.seats[seat].player.username) + 'は申告せず立つことを選択。'; m.auction.high = { num: rule.minBid, suit: '♣', player: fourth, solo: false }; m.auction.requiredBidSeat = fourth; m.active = fourth; m.notice = m.appealInfo + '。' + m.seats[fourth].player.username + 'が最低宣言数 ' + rule.minBid + '♣ で立ちました。'; }
   m.phase = 'auction'; m.deadline = 0; publish(m, room);
 }
+
 function auctionDone(m, seat, room) {
   if (seat < 0 || m.auction.high.num < 13) {
-    if (m.round >= 10) { seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat; m.auction.high = { num: m.auction.minBid || 13, suit: strongestSuit(m.seats[seat].hand), player: seat, solo: false }; m.notice = "オールラストは立ち必須。最下位が最低枚数で立ちます。"; }
-    else { m.notice = "宣言なし。配り直します。"; m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return; }
+    if (m.round >= 10) {
+      seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat;
+      m.auction.high = { num: m.auction.minBid || 13, suit: strongestSuit(m.seats[seat].hand), player: seat, solo: false };
+      m.notice = "オールラストは立ち必須。最下位が最低枚数で立ちます。";
+    } else {
+      m.notice = "宣言なし。配り直します。";
+      m.phase = "redeal"; m.deadline = Date.now() + 1800; publish(m, room); return;
+    }
   }
-  const bs = defaultStrategy();
+  // 適正値の再計算（1回のみ）
+  if (!m.properRecomputed) {
+    const proper = computeProperBid(
+      m.seats[seat].hand, m.auction.high.suit, m.botStrategy || defaultStrategy(),
+      seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory
+    );
+    m.properBids[seat] = proper.properBid;
+    m.properPlans[seat] = proper.plan;
+    m.properRecomputed = true;
+  }
+  // Q28=B: 適正値に達していなければ段階上げを続ける
+  const properBid = m.properBids[seat] || 13;
+  if (m.auction.high.num < properBid && m.auction.high.player === seat) {
+    if (!m.auction.active.includes(seat)) m.auction.active.push(seat);
+    const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
+    m.auction.botAt[seat] = Date.now() + pacingMs;
+    m.auction.botSeen[seat] = -1;
+    m.notice = m.seats[seat].player.username + "が適正値（" + properBid + "）まで段階上げ中…";
+    publish(m, room);
+    return;
+  }
+  const bs = m.botStrategy || defaultStrategy();
   const strengthAtBid = m.auction.high.suit === 'NT' ? ntHandStrength(m.seats[seat].hand, bs) : colorStrength(m.seats[seat].hand, m.auction.high.suit, bs);
   const isSoloBid = m.auction.high.solo === true;
-  m.contract = { nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null, solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid, bidPlan: m.auction.bidPlans?.[seat] || null };
+  m.contract = {
+    nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null,
+    solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid,
+    bidPlan: m.properPlans[seat] || m.auction.bidPlans?.[seat] || null
+  };
   beginDiscard(m, seat, room);
 }
-function startPlay(m, room) { const c = m.contract; if (c.solo) c.deputy = c.nap; else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; } m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "カードを出してください。マストフォローです。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
-function beginDiscard(m, seat, room) { m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand); m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room); if (m.seats[seat].bot) botAction(m, room); }
+
+function startPlay(m, room) {
+  const c = m.contract;
+  if (!c) return;
+  if (c.solo) c.deputy = c.nap;
+  else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; }
+  m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
+  m.notice = "カードを出してください。マストフォローです。"; publish(m, room);
+  if (m.seats[m.active].bot) botAction(m, room);
+}
+
+function beginDiscard(m, seat, room) {
+  m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand);
+  m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
+  m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room);
+  if (m.seats[seat].bot) botAction(m, room);
+}
 
 function callCard(m, seat, suit, rank, room) {
   if (m.phase !== "call" || m.active !== seat || !SUITS.includes(suit) || !RANKS.includes(rank)) return;
@@ -562,18 +784,28 @@ async function finish(m, room, env) {
     if (seat.originalUserId) rankedUsers.delete(seat.originalUserId);
   }
 }
-function artfulCard(m, entry, trick) { const c = entry.card, led = trick[0].card.suit, black = s => s === "♣" || s === "♠"; return c.id === "♠A" || c.id === "♥Q" && trick.some(x => x.card.id === "♠A") || c.rank === "J" && m.contract.suit !== "NT" && (c.suit === m.contract.suit || c.suit !== m.contract.suit && black(c.suit) === black(m.contract.suit)) || c.rank === "2" && c.suit === led && trick.every(x => x.card.suit === led); }
+
+function artfulCard(m, entry, trick) {
+  const c = entry.card, led = trick[0].card.suit, black = s => s === "♣" || s === "♠";
+  return c.id === "♠A" || c.id === "♥Q" && trick.some(x => x.card.id === "♠A") || c.rank === "J" && m.contract.suit !== "NT" && (c.suit === m.contract.suit || c.suit !== m.contract.suit && black(c.suit) === black(m.contract.suit)) || c.rank === "2" && c.suit === led && trick.every(x => x.card.suit === led);
+}
+
 function playCard(m, seat, id, room, env) {
   if (m.phase !== "play" || m.active !== seat) return;
   const legal = legalCards(m, seat), card = legal.find(x => x.id === id);
   if (!card) return;
   if (!m.trick.length) m.lastTrickWinner = null;
-  const previous = m.trick.length ? winningEntry(m.contract, m.trickNo, m.trick) : null, hand = m.seats[seat].hand, teamOf = i => i === m.contract.nap || !m.contract.solo && i === m.contract.deputy ? "nap" : "alliance", feedOpportunity = !!(previous && previous.seat !== seat && m.contract.revealedCall && teamOf(previous.seat) === teamOf(seat) && legal.some(x => ["10", "J", "Q", "K", "A"].includes(x.rank))), feedCard = feedOpportunity && ["10", "J", "Q", "K", "A"].includes(card.rank);
+  const previous = m.trick.length ? winningEntry(m.contract, m.trickNo, m.trick) : null;
+  const hand = m.seats[seat].hand;
+  const teamOf = i => i === m.contract.nap || (!m.contract.solo && i === m.contract.deputy) ? "nap" : "alliance";
+  const feedOpportunity = !!(previous && previous.seat !== seat && m.contract.revealedCall && teamOf(previous.seat) === teamOf(seat) && legal.some(x => ["10", "J", "Q", "K", "A"].includes(x.rank)));
+  const feedCard = feedOpportunity && ["10", "J", "Q", "K", "A"].includes(card.rank);
   hand.splice(hand.findIndex(x => x.id === id), 1);
   m.trick.push({ seat, card, feedOpportunity, feedCard });
   m.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat: seat });
   if (m.trick.length > 1) { const ledSuit = m.trick[0].card.suit; if (card.suit !== ledSuit) { if (!m.voids[seat]) m.voids[seat] = {}; m.voids[seat][ledSuit] = true; } }
-  const reveal = m.contract.call?.id === card.id && !m.contract.revealedCall; let raisedNotice = "";
+  const reveal = m.contract.call?.id === card.id && !m.contract.revealedCall;
+  let raisedNotice = "";
   if (reveal) {
     m.contract.revealedCall = true; m.contract.revealTrickNo = m.trickNo;
     if (m.round >= 10 && !m.contract.solo) {
@@ -586,51 +818,150 @@ function playCard(m, seat, id, room, env) {
       }
     }
   }
-  if (previous && m.contract.revealedCall) { const team = x => x === m.contract.nap || x === m.contract.deputy ? "nap" : "alliance"; if (team(seat) === team(previous.seat) && winningEntry(m.contract, m.trickNo, m.trick).seat === seat) m.roundArt[seat]--; }
+  if (previous && m.contract.revealedCall) {
+    const team = x => x === m.contract.nap || x === m.contract.deputy ? "nap" : "alliance";
+    if (team(seat) === team(previous.seat) && winningEntry(m.contract, m.trickNo, m.trick).seat === seat) m.roundArt[seat]--;
+  }
   const revealNotice = m.contract.solo ? "ひとり立ちが判明しました。" : "副官が判明しました。";
   m.humanAutoPlayAt = null;
   m.botThinkAt = null;
-  if (m.trick.length < 5) { m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000; m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。"); publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
-  const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat, taken = m.trick.filter(x => ["10", "J", "Q", "K", "A"].includes(x.card.rank)).map(x => x.card);
-  for (const entry of m.trick) { if (!entry.feedOpportunity) continue; const stat = m.matchStats[entry.seat]; stat.allyFeedAttempts++; if (entry.feedCard && teamOf(w) === teamOf(entry.seat)) { stat.allyFeedSuccesses++; m.roundFeed[entry.seat]++; m.roundArt[entry.seat]++; } }
+  if (m.trick.length < 5) {
+    m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000;
+    m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。");
+    publish(m, room);
+    if (m.seats[m.active].bot) botAction(m, room);
+    return;
+  }
+  const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat;
+  const taken = m.trick.filter(x => ["10", "J", "Q", "K", "A"].includes(x.card.rank)).map(x => x.card);
+  for (const entry of m.trick) {
+    if (!entry.feedOpportunity) continue;
+    const stat = m.matchStats[entry.seat];
+    stat.allyFeedAttempts++;
+    if (entry.feedCard && teamOf(w) === teamOf(entry.seat)) { stat.allyFeedSuccesses++; m.roundFeed[entry.seat]++; m.roundArt[entry.seat]++; }
+  }
   if (taken.length >= 3 && m.roundDrama[w] < 2) { m.matchStats[w].artAttempts++; if (artfulCard(m, winningEntryObj, m.trick)) { m.roundArt[w]++; m.roundDrama[w]++; m.matchStats[w].dramaticPlays++; } }
   m.seats[w].points += taken.length; m.seats[w].taken.push(...taken); m.seats[w].roundTaken.push(...taken); m.seats[w].roundPoints = (m.seats[w].roundPoints || 0) + taken.length;
   m.lastTrickWinner = w; m.active = w;
   const alliancePointsRaw = m.seats.reduce((n, p, i) => n + (i !== m.contract.nap && (m.contract.solo || i !== m.contract.deputy) ? p.points : 0), 0);
   const alliancePoints = alliancePointsRaw + (m.allianceKittyPoints || 0);
-  const napPoints = m.seats.reduce((n, p, i) => n + (i === m.contract.nap || !m.contract.solo && i === m.contract.deputy ? p.points : 0), 0);
-  m.earlyFinish = alliancePoints > 20 - m.contract.num || napPoints >= m.contract.num && (m.contract.num === 20 || alliancePoints >= 1);
-  const isFinalTrick = m.trickNo >= 9, willFinish = m.earlyFinish || isFinalTrick;
+  const napPoints = m.seats.reduce((n, p, i) => n + (i === m.contract.nap || (!m.contract.solo && i === m.contract.deputy) ? p.points : 0), 0);
+  m.earlyFinish = alliancePoints > 20 - m.contract.num || (napPoints >= m.contract.num && (m.contract.num === 20 || alliancePoints >= 1));
+  const isFinalTrick = m.trickNo >= 9;
+  const willFinish = m.earlyFinish || isFinalTrick;
   m.notice = raisedNotice || (napPoints >= m.contract.num ? "ナポレオン軍が立ちを達成しました。" : m.earlyFinish ? "連合軍の獲得得点札で立ちが成立不能になりました。" : reveal ? revealNotice : m.seats[w].player.username + "が場札を取りました。");
   if (willFinish) m.notice = (isFinalTrick ? '最終トリック' : '決着トリック') + '勝者: ' + (m.seats[w].originalPlayerName || m.seats[w].player.username);
-  m.phase = "trick-end"; m.deadline = willFinish ? Date.now() + 2200 : Date.now() + 1250; publish(m, room);
+  m.phase = "trick-end"; m.deadline = willFinish ? Date.now() + 2200 : Date.now() + 1250;
+  publish(m, room);
 }
 
 function botAuctionBid(m, seat, room) {
-  m.botLevel = 3; const a = m.auction, version = a.version;
+  m.botLevel = 3;
+  const a = m.auction, version = a.version;
   if (a.botSeen[seat] >= version || !a.active.includes(seat)) return;
-  a.botSeen[seat] = version; m.botThinkAt = 0;
-  if (a.high.player === seat) { if (a.active.length === 1) auctionDone(m, seat, room); return; }
-  const h = m.seats[seat].hand, params = m.botStrategy || defaultStrategy(), currentBids = (m.bidHistory || []).filter(b => b.round === m.round);
-  // ★ 修正: playedCards と voids を渡す
-  const bid = shouldBid(h, a.high, a.minBid || 13, params, currentBids, seat, m.botExperience || null, m.matchScores, m.kitty, m.playedCards, m.voids);
-  if (bid && validBid(m, bid.num, bid.suit)) { 
-    a.botBids[seat]++; 
-    if (bid.plan) { a.bidPlans = a.bidPlans || {}; a.bidPlans[seat] = bid.plan; }
-    doBid(m, seat, bid.num, bid.suit, room, bid.solo === true); 
-    if (m.phase === "auction") a.botAt[seat] = Date.now() + 3500 + Math.random() * 2500; 
-    return; 
+  a.botSeen[seat] = version;
+  m.botThinkAt = 0;
+
+  const hand = m.seats[seat].hand;
+  const params = m.botStrategy || defaultStrategy();
+  const bidSignals = m.seats[seat].bidSignals || { sent: null, received: [], sameColorCount: 0, lastBidAt: 0 };
+  const currentHigh = a.high;
+
+  if (a.high.player === seat && a.active.length === 1) {
+    const properBid = m.properBids[seat] || 13;
+    if (currentHigh.num < properBid) {
+      const nextNum = Math.min(properBid, currentHigh.num + 1);
+      const suit = currentHigh.suit;
+      m.bidHistory.push({ round: m.round, seat, num: nextNum, suit });
+      if (m.bidHistory.length > 50) m.bidHistory.shift();
+      a.high = { num: nextNum, suit, player: seat, solo: false };
+      bidSignals.lastBidAt = Date.now();
+      if (m.properPlans[seat]) { a.bidPlans = a.bidPlans || {}; a.bidPlans[seat] = m.properPlans[seat]; }
+      m.notice = m.seats[seat].player.username + "が" + nextNum + suit + "を宣言しました。";
+      publish(m, room);
+      a.botAt[seat] = Date.now() + 4000;
+      return;
+    }
+    auctionDone(m, seat, room);
+    return;
   }
-  if (a.high.player === seat) { if (a.active.length === 1) doApprove(m, seat, room); return; }
+
+  if (a.high.player === seat) return;
+
+  const signal = canSendSignal(hand, currentHigh, seat, bidSignals, params, m.matchScores);
+  const sameColorCount = countSameColorBidders(bidSignals, m.bidHistory, currentHigh.suit);
+  const myTwoRole = currentHigh.suit !== 'NT' && isTwoRole(hand, currentHigh.suit);
+  const limit = currentHigh.suit === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
+  const canTossUp = sameColorCount < limit || myTwoRole;
+
+  // S4（17検知時）：即20
+  if (signal.S4 && currentHigh.num === 17 && canTossUp) {
+    doBid(m, seat, 20, signal.targetSuit, room, false);
+    m.seats[seat].bidSignals.sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
+    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S4', suit: signal.targetSuit, num: 20 });
+    return;
+  }
+
+  // S3（NTサポート）
+  if (signal.S3 && currentHigh.suit === 'NT' && canTossUp) {
+    const targetNum = currentHigh.num + 1;
+    if (targetNum <= 20) {
+      doBid(m, seat, targetNum, 'NT', room, false);
+      m.seats[seat].bidSignals.sent = { type: 'S3', suit: 'NT', num: targetNum };
+      for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S3', suit: 'NT', num: targetNum });
+      return;
+    }
+  }
+
+  // S2（2役）
+  if (signal.S2 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
+    doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
+    m.seats[seat].bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
+    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: currentHigh.num });
+    return;
+  }
+
+  // S1
+  if (signal.S1 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
+    doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
+    m.seats[seat].bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
+    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: currentHigh.num });
+    return;
+  }
+
+  const properBid = m.properBids[seat] || 13;
+  const baseStr = handStrength(hand);
+  const bidThreshold = params.bidThreshold ?? 3.5;
+
+  if (currentHigh.num < 13 && baseStr < bidThreshold) { doApprove(m, seat, room); return; }
+
+  if (currentHigh.num >= properBid && currentHigh.player !== seat) {
+    const isDifferentColor = currentHigh.suit && currentHigh.suit !== 'NT' && !isSameColorSuit(currentHigh.suit, strongestSuit(hand));
+    if (isDifferentColor && currentHigh.num > properBid) { doApprove(m, seat, room); return; }
+    const targetNum = Math.min(20, currentHigh.num + 1);
+    if (targetNum <= properBid + 1) { doBid(m, seat, targetNum, strongestSuit(hand), room, false); return; }
+  }
+
+  if (currentHigh.num < 13 && baseStr >= bidThreshold) { doBid(m, seat, 13, strongestSuit(hand), room, false); return; }
+
+  if (currentHigh.num < properBid) {
+    const targetNum = Math.min(properBid, currentHigh.num + 1);
+    doBid(m, seat, targetNum, strongestSuit(hand), room, false);
+    return;
+  }
+
   doApprove(m, seat, room);
 }
 
 function botAction(m, room) {
   if (!m || m.phase === "result") return;
-  m.botLevel = 3; const i = m.active, p = m.seats[i];
+  m.botLevel = 3;
+  const i = m.active, p = m.seats[i];
   if (!p?.bot) return;
-  m.lastBot = Date.now(); m.botThinkAt = 0;
+  m.lastBot = Date.now();
+  m.botThinkAt = 0;
   const params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null;
+
   if (m.phase === "auction") { botAuctionBid(m, i, room); return; }
   if (m.phase === "call") {
     if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; }
@@ -644,21 +975,21 @@ function botAction(m, room) {
     const legal = legalCards(m, i);
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
     const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
-    
-    const ctx = { 
-      hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract, 
-      playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy, 
-      discardedKitty: m.discardedKitty || [], 
-      isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy), 
-      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false, 
-      isRevealed: m.contract.revealedCall, 
-      isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap, 
-      lastSeat: m.trick.length === 4, 
+
+    const ctx = {
+      hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
+      playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
+      discardedKitty: m.discardedKitty || [],
+      isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy),
+      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
+      isRevealed: m.contract.revealedCall,
+      isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
+      lastSeat: m.trick.length === 4,
       params, call: m.contract.call, currentNapPoints, experience,
       points: m.seats.map(s => s.points || 0),
       allianceKittyPoints: m.allianceKittyPoints || 0,
       bidHistory: m.bidHistory || [],
-      matchScores: m.matchScores || [0,0,0,0,0]
+      matchScores: m.matchScores || [0, 0, 0, 0, 0]
     };
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
@@ -667,7 +998,14 @@ function botAction(m, room) {
     playCard(m, i, c.id, room, null);
   }
 }
-function nextRound(m, room) { if (m.phase !== "round-result") return; m.round++; m.mult = 1; m.redraws = 0; deal(m); publish(m, room); }
+
+function nextRound(m, room) {
+  if (m.phase !== "round-result") return;
+  m.round++; m.mult = 1; m.redraws = 0;
+  deal(m);
+  publish(m, room);
+}
+
 async function processAction(conn, msg, room, env) {
   const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return;
   const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
@@ -685,8 +1023,24 @@ async function processAction(conn, msg, room, env) {
   else if (a.type === "discard") discardCards(m, seat, a.cards, room);
   else if (a.type === "play") playCard(m, seat, a.card, room, env);
 }
+
 async function saveEnd(m, room, env) { await finish(m, room, env); }
-function timeoutAction(m, room) { const i = m.active, p = m.seats[i], params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null; if (m.phase === "call") { if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; } const forceSolo = isSoloForcedInMatch(m); if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); } else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); } } else if (m.phase === "discard") { const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id); discardCards(m, i, ids, room); } else if (m.phase === "play") { const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (c) playCard(m, i, c.id, room, null); } }
+
+function timeoutAction(m, room) {
+  const i = m.active, p = m.seats[i], params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null;
+  if (m.phase === "call") {
+    if (m.contract.solo) { const chosen = chooseSoloCall(p.hand); if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); return; }
+    const forceSolo = isSoloForcedInMatch(m);
+    if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
+    else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); }
+  } else if (m.phase === "discard") {
+    const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id);
+    discardCards(m, i, ids, room);
+  } else if (m.phase === "play") {
+    const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+    if (c) playCard(m, i, c.id, room, null);
+  }
+}
 
 export const room = {
   tickMs: 500,
@@ -847,23 +1201,91 @@ export const room = {
       if (m.phase === "prep" && now >= m.deadline) {
         const rule = m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null;
         m.phase = "auction";
-        m.auction = { active: rule ? rule.eligible : [0, 1, 2, 3, 4], minBid: rule?.minBid || 13, high: { num: 12, suit: "", player: -1, solo: false }, version: 0, startedAt: now, lastAction: Array(5).fill(now), autoApprove: Array(5).fill(false), botBids: Array(5).fill(0), botSeen: Array(5).fill(-1), botAt: m.seats.map(() => now + 500 + Math.random() * 2200), requiredBidSeat: null, bidPlans: {} };
+        m.auction = {
+          active: rule ? rule.eligible : [0, 1, 2, 3, 4],
+          minBid: rule?.minBid || 13,
+          high: { num: 12, suit: "", player: -1, solo: false },
+          version: 0, startedAt: now,
+          lastAction: Array(5).fill(now),
+          autoApprove: Array(5).fill(false),
+          botBids: Array(5).fill(0),
+          botSeen: Array(5).fill(-1),
+          botAt: m.seats.map(() => now + 4000),
+          requiredBidSeat: null,
+          bidPlans: {}
+        };
+        m.properBids = [13, 13, 13, 13, 13];
+        m.properPlans = [null, null, null, null, null];
+        m.auctionStartAt = now;
+        m.properRecomputed = false;
+        for (let seat = 0; seat < 5; seat++) {
+          const hand = m.seats[seat].hand;
+          const params = m.botStrategy || defaultStrategy();
+          const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hand, suit, params) }));
+          suitScores.sort((a, b) => b.score - a.score);
+          const topSuits = suitScores.slice(0, 2).map(x => x.suit);
+          const ntScore = ntHandStrength(hand, params);
+          let bestProper = 13, bestPlan = null;
+          for (const suit of topSuits) {
+            const proper = computeProperBid(hand, suit, params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, []);
+            if (proper.properBid > bestProper) { bestProper = proper.properBid; bestPlan = proper.plan; }
+          }
+          if (ntScore > 6) {
+            const ntProper = computeProperBid(hand, 'NT', params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, []);
+            if (ntProper.properBid > bestProper) { bestProper = ntProper.properBid; bestPlan = ntProper.plan; }
+          }
+          m.properBids[seat] = bestProper;
+          m.properPlans[seat] = bestPlan;
+        }
         m.active = -1; m.deadline = 0;
-        if (rule) { m.appeal = { bottomSeat: rule.bottomSeat, fourthSeat: rule.fourthSeat }; m.appealInfo = ""; m.phase = "appeal-offer"; m.active = rule.bottomSeat; m.deadline = now + 30000; m.notice = "5位は4位にJ・マイティの所持を尋ねられます。"; publish(m, room); if (m.seats[rule.bottomSeat].bot) answerAppealOffer(m, rule.bottomSeat, true, room); }
-        else { m.appeal = null; m.appealInfo = ""; m.notice = "競り開始です。宣言するか、承認して競りを降りてください。"; publish(m, room); }
-      } else if (m.phase === "appeal-offer") { if (now >= m.deadline) answerAppealOffer(m, m.appeal.bottomSeat, false, room); }
-      else if (m.phase === "appeal-response") { if (m.seats[m.active]?.bot) answerAppealResponse(m, m.active, "declare", room); else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room); }
-      else if (m.phase === "auction") {
-        for (const seat of m.auction.active.slice()) { if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true); if (m.phase !== "auction") break; }
-        for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) { if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room); }
-      } else if (m.phase === "call-reveal") { if (now >= m.deadline) startPlay(m, room); }
-      else if (m.phase === "call" || m.phase === "discard") {
-        if (m.seats[m.active]?.bot) { if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); } }
+        if (rule) {
+          m.appeal = { bottomSeat: rule.bottomSeat, fourthSeat: rule.fourthSeat };
+          m.appealInfo = ""; m.phase = "appeal-offer"; m.active = rule.bottomSeat; m.deadline = now + 30000;
+          m.notice = "5位は4位にJ・マイティの所持を尋ねられます。";
+          publish(m, room);
+          if (m.seats[rule.bottomSeat].bot) answerAppealOffer(m, rule.bottomSeat, true, room);
+        } else {
+          m.appeal = null; m.appealInfo = "";
+          m.notice = "競り開始です。宣言するか、承認して競りを降りてください。";
+          publish(m, room);
+        }
+      } else if (m.phase === "appeal-offer") {
+        if (now >= m.deadline) answerAppealOffer(m, m.appeal.bottomSeat, false, room);
+      } else if (m.phase === "appeal-response") {
+        if (m.seats[m.active]?.bot) answerAppealResponse(m, m.active, "declare", room);
+        else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room);
+      } else if (m.phase === "auction") {
+        for (const seat of m.auction.active.slice()) {
+          if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true);
+          if (m.phase !== "auction") break;
+        }
+        for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) {
+          if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room);
+        }
+        // Q28=B: 全員承認後の適正値段階上げ
+        if (m.phase === "auction" && m.auction.active.length === 1) {
+          const onlySeat = m.auction.active[0];
+          if (m.auction.high.player === onlySeat && m.seats[onlySeat].bot) {
+            const properBid = m.properBids[onlySeat] || 13;
+            if (m.auction.high.num < properBid && now >= (m.auction.botAt[onlySeat] || 0)) {
+              botAuctionBid(m, onlySeat, room);
+            }
+          }
+        }
+      } else if (m.phase === "call-reveal") {
+        if (now >= m.deadline) startPlay(m, room);
+      } else if (m.phase === "call" || m.phase === "discard") {
+        if (m.seats[m.active]?.bot) {
+          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500;
+          if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
+        }
         else if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
       } else if (m.phase === "play") {
         const activeSeat = m.active;
-        if (m.seats[activeSeat]?.bot) { if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500; if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); } }
-        else {
+        if (m.seats[activeSeat]?.bot) {
+          if (!m.botThinkAt) m.botThinkAt = now + 1000 + Math.random() * 1500;
+          if (now >= m.botThinkAt) { m.botThinkAt = 0; botAction(m, room); }
+        } else {
           const legal = legalCards(m, activeSeat);
           if (legal.length === 1) {
             if (!m.humanAutoPlayAt) m.humanAutoPlayAt = now + 1500;
@@ -873,13 +1295,16 @@ export const room = {
             if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
           }
         }
-      } else if (m.phase === "round-result" && now >= m.deadline) { nextRound(m, room); }
-      else if (m.phase === "trick-end" && now >= m.deadline) {
+      } else if (m.phase === "round-result" && now >= m.deadline) {
+        nextRound(m, room);
+      } else if (m.phase === "trick-end" && now >= m.deadline) {
         if (m.earlyFinish) { await saveEnd(m, room, env); continue; }
         m.trickNo++;
         if (m.trickNo >= 10) await saveEnd(m, room, env);
         else { m.trick = []; m.phase = "play"; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "次の勝負です。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
-      } else if (m.phase === "redeal" && now >= m.deadline) { deal(m); publish(m, room); }
+      } else if (m.phase === "redeal" && now >= m.deadline) {
+        deal(m); publish(m, room);
+      }
     }
   },
   async onClose(conn, room) {
