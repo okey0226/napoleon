@@ -1,4 +1,4 @@
-// constants.js (完全版)
+// constants.js (トスアップ戦略対応版)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -61,6 +61,27 @@ export const defaultStrategy = () => ({
   // 勝ち周・負け周ごとの想定得点/失点テーブル
   winPointMap: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
   lossPointMap: [0, 2, 4, 5, 7, 9, 11, 13, 15, 17, 20],
+  
+  // ★ 追加: トスアップ戦略パラメータ
+  // 競りペーシング
+  bidPacingMs: 4000,          // 段階上げ間隔（4秒固定）
+  bidStartValue: 13,          // 常に13スタート
+  // 安全マージン（順位補正）
+  tossUpSafetyMargin: 0.5,    // 1〜3位
+  tossUpSafetyMarginBottom: 0.0, // 4位以下
+  // シグナルボーナス（適正値への加算）
+  signalS1Bonus: 1,           // S1: 同色違スート宣言
+  signalS2Bonus: 2,           // S2: 同色2スート連続（2役）
+  signalThreeRoleBonus: 4,    // 3役: マイティ+正J+裏J
+  signalS3Bonus: 2,           // S3: NTサポート（マイティ以外のA2枚以上）
+  // シグナル発動条件
+  s1RequiredMinorCards: 2,    // S1: A/2の合計必要枚数
+  s3RequiredAces: 2,          // S3: マイティ以外のA必要枚数
+  // 制約
+  sameColorBidderLimit: 2,    // 同色立会い人数上限
+  ntBidderLimit: 2,           // NT立会い人数上限
+  // 3役アピール
+  s2ThreeRoleExtra: 1,        // 3役アピールの3回目の上げ幅（+1）
   
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
@@ -191,7 +212,14 @@ export const PARAM_BOUNDS = {
   winPointMap_8: [8, 20], winPointMap_9: [9, 20], winPointMap_10: [10, 20],
   lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
   lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
-  lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20]
+  lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20],
+  // ★ 追加: トスアップ戦略
+  bidPacingMs: [2000, 6000], bidStartValue: [13, 13],
+  tossUpSafetyMargin: [0, 1], tossUpSafetyMarginBottom: [0, 1],
+  signalS1Bonus: [0, 3], signalS2Bonus: [0, 4], signalThreeRoleBonus: [0, 6], signalS3Bonus: [0, 4],
+  s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
+  sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3],
+  s2ThreeRoleExtra: [1, 2]
 };
 
 export const mutateStrategy = (base, rate) => {
