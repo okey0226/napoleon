@@ -1,4 +1,4 @@
-// ai-tactics.js (トスアップ戦略対応版 / Part 1)
+// ai-tactics.js (トスアップ戦略対応版 / 完全版)
 import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, HONEST_BID_FIXED_BONUS, ALLY_LOSS_PENALTY, ALLY_WIN_BONUS, ALLY_BLOCK_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy, quantizeStrength, bidExperienceKey, callExperienceKey, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 const FACE = ['10', 'J', 'Q', 'K', 'A'];
@@ -291,13 +291,13 @@ function estimateWinningPointsPIMC(hand, trump, params, bidHistory, mySeat, open
       if (!hands[mySeat].length) break;
       const trick = [];
       for (let i = 0; i < 5; i++) {
-        const seat = (active + i) % 5;
-        const seatHand = hands[seat];
+        const seat2 = (active + i) % 5;
+        const seatHand = hands[seat2];
         if (!seatHand.length) break;
-        const chosen = smartRolloutPlay(seat, mySeat, allySeat, seatHand, trick, trump, t);
+        const chosen = smartRolloutPlay(seat2, mySeat, allySeat, seatHand, trick, trump, t);
         if (!chosen) break;
-        trick.push({ seat, card: chosen });
-        hands[seat] = seatHand.filter(c => c.id !== chosen.id);
+        trick.push({ seat: seat2, card: chosen });
+        hands[seat2] = seatHand.filter(c => c.id !== chosen.id);
       }
       if (trick.length < 5) break;
       const winner = winningEntry({ suit: trump }, t, trick);
@@ -351,13 +351,11 @@ function estimateWinningPointsPIMC(hand, trump, params, bidHistory, mySeat, open
   };
 }
 
-// ★ 修正: deputyBonus=2.0 を削除。副官期待ボーナスは computeProperBid 側で加算。
 export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards = [], voids = [{},{},{},{},{}]) {
   const sure = computeSurePoints(hand, trump, openKitty, playedCards, voids, mySeat);
   const timeBudget = params?.bidTimeBudgetMs ?? 400;
   const pimcResult = estimateWinningPointsPIMC(hand, trump, params, bidHistory, mySeat, openKitty, timeBudget, playedCards, voids, mySeat);
   
-  // ★ 変更: deputyBonus を削除。baseExpected はシグナルなしの素の期待値。
   const baseExpected = Math.max(sure, sure * 0.3 + pimcResult.expectedPoints * 0.7);
   
   const suitRunValues = [];
@@ -381,8 +379,8 @@ export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKit
   
   return {
     trump,
-    expectedWins: baseExpected,      // ★ シグナルなしの素の期待値（副官ボーナスなし）
-    baseExpected,                    // 明示的エイリアス
+    expectedWins: baseExpected,
+    baseExpected,
     sureWins: sure,
     runSuits,
     preserveSuits,
@@ -392,10 +390,9 @@ export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKit
 }
 
 // ==========================================
-// ★ 新規: トスアップ戦略（シグナル検知・適正値・ペーシング）
+// ★ 新規: トスアップ戦略
 // ==========================================
 
-// 役カードの判定（黒・赤共通）
 export function getRoleCards(hand, trump) {
   const mighty = hand.some(c => c.id === '♠A');
   const trumpJ = trump !== 'NT' ? hand.some(c => c.rank === 'J' && c.suit === trump) : false;
@@ -404,17 +401,14 @@ export function getRoleCards(hand, trump) {
   return { mighty, trumpJ, sameColorJ, count };
 }
 
-// 2役判定：正J+裏J / マイティ+正J / マイティ+裏J のいずれか2枚
 export function isTwoRole(hand, trump) {
   return getRoleCards(hand, trump).count >= 2;
 }
 
-// 3役判定：マイティ+正J+裏J の3枚
 export function isThreeRole(hand, trump) {
   return getRoleCards(hand, trump).count >= 3;
 }
 
-// S1発動条件：同色のJ所持 + A/2を合計2枚以上（スート問わず）
 export function canSendS1(hand, trump, params) {
   if (trump === 'NT') return false;
   const sameColorSuit = sameColorSuitOf(trump);
@@ -424,24 +418,20 @@ export function canSendS1(hand, trump, params) {
   return minorCards >= (params?.s1RequiredMinorCards ?? 2);
 }
 
-// S3発動条件：マイティ以外のAを2枚以上（色不問）
 export function canSendS3(hand, params) {
   const nonMightyAces = hand.filter(c => c.rank === 'A' && c.id !== '♠A').length;
   return nonMightyAces >= (params?.s3RequiredAces ?? 2);
 }
 
-// S4発動条件：同色異スートで20を宣言可能（17検知時）
 export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
   if (!currentHigh || currentHigh.num !== 17) return { canTransfer: false, targetBid: 0 };
   if (!currentHigh.suit || currentHigh.suit === 'NT') return { canTransfer: false, targetBid: 0 };
-  // 同色異スートで20が宣言可能か（自分の手札に同色の役があるか）
   const sameColorSuit = sameColorSuitOf(currentHigh.suit);
   const hasSameColorRole = hand.some(c => c.suit === sameColorSuit && (c.rank === 'J' || c.rank === 'A'));
   if (!hasSameColorRole) return { canTransfer: false, targetBid: 0 };
   return { canTransfer: true, targetBid: 20 };
 }
 
-// 同色立会い人数のカウント（♠♣ / ♥♦ を同一色として扱う）
 export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
   if (!trumpSuit || trumpSuit === 'NT') return 0;
   const sameColor = sameColorSuitOf(trumpSuit);
@@ -453,21 +443,17 @@ export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
   return bidders.size;
 }
 
-// 受信シグナルの検知（最新の受信シグナルを返す）
 export function detectPartnerSignal(bidSignals, bidHistory, currentHigh, mySeat) {
   if (!currentHigh || currentHigh.num < 13 || currentHigh.player === mySeat) return null;
   const received = bidSignals?.received || [];
   if (!received.length) return null;
-  const latest = received[received.length - 1];
-  return latest;
+  return received[received.length - 1];
 }
 
-// 適正値の計算
 export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, bidHistory) {
   const plan = evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards, voids);
   const baseExpected = plan.expectedWins;
   
-  // シグナルボーナス
   let signalBonus = 0;
   const received = bidSignals?.received || [];
   const hasS1 = received.some(s => s.type === 'S1');
@@ -480,7 +466,6 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   else if (hasS3) signalBonus = params.signalS3Bonus ?? 2;
   else if (hasS1) signalBonus = params.signalS1Bonus ?? 1;
   
-  // 安全マージン（順位補正）
   let safetyMargin = params.tossUpSafetyMargin ?? 0.5;
   if (matchScores && Array.isArray(matchScores)) {
     const sorted = [...matchScores].sort((a, b) => b - a);
@@ -502,7 +487,6 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   };
 }
 
-// ペーシング制御（4秒間隔で+1ずつ）
 export function bidPacing(currentBid, properBid, lastBidAt, pacingMs) {
   const now = Date.now();
   const elapsed = now - (lastBidAt || 0);
@@ -517,21 +501,17 @@ export function bidPacing(currentBid, properBid, lastBidAt, pacingMs) {
   return { nextBid: Math.min(currentBid + 1, properBid), shouldWait: false, waitMs: 0, reachedProper: false };
 }
 
-// シグナル種別の分類（送信履歴から）
 export function classifySignalType(bidHistory, seat, trump) {
   const seatBids = (bidHistory || []).filter(b => b.seat === seat);
   if (seatBids.length < 2) return null;
   const last = seatBids[seatBids.length - 1];
   const prev = seatBids[seatBids.length - 2];
-  // 2スート連続（S2）
   if (isSameColorSuit(prev.suit, last.suit) && prev.num === last.num) {
-    // 3回目（3役）の判定は呼び出し側で行う
     return 'S2';
   }
   return 'S1';
 }
 
-// シグナル送信可否の総合判定
 export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, matchScores) {
   const result = { S1: false, S2: false, S3: false, S4: false, targetSuit: null, targetBid: 0 };
   if (!currentHigh || currentHigh.num < 13 || currentHigh.player === mySeat) return result;
@@ -540,11 +520,9 @@ export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, mat
   const sameColorBidders = countSameColorBidders(bidSignals, [], trump);
   const limit = trump === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
   
-  // 自分が2役を持つ時のみ3人でも許容
   const myTwoRole = isTwoRole(hand, trump);
   if (sameColorBidders >= limit && !myTwoRole) return result;
   
-  // S4（17検知時）
   const rt = evaluateRiskTransfer(hand, currentHigh, params, matchScores);
   if (rt.canTransfer) {
     result.S4 = true;
@@ -553,7 +531,6 @@ export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, mat
     return result;
   }
   
-  // NT立会い時はS3優先
   if (trump === 'NT') {
     if (canSendS3(hand, params)) {
       result.S3 = true;
@@ -563,13 +540,11 @@ export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, mat
     return result;
   }
   
-  // スート立会い時はS1/S2
   if (canSendS1(hand, trump, params)) {
     result.S1 = true;
     result.targetSuit = sameColorSuitOf(trump);
     result.targetBid = currentHigh.num;
     
-    // 2役ならS2
     if (isTwoRole(hand, trump)) {
       result.S2 = true;
     }
@@ -579,7 +554,7 @@ export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, mat
 }
 
 // ==========================================
-// 競り判断（shouldBid 修正版）
+// shouldBid
 // ==========================================
 
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null, playedCards = [], voids = [{},{},{},{},{}]) {
@@ -590,14 +565,11 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const isFirstBid = (!currentHigh || currentHigh.num < 13);
   const currentHighNum = currentHigh?.num ?? 12;
   
-  // 13スタートの判断：手札強度が閾値以上なら立つ（適正値が13未満でも情報収集のため立つ）
   const baseStr = handStrength(hand);
   const bidThreshold = params.bidThreshold ?? 3.5;
   
-  // 初回：手札が弱すぎる場合は立たない（勝ち周2-3枚程度）
   if (isFirstBid && baseStr < bidThreshold) return null;
   
-  // 適正値計算（上位スート候補）
   const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hand, suit, params) }));
   suitScores.sort((a, b) => b.score - a.score);
   const topSuits = suitScores.slice(0, 2).map(x => x.suit);
@@ -606,18 +578,15 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const currentRound = Math.max(0, ...(bidHistory || []).map(b => b?.round || 0));
   const currentBids = (bidHistory || []).filter(b => b && b.round === currentRound);
   
-  // 各候補スートの適正値を計算
   const candidates = [];
   for (const suit of topSuits) {
     const proper = computeProperBid(hand, suit, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, currentBids);
-    // 現在のhighを超える最低枚数
     const minViable = Math.max(minBid, currentHighNum + 1, 13);
     if (proper.properBid >= minViable) {
       candidates.push({ suit, properBid: proper.properBid, expected: proper.expected, baseExpected: proper.baseExpected, plan: proper.plan });
     }
   }
   
-  // NT候補
   if (ntScore > 6) {
     const ntProper = computeProperBid(hand, 'NT', params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, currentBids);
     const minViable = Math.max(minBid, currentHighNum + 1, 13);
@@ -626,7 +595,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     }
   }
   
-  // シグナル送信の判断（自分が立つより、サポートに回る方が良い場合）
   const signal = canSendSignal(hand, currentHigh, mySeat, bidSignals, params, matchScores);
   if (signal.S4 && currentHigh.player !== mySeat) {
     return { num: 20, suit: signal.targetSuit, solo: false, signal: 'S4', plan: null };
@@ -641,9 +609,7 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     return { num: currentHigh.num, suit: signal.targetSuit, solo: false, signal: 'S1', plan: null };
   }
   
-  // 自分が立つ場合
   if (!candidates.length) {
-    // 初回で立つべきだが候補がない → 13で立つ（情報収集）
     if (isFirstBid && baseStr >= bidThreshold) {
       const bestSuit = topSuits[0];
       return { num: Math.max(minBid, 13), suit: bestSuit, solo: false, plan: null };
@@ -654,24 +620,81 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   candidates.sort((a, b) => b.expected - a.expected);
   const best = candidates[0];
   
-  // 現在のhighを超えられない場合は承認
   if (currentHighNum >= 13 && best.properBid <= currentHighNum) {
-    // 異色の相手が適正値を超えている → 撤退
     if (currentHigh.suit !== best.suit && !isSameColorSuit(currentHigh.suit, best.suit)) {
       return null;
     }
-    // 同色/シグナルの場合は応戦（適正値+1）
-    const signalBonus = params.signalS1Bonus ?? 1;
     return { num: Math.min(20, currentHighNum + 1), suit: best.suit, solo: false, plan: best.plan };
   }
   
-  // 適正値まで段階上げ（現在のbid+1）
   const targetNum = Math.min(best.properBid, Math.max(minBid, currentHighNum + 1));
   return { num: targetNum, suit: best.suit, solo: false, plan: best.plan };
 }
 
 // ==========================================
-// プレイ関数群（既存のまま維持）
+// ★ 新規: 欠落していた3関数
+// ==========================================
+
+export function chooseDiscard(hand, trump) {
+  if (!Array.isArray(hand) || hand.length <= 2) return hand.slice();
+  const isTrumpCard = c => trump !== 'NT' && c.suit === trump;
+  const score = c => {
+    if (c.id === '♠A') return 10000;
+    if (trump !== 'NT' && c.rank === 'J' && c.suit === trump) return 9500;
+    if (trump !== 'NT' && c.rank === 'J' && c.suit !== trump && isSameColorSuit(c.suit, trump)) return 9000;
+    if (c.id === '♥Q') return 8500;
+    if (c.rank === 'A' && !isTrumpCard(c)) return 8000;
+    if (c.rank === 'K' && !isTrumpCard(c)) return 7000;
+    if (isTrumpCard(c)) return 6000 + RANKS.indexOf(c.rank);
+    return RANKS.indexOf(c.rank);
+  };
+  const sorted = hand.slice().sort((a, b) => score(a) - score(b));
+  return sorted.slice(0, 2);
+}
+
+export function chooseDeputyCall(hand, kitty, trump, level, num, params, experience) {
+  const isTrumpSuit = trump !== 'NT';
+  const sameColor = isTrumpSuit ? sameColorSuitOf(trump) : '♠';
+  const isIn = id => hand.some(c => c.id === id);
+  const inKitty = id => (kitty || []).some(c => c.id === id);
+
+  if (!isIn('♠A') && !inKitty('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
+  if (isTrumpSuit && !isIn(trump + 'J') && !inKitty(trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
+  if (isTrumpSuit && !isIn(sameColor + 'J') && !inKitty(sameColor + 'J')) return { suit: sameColor, rank: 'J', id: sameColor + 'J' };
+
+  const weakSuits = SUITS.filter(s => s !== trump).sort((a, b) => {
+    const aLen = hand.filter(c => c.suit === a).length;
+    const bLen = hand.filter(c => c.suit === b).length;
+    return aLen - bLen;
+  });
+  for (const s of weakSuits) {
+    if (!isIn(s + 'A') && !inKitty(s + 'A')) return { suit: s, rank: 'A', id: s + 'A' };
+  }
+  for (const s of weakSuits) {
+    if (!isIn(s + '2') && !inKitty(s + '2')) return { suit: s, rank: '2', id: s + '2' };
+  }
+  for (const s of SUITS) {
+    if (s === trump) continue;
+    for (const r of RANKS) {
+      const id = s + r;
+      if (!isIn(id) && !inKitty(id)) return { suit: s, rank: r, id };
+    }
+  }
+  return { suit: '♠', rank: '2', id: '♠2' };
+}
+
+export function chooseSoloCall(hand, trump) {
+  if (!Array.isArray(hand) || !hand.length) return null;
+  const sorted = hand.slice().sort((a, b) => {
+    const diff = RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank);
+    if (diff !== 0) return diff;
+    return SV[a.suit] - SV[b.suit];
+  });
+  return { suit: sorted[0].suit, rank: sorted[0].rank, id: sorted[0].id };
+}
+
+// ==========================================
+// プレイ関数群
 // ==========================================
 
 function isFace(c) { return FACE.includes(c.rank); }
@@ -770,17 +793,11 @@ function chooseNapoleonLead(ctx) {
     const remainingTrumps = Math.max(0, 13 - playedTrumps - myTrumps.length);
     
     if (myTrumps.length >= (params.napEarlyTrumpMinCount ?? 4) && remainingTrumps > 0) {
-      const trumpLeads = legal.filter(c => 
-        c.suit === contract.suit && 
-        c.rank !== 'A' && c.rank !== 'K' && c.rank !== 'J' && c.rank !== '2'
-      );
+      const trumpLeads = legal.filter(c => c.suit === contract.suit && c.rank !== 'A' && c.rank !== 'K' && c.rank !== 'J' && c.rank !== '2');
       if (trumpLeads.length && Math.random() < (params.napEarlyTrumpLeadWeight ?? 1.5)) {
         return trumpLeads.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
-      const otherTrumpLeads = legal.filter(c => 
-        c.suit === contract.suit && 
-        c.rank !== 'A' && c.rank !== 'K' && c.rank !== 'J'
-      );
+      const otherTrumpLeads = legal.filter(c => c.suit === contract.suit && c.rank !== 'A' && c.rank !== 'K' && c.rank !== 'J');
       if (otherTrumpLeads.length && Math.random() < (params.napEarlyTrumpLeadWeight ?? 1.5) * 0.7) {
         return otherTrumpLeads.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       }
@@ -907,12 +924,7 @@ function chooseNapoleonFollow(ctx) {
   const urgency = needed / remainingTricks;
   
   if (isTeamWinning) {
-    const safeCards = legal.filter(c => 
-      c.rank !== 'A' && c.rank !== 'K' && 
-      c.id !== call?.id && 
-      !isTrumpJ(c, contract) && !isSameColorJ(c, contract) &&
-      c.rank !== '2'
-    );
+    const safeCards = legal.filter(c => c.rank !== 'A' && c.rank !== 'K' && c.id !== call?.id && !isTrumpJ(c, contract) && !isSameColorJ(c, contract) && c.rank !== '2');
     if (safeCards.length) {
       const dumpFaces = safeCards.filter(c => isFace(c));
       if (dumpFaces.length) return dumpFaces.sort((a,b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
@@ -976,9 +988,7 @@ export function chooseDeputyCard(ctx) {
       const kittyTwos = (discardedKitty || []).filter(c => c.rank === '2').map(c => c.suit);
       kittyTwos.forEach(s => { suitScores[s] += 1.5; });
       SUITS.forEach(s => {
-        if (!playedCards.some(c => c.id === s + 'A') && !hand.some(c => c.id === s + 'A') && !(discardedKitty || []).some(c => c.id === s + 'A')) {
-          suitScores[s] += 1.0;
-        }
+        if (!playedCards.some(c => c.id === s + 'A') && !hand.some(c => c.id === s + 'A') && !(discardedKitty || []).some(c => c.id === s + 'A')) suitScores[s] += 1.0;
       });
       SUITS.forEach(s => { if (voids[contract.nap]?.[s]) suitScores[s] = -999; });
       const sortedSuits = SUITS.slice().sort((a, b) => suitScores[b] - suitScores[a]);
@@ -1231,7 +1241,7 @@ export function chooseCardToPlay(ctx) {
 }
 
 // ==========================================
-// MCTS & 推測（既存のまま維持）
+// MCTS
 // ==========================================
 function determinizeState(ctx) {
   const unseen = [];
@@ -1248,9 +1258,8 @@ function determinizeState(ctx) {
   
   const handCounts = [0,0,0,0,0];
   for (let s = 0; s < 5; s++) {
-    if (s === ctx.seat) {
-      handCounts[s] = ctx.hand.length;
-    } else {
+    if (s === ctx.seat) handCounts[s] = ctx.hand.length;
+    else {
       const hasPlayed = ctx.trick.some(t => t.seat === s);
       handCounts[s] = 10 - ctx.trickNo - (hasPlayed ? 1 : 0);
     }
@@ -1259,9 +1268,7 @@ function determinizeState(ctx) {
   const suitWeights = [{}, {}, {}, {}, {}];
   if (ctx.bidHistory) {
     ctx.bidHistory.forEach(b => {
-      if (b.seat !== ctx.seat) {
-        if (b.suit !== 'NT') suitWeights[b.seat][b.suit] = (suitWeights[b.seat][b.suit] || 0) + b.num - 12;
-      }
+      if (b.seat !== ctx.seat && b.suit !== 'NT') suitWeights[b.seat][b.suit] = (suitWeights[b.seat][b.suit] || 0) + b.num - 12;
     });
   }
 
@@ -1281,11 +1288,9 @@ function determinizeState(ctx) {
     for (let i = 0; i < sortedUnseens.length && assigned < targetCount; i++) {
       const c = sortedUnseens[i];
       if (voidInfo[c.suit]) continue;
-      
       let weight = 1.0;
       const playedInSuit = (ctx.playedCards || []).filter(pc => pc.seat === s && pc.suit === c.suit).length;
       if (playedInSuit === 0 && ctx.trickNo > 3) weight = 0.8;
-      
       if (Math.random() < weight) {
         tempHand.push(c);
         const idx = unseens.findIndex(u => u.id === c.id);
@@ -1293,7 +1298,6 @@ function determinizeState(ctx) {
         assigned++;
       }
     }
-    
     while (assigned < targetCount && unseens.length > 0) {
       tempHand.push(unseens.shift());
       assigned++;
@@ -1449,4 +1453,3 @@ export function chooseCardWithMCTS(ctx) {
   if (bestWinRate === -1) return chooseCardToPlay(ctx);
   return bestCard;
 }
-
