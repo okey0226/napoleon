@@ -541,7 +541,6 @@ function drawAuction(){
   const ruleNote=g.round>=10?'<div class="micro-copy">オールラスト · 最低宣言 '+g.auction.minBid+' · 得点2倍 · 立ち必須</div>':'',historyPanel=bidHistoryHTML(g.bidHistory,i=>name(i)),appealPanel=g.appealInfo?'<div class="appeal-info">'+escapeHTML(g.appealInfo)+'</div>':'';
   p.classList.remove('hidden');
   if(g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==g.mySeat){p.innerHTML='<div class="panel-title">4位が申告せず立ちを選択</div><div class="micro-copy">4位の宣言を待っています</div>'+appealPanel+historyPanel;return}
-  // ソフト承認: 自分が approved の場合、再立候補ボタン表示
   if(g.auction.approved && g.auction.approved[g.mySeat]){
     p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+t+'</strong></div><div class="micro-copy">保留中（誰かが上げれば復帰可能）</div>'+ruleNote+appealPanel+'<div class="panel-row"><button class="small-action" id="bid-submit">再立候補する</button></div>'+historyPanel;
     const submit=$('bid-submit');
@@ -590,7 +589,9 @@ function humanApprove(forced=false){
   // 自分が最高宣言者の場合
   if(g.auction.high.player===g.mySeat){
     const others = g.auction.active.filter(s => s !== g.mySeat);
-    const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+    // ★ 他の人間プレイヤー（botでない）が未承認なら待つ
+    const humanPending = g.auction.active.some(s => s !== g.mySeat && !g.players[s]?.bot && !g.auction.approved[s]);
+    const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
     if(allApproved){
       const properBid = g.properBids[g.mySeat] || 13;
       if(g.auction.high.num < properBid){
@@ -624,8 +625,10 @@ function humanApprove(forced=false){
   addGameLog(forced?'あなたが自動保留':'あなたが保留（再立候補可）');
   message(forced?'30秒操作がなかったため、自動で保留しました':'あなたは保留しました（誰かが上げれば復帰可能）');
   const others = g.auction.active.filter(s => s !== g.auction.high.player);
-  const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
-  if(allApproved){
+  // ★ 他の人間プレイヤー（botでない）が未承認なら終わらせない
+  const humanPending = g.auction.active.some(s => !g.players[s]?.bot && s !== g.auction.high.player && !g.auction.approved[s]);
+  const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
+  if(allApproved && g.auction.high.player >= 0){
     auctionEnd(g.auction.high.player);
     return;
   }
@@ -648,7 +651,6 @@ function humanBid(){
   g.auction.high={num:g.bid,suit:g.suit,player:g.mySeat,solo:false};
   if(g.auction.requiredBidSeat===g.mySeat)g.auction.requiredBidSeat=null;
   g.auction.version++;
-  // ソフト承認: 全員復帰
   g.auction.approved = Array(5).fill(false);
   g.active=g.mySeat;
   g.bidSignals[g.mySeat].lastBidAt = Date.now();
@@ -681,7 +683,6 @@ function comBid(i,version){
   const limit = currentHigh.suit === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
   const canTossUp = sameColorCount < limit || myTwoRole;
   
-  // S4
   if(signal.S4 && currentHigh.num === 17 && canTossUp){
     g.bidHistory.push({round:g.round,seat:i,num:20,suit:signal.targetSuit});
     addGameLog(name(i)+'がS4（20引き上げ）を宣言');
@@ -699,7 +700,6 @@ function comBid(i,version){
     return;
   }
   
-  // S3
   if(signal.S3 && currentHigh.suit === 'NT' && canTossUp){
     const targetNum = currentHigh.num + 1;
     if(targetNum <= 20){
@@ -720,7 +720,6 @@ function comBid(i,version){
     }
   }
   
-  // S2
   if(signal.S2 && signal.targetSuit && canTossUp && currentHigh.num < 20){
     g.bidHistory.push({round:g.round,seat:i,num:currentHigh.num,suit:signal.targetSuit});
     addGameLog(name(i)+'がS2（2役アピール）を宣言');
@@ -738,7 +737,6 @@ function comBid(i,version){
     return;
   }
   
-  // S1
   if(signal.S1 && signal.targetSuit && canTossUp && currentHigh.num < 20){
     g.bidHistory.push({round:g.round,seat:i,num:currentHigh.num,suit:signal.targetSuit});
     addGameLog(name(i)+'がS1（同色サポート）を宣言');
@@ -764,8 +762,10 @@ function comBid(i,version){
     removeBid(i); addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
     g.auction.approved[i] = true;
     const others = g.auction.active.filter(s => s !== g.auction.high.player);
-    const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
-    if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player, g); return; }
+    // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
+    const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
+    const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
+    if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
     drawAuction(); drawSeats(); scheduleComBids(); return;
   }
   
@@ -775,7 +775,9 @@ function comBid(i,version){
       g.auction.approved[i] = true;
       addGameLog(name(i)+'が保留（適正値超過）'); message(name(i)+'は保留しました');
       const others = g.auction.active.filter(s => s !== g.auction.high.player);
-      const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+      // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
+      const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
+      const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
       if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
       drawAuction(); drawSeats(); scheduleComBids(); return;
     }
@@ -834,7 +836,9 @@ function comBid(i,version){
   g.auction.approved[i] = true;
   addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
   const others2 = g.auction.active.filter(s => s !== g.auction.high.player);
-  const allApproved2 = others2.length === 0 || others2.every(s => g.auction.approved[s]);
+  // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
+  const humanPending2 = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
+  const allApproved2 = !humanPending2 && (others2.length === 0 || others2.every(s => g.auction.approved[s]));
   if (allApproved2 && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
   drawAuction(); drawSeats(); scheduleComBids();
 }
@@ -898,8 +902,6 @@ function auctionEnd(w){
   message(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言。オープンを手札に入れて2枚捨ててください');
   kittyStart();
 }
-
-
 // ===== [app.js 後半 開始] =====
 function callUi(){
   g.phase='call';
@@ -2106,5 +2108,4 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
-
 
