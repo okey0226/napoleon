@@ -481,7 +481,8 @@ function auctionStart(){
     botSeen: Array(5).fill(-1),
     requiredBidSeat: null,
     bidPlans: {},
-    properRecomputed: false
+    properRecomputed: false,
+    needsHumanConfirm: false
   };
   g.bid=g.auction.minBid;
   g.active=-1;
@@ -531,8 +532,47 @@ function drawAuction(){
   renderContractInfo();
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
+  
+  // ★ 追加: 確定待ちパネル（hash check より先に判定）
+  if (g.auction.needsHumanConfirm && g.auction.high.player === g.mySeat) {
+    const h = g.auction.high;
+    const properBid = g.properBids[g.mySeat] || 13;
+    const warn = properBid > h.num ? `<div class="micro-copy" style="color:#e8d7a9;text-align:center;margin-bottom:8px;">※ 適正値は ${properBid}${h.suit} です</div>` : '';
+    p.classList.remove('hidden');
+    p.innerHTML = `
+      <div class="panel-title">他のプレイヤーは全員承認しました</div>
+      <div style="text-align:center;font-size:28px;color:#f3d48e;font-weight:900;margin:10px 0;letter-spacing:.05em;">${h.num}${h.suit}</div>
+      ${warn}
+      <div class="micro-copy" style="text-align:center;margin-bottom:12px;">この宣言でよろしければ確定してください</div>
+      <div class="panel-row" style="display:flex;gap:8px;">
+        <button id="bid-finalize" class="primary-button" style="flex:1;min-height:48px;">この宣言で確定</button>
+        <button id="bid-reopen" class="secondary-button" style="flex:1;min-height:48px;">まだ上げる</button>
+      </div>
+    `;
+    const fin = $('bid-finalize');
+    if (fin) fin.onclick = () => {
+      if (g.onlineState && g.room) {
+        g.room?.send({type:'game', action:{type:'confirm-auction'}});
+      } else {
+        auctionEnd(g.mySeat, true);
+      }
+    };
+    const reo = $('bid-reopen');
+    if (reo) reo.onclick = () => {
+      g.auction.needsHumanConfirm = false;
+      if (g.onlineState && g.room) {
+        g.room?.send({type:'game', action:{type:'reopen-auction'}});
+      } else {
+        g.auction.approved = Array(5).fill(false);
+        g.auction.botSeen = Array(5).fill(-1);
+        drawAuction(); drawSeats(); scheduleComBids();
+      }
+    };
+    return;
+  }
+  
   if ((g.onlineState && g.room) && g.phase === 'auction') {
-    const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active) + JSON.stringify(g.auction.approved);
+    const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active) + JSON.stringify(g.auction.approved) + String(!!g.auction.needsHumanConfirm);
     if (lastAuctionDrawHash === currentHash && !p.classList.contains('hidden')) return;
     lastAuctionDrawHash = currentHash;
   }
@@ -586,6 +626,12 @@ function humanApprove(forced=false){
   if(g.phase!=='auction'||!g.auction||!g.auction.active.includes(g.mySeat))return;
   if(g.round>=10&&g.auction.high.num<13){if(forced&&(g.auction.requiredBidSeat??g.auction.active[0])===g.mySeat){g.bid=g.auction.minBid;g.suit=strongestSuit(g.players[g.mySeat].hand);humanBid()}return}
   if(!forced)auctionActivity();
+  // ★ 確定待ちなら、ここで確定扱い
+  if(g.auction.needsHumanConfirm && g.auction.high.player === g.mySeat){
+    g.auction.needsHumanConfirm = false;
+    auctionEnd(g.mySeat, true);
+    return;
+  }
   // 自分が最高宣言者の場合
   if(g.auction.high.player===g.mySeat){
     const others = g.auction.active.filter(s => s !== g.mySeat);
@@ -629,6 +675,13 @@ function humanApprove(forced=false){
   const humanPending = g.auction.active.some(s => !g.players[s]?.bot && s !== g.auction.high.player && !g.auction.approved[s]);
   const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
   if(allApproved && g.auction.high.player >= 0){
+    // ★ 宣言者が人間なら確定待ち
+    if(g.auction.high.player === g.mySeat){
+      g.auction.needsHumanConfirm = true;
+      message('全員承認しました。あなたの確定を待っています');
+      drawAuction(); drawSeats();
+      return;
+    }
     auctionEnd(g.auction.high.player);
     return;
   }
@@ -652,6 +705,7 @@ function humanBid(){
   if(g.auction.requiredBidSeat===g.mySeat)g.auction.requiredBidSeat=null;
   g.auction.version++;
   g.auction.approved = Array(5).fill(false);
+  g.auction.needsHumanConfirm = false;   // ★ 新規宣言で確定待ち解除
   g.active=g.mySeat;
   g.bidSignals[g.mySeat].lastBidAt = Date.now();
   message('あなたが'+g.bid+g.suit+'を宣言しました');
@@ -690,6 +744,7 @@ function comBid(i,version){
     g.auction.high={num:20,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
+    g.auction.needsHumanConfirm = false;   // ★ 追加
     g.active=i;
     bidSignals.sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
     bidSignals.lastBidAt = Date.now();
@@ -709,6 +764,7 @@ function comBid(i,version){
       g.auction.high={num:targetNum,suit:'NT',player:i,solo:false};
       g.auction.version++;
       g.auction.approved = Array(5).fill(false);
+      g.auction.needsHumanConfirm = false;   // ★ 追加
       g.active=i;
       bidSignals.sent = { type: 'S3', suit: 'NT', num: targetNum };
       bidSignals.lastBidAt = Date.now();
@@ -727,6 +783,7 @@ function comBid(i,version){
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
+    g.auction.needsHumanConfirm = false;   // ★ 追加
     g.active=i;
     bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -744,6 +801,7 @@ function comBid(i,version){
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
+    g.auction.needsHumanConfirm = false;   // ★ 追加
     g.active=i;
     bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -765,7 +823,16 @@ function comBid(i,version){
     // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
     const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
     const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
-    if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
+    if (allApproved && g.auction.high.player >= 0) {
+      // ★ 宣言者が人間なら確定待ち
+      if (g.auction.high.player === g.mySeat) {
+        g.auction.needsHumanConfirm = true;
+        message('全員承認しました。あなたの確定を待っています');
+        drawAuction(); drawSeats();
+        return;
+      }
+      auctionEnd(g.auction.high.player); return;
+    }
     drawAuction(); drawSeats(); scheduleComBids(); return;
   }
   
@@ -778,7 +845,16 @@ function comBid(i,version){
       // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
       const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
       const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
-      if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
+      if (allApproved && g.auction.high.player >= 0) {
+        // ★ 宣言者が人間なら確定待ち
+        if (g.auction.high.player === g.mySeat) {
+          g.auction.needsHumanConfirm = true;
+          message('全員承認しました。あなたの確定を待っています');
+          drawAuction(); drawSeats();
+          return;
+        }
+        auctionEnd(g.auction.high.player); return;
+      }
       drawAuction(); drawSeats(); scheduleComBids(); return;
     }
     const targetNum = Math.min(20, currentHigh.num + 1);
@@ -790,6 +866,7 @@ function comBid(i,version){
       g.auction.high={num:targetNum,suit:bestSuit,player:i,solo:false};
       g.auction.version++;
       g.auction.approved = Array(5).fill(false);
+      g.auction.needsHumanConfirm = false;   // ★ 追加
       g.active=i;
       bidSignals.lastBidAt = Date.now();
       g.auction.bidPlans[i] = g.properPlans[i];
@@ -806,6 +883,7 @@ function comBid(i,version){
     g.auction.high={num:13,suit:bestSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
+    g.auction.needsHumanConfirm = false;   // ★ 追加
     g.active=i;
     bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
@@ -824,6 +902,7 @@ function comBid(i,version){
     g.auction.high={num:nextNum,suit:nextSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
+    g.auction.needsHumanConfirm = false;   // ★ 追加
     g.active=i;
     bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
@@ -839,11 +918,21 @@ function comBid(i,version){
   // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
   const humanPending2 = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
   const allApproved2 = !humanPending2 && (others2.length === 0 || others2.every(s => g.auction.approved[s]));
-  if (allApproved2 && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
+  if (allApproved2 && g.auction.high.player >= 0) {
+    // ★ 宣言者が人間なら確定待ち
+    if (g.auction.high.player === g.mySeat) {
+      g.auction.needsHumanConfirm = true;
+      message('全員承認しました。あなたの確定を待っています');
+      drawAuction(); drawSeats();
+      return;
+    }
+    auctionEnd(g.auction.high.player); return;
+  }
   drawAuction(); drawSeats(); scheduleComBids();
 }
 
-function auctionEnd(w){
+function auctionEnd(w, skipProperRaise = false){
+  if (g.auction) g.auction.needsHumanConfirm = false;   // ★ 追加
   clearTimeout(g.auction?.humanTimeout);
   stopTurnTimer();
   
@@ -865,7 +954,7 @@ function auctionEnd(w){
   }
   
   const properBid = g.properBids[w] || 13;
-  if (g.auction.high.num < properBid && g.auction.high.player === w) {
+  if (!skipProperRaise && g.auction.high.num < properBid && g.auction.high.player === w) {   // ★ skipProperRaise 追加
     if (!g.auction.active.includes(w)) g.auction.active.push(w);
     const pacingMs = g.aiWeights.bidPacingMs ?? 4000;
     message(`${name(w)}が適正値（${properBid}）まで段階上げ中…`);
@@ -1220,7 +1309,6 @@ async function computeBotPlay(seat){
     });
   });
 }
-
 function playTurn(){
   if(g.phase!=='play')return;
   drawSeats();
@@ -1758,7 +1846,6 @@ async function records(){
     };
   }catch(e){rc.textContent='UNABLE TO LOAD PLAYER STATS.'}
 }
-
 function genLineChart(generations){
   if(!generations||generations.length<1) return '<p class="subcopy" style="padding:20px 0; text-align:center;">まだ学習データがありません。毎時0分に自動で自己対戦が行われます。</p>';
   const data=generations.slice(-20);
@@ -2108,4 +2195,8 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
+
+
+
+
 
