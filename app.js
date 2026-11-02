@@ -1,14 +1,12 @@
 // ===== [app.js 前半 開始] =====
-import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf } from './constants.js';
+import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard,
-  winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay,
-  // ★ 新規: トスアップ戦略
+  winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay, handStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer
 } from './ai-tactics.js';
 
-// CPUコア数に応じてWorkerプールを作成 (最大8つ)
 const numWorkers = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
 const aiWorkers = [];
 for (let i = 0; i < numWorkers; i++) {
@@ -38,19 +36,16 @@ const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights
   napEarlyTrumpLeadWeight:1.5,napEarlyTrumpLeadMaxTrick:3,napEarlyTrumpMinCount:4,deputyOvertrumpWeight:1.8,
   bidTimeBudgetMs:400,bidMaxSamples:500,bidSafetyMargin:0.5,bidSimCount:30,
   planAccuracyWeight:1.0,overbidPenalty:2.0,underbidPenalty:0.5,planAccuracyBonus:1.5,
-  // ★ 新規: トスアップ戦略パラメータ
   bidPacingMs:4000, bidStartValue:13,
   tossUpSafetyMargin:0.5, tossUpSafetyMarginBottom:0.0,
   signalS1Bonus:1, signalS2Bonus:2, signalThreeRoleBonus:4, signalS3Bonus:2,
   s1RequiredMinorCards:2, s3RequiredAces:2,
   sameColorBidderLimit:2, ntBidderLimit:2, s2ThreeRoleExtra:1
 },players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[],
-  // ★ 新規: トスアップ状態
   bidSignals: Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 })),
   properBids: [13, 13, 13, 13, 13],
   properPlans: [null, null, null, null, null],
-  auctionStartAt: 0,
-  botPacingTimer: null
+  auctionStartAt: 0
 };
 let toastTimer;
 let lastAuctionDrawHash = '';
@@ -117,9 +112,7 @@ function closeOnline(){
   clearInterval(g.countdownTimer);g.countdownTimer=null;
   clearTimeout(g.onlineResultTimer);
   clearTimeout(g.auction?.humanTimeout);
-  clearTimeout(g.auction?.pacingTimer);
   clearInterval(g.autoNextTimer);
-  clearInterval(g.botPacingTimer); g.botPacingTimer = null;
   stopTurnTimer();
   g.room?.close?.();
   g.room=null;g.online=null;g.onlineState=null;g.privateHand=[];g.onlineLegal=[];g.onlineSelectedCard=null;
@@ -135,7 +128,7 @@ function openGameLog(){renderGameLog();$('game-log-dialog')?.showModal()}
 
 function addDebugLog(type,data){if(!g.matchDebugLog)g.matchDebugLog=[];const entry={t:Date.now(),type};if(data&&typeof data==='object'){for(const k in data){try{entry[k]=data[k]}catch{}}}g.matchDebugLog.push(entry);if(g.matchDebugLog.length>3000)g.matchDebugLog.shift()}
 function sanitizeForLog(obj,depth=0){if(depth>6)return'[deep]';if(obj===null||obj===undefined)return obj;const t=typeof obj;if(t==='function')return'[fn]';if(t==='string'||t==='number'||t==='boolean')return obj;if(Array.isArray(obj))return obj.map(x=>sanitizeForLog(x,depth+1));if(t==='object'){const out={};for(const k in obj){try{out[k]=sanitizeForLog(obj[k],depth+1)}catch{out[k]='[err]'}}return out}return String(obj)}
-function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid,bidPlan:g.contract.bidPlan}:null;return{version:'v1.5',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),discardedKitty:(g.discardedKitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,bidSignals:sanitizeForLog(g.bidSignals),trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
+function buildLogPayload(){const contract=g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,deputy:g.contract.deputy,solo:g.contract.solo,call:g.contract.call,revealedCall:g.contract.revealedCall,revealTrickNo:g.contract.revealTrickNo,strengthAtBid:g.contract.strengthAtBid,bidPlan:g.contract.bidPlan}:null;return{version:'v1.6',timestamp:new Date().toISOString(),userAgent:navigator.userAgent,url:location.href,phase:g.phase,round:g.round,botLevel:g.botLevel,aiWeights:sanitizeForLog(g.aiWeights),account:g.account?{id:g.account.id,rating:g.account.rating}:null,contract,allianceKittyPoints:g.allianceKittyPoints,players:(g.players||[]).map((p,i)=>({seat:i,name:p.name,bot:p.bot,handCount:p.hand?.length??0,roundPoints:p.roundPoints??0,taken:(p.taken||[]).map(c=>c.id)})),kitty:(g.kitty||[]).map(c=>c.id),discardedKitty:(g.discardedKitty||[]).map(c=>c.id),matchScores:g.matchScores,matchArt:g.matchArt,matchContracts:g.matchContracts,bidHistory:g.bidHistory,bidSignals:sanitizeForLog(g.bidSignals),properBids:g.properBids,trickNo:g.trickNo,trick:(g.trick||[]).map(e=>({seat:e.player,card:e.card?.id})),playedCards:g.playedCards,voids:g.voids,localLog:g.localLog,debugLog:g.matchDebugLog,humanRoundLog:g.humanRoundLog}}
 function downloadLog(){try{const payload=buildLogPayload();const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');const ts=new Date().toISOString().replace(/[:.]/g,'-');a.href=url;a.download='napoleon-log-'+ts+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);toast('ログをダウンロードしました')}catch(e){console.error('download failed',e);toast('ダウンロードに失敗しました: '+e.message)}}
 function logPlayDecision(seat,card,reasonInfo,context){try{addDebugLog('play-decision',{seat,round:g.round,trickNo:g.trickNo,card:card?.id,reason:reasonInfo?.reason,detail:sanitizeForLog(reasonInfo?.detail),context:sanitizeForLog(context)})}catch(e){addDebugLog('play-decision-log-error',{message:e?.message})}}
 function buildPlayContext(seat){return{hand:(g.players[seat]?.hand||[]).map(c=>c.id),trick:(g.trick||[]).map(x=>({seat:x.player,card:x.card?.id})),contract:g.contract?{nap:g.contract.nap,num:g.contract.num,suit:g.contract.suit,solo:g.contract.solo,deputy:g.contract.deputy,call:g.contract.call,revealedCall:g.contract.revealedCall}:null,aiWeights:g.aiWeights,points:g.points.slice(),roundPoints:g.players.map(p=>p.roundPoints||0),matchScores:g.matchScores.slice(),voids:g.voids,playedCards:g.playedCards,discardedKitty:g.discardedKitty||[]}}
@@ -323,9 +316,8 @@ function startLocal(){
 }
 
 function roundStart(){
-  clearTimers();clearTimeout(g.auction?.humanTimeout);clearTimeout(g.auction?.pacingTimer);
+  clearTimers();clearTimeout(g.auction?.humanTimeout);
   clearInterval(g.autoNextTimer);
-  clearInterval(g.botPacingTimer); g.botPacingTimer = null;
   g.waitingAutoPlay=false;
   g.active=-1;
   g.lastTrickWinner=null;g.phase='deal';g.contract=null;g.trick=[];g.trickNo=0;g.points=[0,0,0,0,0];g.roundArt=Array(5).fill(0);g.playedCards=[];g.voids=[{},{},{},{},{}];
@@ -334,7 +326,6 @@ function roundStart(){
   g.discard = new Set();
   g.selectedCard = null;
   g.bidHistory = [];
-  // ★ 新規: トスアップ状態リセット
   g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
   g.properBids = [13, 13, 13, 13, 13];
   g.properPlans = [null, null, null, null, null];
@@ -481,6 +472,7 @@ function auctionStart(){
   const rule=g.round>=10?finalAuctionRule(g.matchScores,g.mult):null;
   g.auction={
     active: rule ? rule.eligible : [0,1,2,3,4],
+    approved: Array(5).fill(false),
     minBid: rule?.minBid || 13,
     high: { num: 12, suit: '', player: -1, solo: false },
     version: 0,
@@ -495,7 +487,6 @@ function auctionStart(){
   g.active=-1;
   g.auctionStartAt = Date.now();
   g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: g.auctionStartAt }));
-  // 適正値とプランを事前計算
   g.properBids = [13, 13, 13, 13, 13];
   g.properPlans = [null, null, null, null, null];
   for (let seat = 0; seat < 5; seat++) {
@@ -541,7 +532,7 @@ function drawAuction(){
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
   if ((g.onlineState && g.room) && g.phase === 'auction') {
-    const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active);
+    const currentHash = JSON.stringify(g.auction.high) + String(g.mySeat) + String(g.bid) + String(g.suit) + JSON.stringify(g.auction.active) + JSON.stringify(g.auction.approved);
     if (lastAuctionDrawHash === currentHash && !p.classList.contains('hidden')) return;
     lastAuctionDrawHash = currentHash;
   }
@@ -550,7 +541,14 @@ function drawAuction(){
   const ruleNote=g.round>=10?'<div class="micro-copy">オールラスト · 最低宣言 '+g.auction.minBid+' · 得点2倍 · 立ち必須</div>':'',historyPanel=bidHistoryHTML(g.bidHistory,i=>name(i)),appealPanel=g.appealInfo?'<div class="appeal-info">'+escapeHTML(g.appealInfo)+'</div>':'';
   p.classList.remove('hidden');
   if(g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==g.mySeat){p.innerHTML='<div class="panel-title">4位が申告せず立ちを選択</div><div class="micro-copy">4位の宣言を待っています</div>'+appealPanel+historyPanel;return}
-  if(!g.auction.active.includes(g.mySeat)){p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+t+'</strong></div><div class="micro-copy">承認済み</div>'+ruleNote+appealPanel+historyPanel;return}
+  // ソフト承認: 自分が approved の場合、再立候補ボタン表示
+  if(g.auction.approved && g.auction.approved[g.mySeat]){
+    p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+t+'</strong></div><div class="micro-copy">保留中（誰かが上げれば復帰可能）</div>'+ruleNote+appealPanel+'<div class="panel-row"><button class="small-action" id="bid-submit">再立候補する</button></div>'+historyPanel;
+    const submit=$('bid-submit');
+    if(submit)submit.onclick=humanBid;
+    syncTurnTimer();
+    return;
+  }
   p.innerHTML='<div class="panel-title">現在の宣言　<strong>'+t+'</strong></div>'+ruleNote+appealPanel+'<div class="panel-row">'+SUITS.map(s=>'<button class="suit-choice '+color(s)+' '+(g.suit===s?'selected':'')+'" data-suit="'+s+'">'+s+'</button>').join('')+'<button class="suit-choice '+(g.suit==='NT'?'selected':'')+'" data-suit="NT">NT</button></div><div class="panel-row"><button class="small-action" id="bid-minus">−</button><span class="bid-number">'+g.bid+'</span><button class="small-action" id="bid-plus">＋</button></div><div class="panel-row"><button class="small-action pass" id="bid-approve" '+(g.auction.high.player===g.mySeat&&g.auction.active.length>1||g.round>=10&&g.auction.high.num<13?'disabled':'')+'>承認</button><button class="small-action" id="bid-submit">宣言する</button></div>'+historyPanel;
   document.querySelectorAll('[data-suit]').forEach(b=>b.onclick=()=>{auctionActivity();g.suit=b.dataset.suit;drawAuction()});
   const minus=$('bid-minus'),plus=$('bid-plus'),approve=$('bid-approve'),submit=$('bid-submit');
@@ -570,6 +568,7 @@ function scheduleComBids(){
   for(let i=0;i<5;i++){
     if(!g.auction.active.includes(i)) continue;
     if(i === g.mySeat) continue;
+    if(g.auction.approved && g.auction.approved[i]) continue;
     if(g.auction.botSeen[i] >= version) continue;
     const elapsed = Date.now() - (g.bidSignals[i].lastBidAt || g.auctionStartAt);
     const waitMs = Math.max(0, pacingMs - elapsed);
@@ -586,17 +585,52 @@ function humanApprove(forced=false){
     return;
   }
   if(g.phase!=='auction'||!g.auction||!g.auction.active.includes(g.mySeat))return;
-  if(!g.auction.active.length){auctionEnd(-1);return}
   if(g.round>=10&&g.auction.high.num<13){if(forced&&(g.auction.requiredBidSeat??g.auction.active[0])===g.mySeat){g.bid=g.auction.minBid;g.suit=strongestSuit(g.players[g.mySeat].hand);humanBid()}return}
   if(!forced)auctionActivity();
-  if(g.auction.high.player===g.mySeat){if(g.auction.active.length===1)auctionEnd(g.mySeat);else if(forced){g.auction.autoApprove[g.mySeat]=true;message('30秒操作がなかったため、宣言者は自動承認待ちです')}return}
-  removeBid(g.mySeat);
-  addGameLog(forced?'あなたが自動承認':'あなたが承認');
-  message(forced?'30秒操作がなかったため、自動で承認しました':'あなたは承認しました');
-  if(!g.auction.active.length){auctionEnd(-1);return}
-  if(g.auction.active.length===1&&g.auction.high.player===g.auction.active[0]){const last=g.auction.active[0];if(g.auction.autoApprove[last]){auctionEnd(last);return}message(name(last)+'以外は承認しました。さらに宣言するか、承認して確定してください')}
+  // 自分が最高宣言者の場合
+  if(g.auction.high.player===g.mySeat){
+    const others = g.auction.active.filter(s => s !== g.mySeat);
+    const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+    if(allApproved){
+      const properBid = g.properBids[g.mySeat] || 13;
+      if(g.auction.high.num < properBid){
+        const pacingMs = g.aiWeights.bidPacingMs ?? 4000;
+        message(`${name(g.mySeat)}が適正値（${properBid}）まで段階上げ中…`);
+        setTimeout(() => {
+          if (g.phase !== 'auction') return;
+          const nextNum = Math.min(properBid, g.auction.high.num + 1);
+          const suit = g.auction.high.suit;
+          g.bidHistory.push({ round: g.round, seat: g.mySeat, num: nextNum, suit });
+          if (g.bidHistory.length > 50) g.bidHistory.shift();
+          g.auction.high = { num: nextNum, suit, player: g.mySeat, solo: false };
+          g.bidSignals[g.mySeat].lastBidAt = Date.now();
+          g.auction.bidPlans[g.mySeat] = g.properPlans[g.mySeat];
+          addGameLog(`${name(g.mySeat)}が${nextNum}${suit}を宣言（適正値まで）`);
+          message(`${name(g.mySeat)}が${nextNum}${suit}を宣言しました`);
+          drawAuction(); drawSeats();
+          auctionEnd(g.mySeat);
+        }, pacingMs);
+        return;
+      }
+      auctionEnd(g.mySeat);
+    } else if(forced){
+      g.auction.autoApprove[g.mySeat]=true;
+      message('30秒操作がなかったため、宣言者は自動承認待ちです');
+    }
+    return;
+  }
+  // ソフト承認
+  g.auction.approved[g.mySeat] = true;
+  addGameLog(forced?'あなたが自動保留':'あなたが保留（再立候補可）');
+  message(forced?'30秒操作がなかったため、自動で保留しました':'あなたは保留しました（誰かが上げれば復帰可能）');
+  const others = g.auction.active.filter(s => s !== g.auction.high.player);
+  const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+  if(allApproved){
+    auctionEnd(g.auction.high.player);
+    return;
+  }
   g.auction.active.filter(i=>i!==g.mySeat).forEach(i=>g.auction.botSeen[i]=g.auction.version-1);
-  drawAuction();drawSeats();scheduleComBids()
+  drawAuction();drawSeats();scheduleComBids();
 }
 
 function humanBid(){
@@ -614,6 +648,8 @@ function humanBid(){
   g.auction.high={num:g.bid,suit:g.suit,player:g.mySeat,solo:false};
   if(g.auction.requiredBidSeat===g.mySeat)g.auction.requiredBidSeat=null;
   g.auction.version++;
+  // ソフト承認: 全員復帰
+  g.auction.approved = Array(5).fill(false);
   g.active=g.mySeat;
   g.bidSignals[g.mySeat].lastBidAt = Date.now();
   message('あなたが'+g.bid+g.suit+'を宣言しました');
@@ -625,6 +661,7 @@ function comBid(i,version){
   if(g.phase!=='auction'||version!==g.auction.version||!g.auction.active.includes(i))return;
   if(g.auction.botSeen[i]>=version)return;
   if(g.auction.requiredBidSeat!==null&&g.auction.requiredBidSeat!==i)return;
+  if(g.auction.approved && g.auction.approved[i]) return;
   g.auction.botSeen[i]=version;
   
   if(g.auction.high.player===i){
@@ -644,13 +681,14 @@ function comBid(i,version){
   const limit = currentHigh.suit === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
   const canTossUp = sameColorCount < limit || myTwoRole;
   
-  // S4（17検知時）：即20
+  // S4
   if(signal.S4 && currentHigh.num === 17 && canTossUp){
     g.bidHistory.push({round:g.round,seat:i,num:20,suit:signal.targetSuit});
     addGameLog(name(i)+'がS4（20引き上げ）を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.high={num:20,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
+    g.auction.approved = Array(5).fill(false);
     g.active=i;
     bidSignals.sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
     bidSignals.lastBidAt = Date.now();
@@ -670,6 +708,7 @@ function comBid(i,version){
       if(g.bidHistory.length>50)g.bidHistory.shift();
       g.auction.high={num:targetNum,suit:'NT',player:i,solo:false};
       g.auction.version++;
+      g.auction.approved = Array(5).fill(false);
       g.active=i;
       bidSignals.sent = { type: 'S3', suit: 'NT', num: targetNum };
       bidSignals.lastBidAt = Date.now();
@@ -688,6 +727,7 @@ function comBid(i,version){
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
+    g.auction.approved = Array(5).fill(false);
     g.active=i;
     bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -705,6 +745,7 @@ function comBid(i,version){
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
+    g.auction.approved = Array(5).fill(false);
     g.active=i;
     bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -719,23 +760,23 @@ function comBid(i,version){
   const baseStr = handStrength(h);
   const bidThreshold = params.bidThreshold ?? 3.5;
   
-  // 初回で弱すぎる → 承認
   if (currentHigh.num < 13 && baseStr < bidThreshold) {
-    removeBid(i); addGameLog(name(i)+'が承認'); message(name(i)+'は承認しました');
-    if(!g.auction.active.length){auctionEnd(-1);return}
-    if(g.auction.active.length===1&&g.auction.high.player===g.auction.active[0]){const last=g.auction.active[0];if(g.auction.autoApprove[last]){auctionEnd(last);return}}
-    g.auction.active.filter(j=>j!==g.mySeat).forEach(j=>g.auction.botSeen[j]=g.auction.version-1);
+    removeBid(i); addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
+    g.auction.approved[i] = true;
+    const others = g.auction.active.filter(s => s !== g.auction.high.player);
+    const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+    if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player, g); return; }
     drawAuction(); drawSeats(); scheduleComBids(); return;
   }
   
-  // 適正値に達している → 応戦 or 承認
   if (currentHigh.num >= properBid && currentHigh.player !== i) {
     const isDifferentColor = currentHigh.suit && currentHigh.suit !== 'NT' && !isSameColorSuit(currentHigh.suit, strongestSuit(h));
     if (isDifferentColor && currentHigh.num > properBid) {
-      removeBid(i); addGameLog(name(i)+'が承認（適正値超過）'); message(name(i)+'は承認しました');
-      if(!g.auction.active.length){auctionEnd(-1);return}
-      if(g.auction.active.length===1&&g.auction.high.player===g.auction.active[0]){const last=g.auction.active[0];if(g.auction.autoApprove[last]){auctionEnd(last);return}}
-      g.auction.active.filter(j=>j!==g.mySeat).forEach(j=>g.auction.botSeen[j]=g.auction.version-1);
+      g.auction.approved[i] = true;
+      addGameLog(name(i)+'が保留（適正値超過）'); message(name(i)+'は保留しました');
+      const others = g.auction.active.filter(s => s !== g.auction.high.player);
+      const allApproved = others.length === 0 || others.every(s => g.auction.approved[s]);
+      if (allApproved && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
       drawAuction(); drawSeats(); scheduleComBids(); return;
     }
     const targetNum = Math.min(20, currentHigh.num + 1);
@@ -745,27 +786,31 @@ function comBid(i,version){
       addGameLog(name(i)+'が'+targetNum+bestSuit+'を宣言（応戦）');
       if(g.bidHistory.length>50)g.bidHistory.shift();
       g.auction.high={num:targetNum,suit:bestSuit,player:i,solo:false};
-      g.auction.version++; g.active=i; bidSignals.lastBidAt = Date.now();
+      g.auction.version++;
+      g.auction.approved = Array(5).fill(false);
+      g.active=i;
+      bidSignals.lastBidAt = Date.now();
       g.auction.bidPlans[i] = g.properPlans[i];
       message(name(i)+'が'+targetNum+bestSuit+'を宣言しました');
       drawAuction(); drawSeats(); scheduleComBids(); return;
     }
   }
   
-  // 13スタート
   if (currentHigh.num < 13 && baseStr >= bidThreshold) {
     const bestSuit = strongestSuit(h);
     g.bidHistory.push({round:g.round,seat:i,num:13,suit:bestSuit});
     addGameLog(name(i)+'が13'+bestSuit+'を宣言（情報収集）');
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.high={num:13,suit:bestSuit,player:i,solo:false};
-    g.auction.version++; g.active=i; bidSignals.lastBidAt = Date.now();
+    g.auction.version++;
+    g.auction.approved = Array(5).fill(false);
+    g.active=i;
+    bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
     message(name(i)+'が13'+bestSuit+'を宣言しました');
     drawAuction(); drawSeats(); scheduleComBids(); return;
   }
   
-  // 段階上げ
   if (currentHigh.num < properBid) {
     const targetNum = Math.min(properBid, currentHigh.num + 1);
     const bestSuit = strongestSuit(h);
@@ -775,7 +820,10 @@ function comBid(i,version){
     addGameLog(name(i)+'が'+nextNum+nextSuit+'を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
     g.auction.high={num:nextNum,suit:nextSuit,player:i,solo:false};
-    g.auction.version++; g.active=i; bidSignals.lastBidAt = Date.now();
+    g.auction.version++;
+    g.auction.approved = Array(5).fill(false);
+    g.active=i;
+    bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
     message(name(i)+'が'+nextNum+nextSuit+'を宣言しました');
     drawAuction(); drawSeats(); scheduleComBids(); return;
@@ -783,10 +831,11 @@ function comBid(i,version){
   
   // 承認
   if(g.auction.high.player===i){if(g.auction.active.length===1)auctionEnd(i);return}
-  removeBid(i); addGameLog(name(i)+'が承認'); message(name(i)+'は承認しました');
-  if(!g.auction.active.length){auctionEnd(-1);return}
-  if(g.auction.active.length===1&&g.auction.high.player===g.auction.active[0]){const last=g.auction.active[0];if(g.auction.autoApprove[last]){auctionEnd(last);return}}
-  g.auction.active.filter(j=>j!==g.mySeat).forEach(j=>g.auction.botSeen[j]=g.auction.version-1);
+  g.auction.approved[i] = true;
+  addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
+  const others2 = g.auction.active.filter(s => s !== g.auction.high.player);
+  const allApproved2 = others2.length === 0 || others2.every(s => g.auction.approved[s]);
+  if (allApproved2 && g.auction.high.player >= 0) { auctionEnd(g.auction.high.player); return; }
   drawAuction(); drawSeats(); scheduleComBids();
 }
 
@@ -794,7 +843,6 @@ function auctionEnd(w){
   clearTimeout(g.auction?.humanTimeout);
   stopTurnTimer();
   
-  // 適正値再計算（シグナル受信反映、1回のみ）
   if (w >= 0 && g.auction && !g.auction.properRecomputed) {
     const proper = computeProperBid(g.players[w].hand, g.auction.high.suit, g.aiWeights, w, g.bidSignals[w], g.matchScores, g.kitty, g.playedCards, g.voids, g.bidHistory);
     g.properBids[w] = proper.properBid;
@@ -812,7 +860,6 @@ function auctionEnd(w){
     }
   }
   
-  // ★ Q28=B: 全員承認後の適正値チェック
   const properBid = g.properBids[w] || 13;
   if (g.auction.high.num < properBid && g.auction.high.player === w) {
     if (!g.auction.active.includes(w)) g.auction.active.push(w);
@@ -820,7 +867,7 @@ function auctionEnd(w){
     message(`${name(w)}が適正値（${properBid}）まで段階上げ中…`);
     $('auction-panel')?.classList.remove('hidden');
     drawAuction(); drawSeats();
-    g.auction.pacingTimer = setTimeout(() => {
+    setTimeout(() => {
       if (g.phase !== 'auction') return;
       const nextNum = Math.min(properBid, g.auction.high.num + 1);
       const suit = g.auction.high.suit;
@@ -837,7 +884,6 @@ function auctionEnd(w){
     return;
   }
   
-  // 確定
   $('auction-panel')?.classList.add('hidden'); showDiscardedKitty(); $('auction-clock')?.classList.add('hidden');
   clearTimeout(g.auction?.pacingTimer);
   
@@ -852,6 +898,7 @@ function auctionEnd(w){
   message(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言。オープンを手札に入れて2枚捨ててください');
   kittyStart();
 }
+
 
 // ===== [app.js 後半 開始] =====
 function callUi(){
@@ -1544,7 +1591,7 @@ function addTakenCards(seat,cards=[]){
   seat.append(row)
 }
 
-function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===g.mySeat?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?'ナポレオン':!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):(g.phase==='auction'&&g.auction&&g.auction.active&&!g.auction.active.includes(i))?'承認済み':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot&&!p.abandoned?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken||[]);box.append(e)})}
+function drawSeats(){let box=$('players-ring');if(!box)return;box.replaceChildren();const leadSeat=g.phase==='play'&&g.trick.length?g.trick[0].player:g.lastTrickWinner;g.players.forEach((p,i)=>{let e=document.createElement('div');e.className='player-seat player-color-'+i+' pos-'+i+(i===g.mySeat?' me':'')+(i===g.active?' active':'')+(i===leadSeat?' trick-winner':'');let role=g.contract?(g.contract.nap===i?'ナポレオン':!g.contract.revealedCall?'':g.contract.deputy===i?'副官':'連合軍'):(g.phase==='auction'&&g.auction&&g.auction.approved&&g.auction.approved[i])?'保留中':'';e.classList.toggle('deputy-seat',role==='副官');e.innerHTML='<div class="seat-name">'+name(i)+(p.bot&&!p.abandoned?'<span class="com-badge">COM</span>':'')+'</div>'+(i===leadSeat?'<div class="lead-badge" role="img" aria-label="トリック先攻"><i></i></div>':'')+'<div class="seat-role '+(role==='副官'?'deputy-status':'')+'">'+role+'</div>';addTakenCards(e,p.taken||[]);box.append(e)})}
 
 function announceCall(card,onConfirm,online=false){const d=$('message-dialog'),slot=$('dialog-card');if(!d||!slot)return;$('dialog-eyebrow')?.classList.add('hidden');const dt=$('dialog-title');if(dt)dt.textContent='DEPUTY CALL';slot.classList.remove('hidden');slot.replaceChildren(cardEl(card,'announcement-card'));const db=$('dialog-body');if(db)db.textContent=online?'全員が確認すると最初のトリックが始まります。':'確認して、最初のトリックを始めます。';const dok=$('dialog-ok');if(dok)dok.textContent=online?'確認':'最初のトリックへ';if(dok)dok.onclick=()=>{d.close();slot.classList.add('hidden');slot.replaceChildren();$('dialog-eyebrow')?.classList.remove('hidden');const de=$('dialog-eyebrow');if(de)de.textContent='Napoleon';if(dok)dok.textContent='OK';if(onConfirm)onConfirm()};try { if (d.open) d.close(); } catch {}; d.showModal()}
 
@@ -1843,7 +1890,7 @@ function handleOnlineMessage(m){
     document.getElementById('friend-lobby-overlay')?.classList.add('hidden');
     hideWaitingBanner();
     g.friendLobby = null;
-    if (g.phase === 'play' || g.phase === 'auction' || g.phase === 'discard' || g.phase === 'call' || g.phase === 'prep') { clearTimers(); clearInterval(g.autoNextTimer); clearTimeout(g.auction?.humanTimeout); clearTimeout(g.auction?.pacingTimer); toast('友人戦が開始されました。COM戦を終了して移行します。'); }
+    if (g.phase === 'play' || g.phase === 'auction' || g.phase === 'discard' || g.phase === 'call' || g.phase === 'prep') { clearTimers(); clearInterval(g.autoNextTimer); clearTimeout(g.auction?.humanTimeout); toast('友人戦が開始されました。COM戦を終了して移行します。'); }
     g.online=m;g.mySeat=m.seat;
     g.players=m.players.map(p=>({name:p.username || p.id, username:p.username, originalName:p.username, abandoned:false, hand:[], taken:[], roundPoints:0}));
     g.phase=''; g.active=-1; g.discard=new Set(); g.selectedCard=null;
@@ -1855,7 +1902,6 @@ function handleOnlineMessage(m){
     g.discardedKitty=[]; g.allianceKittyPoints=0; g.waitingAutoPlay=false;
     g.round=1; g.mult=1; g.playoff=false; g.announcedRound=null;
     g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
-    // ★ 新規: トスアップ状態リセット
     g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
     g.properBids = [13, 13, 13, 13, 13];
     g.properPlans = [null, null, null, null, null];
@@ -1997,7 +2043,6 @@ async function online(mode,roomCode,bots,botLevel=3){
     g.auction=null; g.contract=null; g.matchScores=[0,0,0,0,0];
     g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
     g.bid=13; g.suit='♠'; g.selectedCard=null; g.discard=new Set(); g.phase=''; g.active=-1; g.lastRating=null;
-    // ★ 新規: トスアップ状態リセット
     g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
     g.properBids = [13, 13, 13, 13, 13];
     g.properPlans = [null, null, null, null, null];
@@ -2061,3 +2106,5 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
+
+
