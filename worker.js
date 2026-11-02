@@ -455,7 +455,15 @@ function publicState(m) {
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
     revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
-    auction: m.auction ? { high: m.auction.high, active: m.auction.active, approved: m.auction.approved, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
+    auction: m.auction ? {
+      high: m.auction.high,
+      active: m.auction.active,
+      approved: m.auction.approved,
+      minBid: m.auction.minBid || 13,
+      requiredBidSeat: m.auction.requiredBidSeat ?? null,
+      autoApprove: m.auction.autoApprove,
+      needsHumanConfirm: m.auction.needsHumanConfirm === true   // ★ 追加
+    } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call, bidPlan: m.contract.bidPlan } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
     trickNo: m.trickNo, deadline: m.deadline, result: m.result || null
@@ -489,7 +497,6 @@ function validBid(m, n, s) {
   return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit]));
 }
 
-// ★ humanPending 修正済み
 function doApprove(m, seat, room, forced = false) {
   if (m.phase !== "auction" || !m.auction.active.includes(seat)) return;
   if (m.auction.requiredBidSeat !== null && m.auction.high.num < 13) {
@@ -503,6 +510,12 @@ function doApprove(m, seat, room, forced = false) {
   }
   // 自分が最高宣言者の場合
   if (m.auction.high.player === seat) {
+    // ★ 確定待ち状態なら、この approve が「確定」アクション
+    if (m.auction.needsHumanConfirm) {
+      m.auction.needsHumanConfirm = false;
+      auctionDone(m, seat, room, true);
+      return;
+    }
     const others = m.auction.active.filter(s => s !== seat);
     // ★ 他の人間プレイヤー（botでない）が未承認なら待つ
     const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== seat && !m.auction.approved[s]);
@@ -537,7 +550,18 @@ function doApprove(m, seat, room, forced = false) {
   // ★ 他の人間プレイヤー（botでない）が未承認なら終わらせない
   const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== m.auction.high.player && !m.auction.approved[s]);
   const allApproved = !humanPending && (others.length === 0 || others.every(s => m.auction.approved[s]));
-  if (allApproved) { auctionDone(m, m.auction.high.player, room); return; }
+  if (allApproved) {
+    // ★ 宣言者が人間なら確定ボタンを待つ
+    if (!m.seats[m.auction.high.player].bot) {
+      m.auction.needsHumanConfirm = true;
+      m.auction.lastAction[m.auction.high.player] = Date.now();
+      m.notice = m.seats[m.auction.high.player].player.username + ' の確定を待っています';
+      publish(m, room);
+      return;
+    }
+    auctionDone(m, m.auction.high.player, room);
+    return;
+  }
   m.auction.active.forEach(i => {
     if (m.seats[i].bot && i !== seat && !m.auction.approved[i]) {
       m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1);
@@ -558,6 +582,7 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.version++;
   // ソフト承認: approved を全員 false にリセット
   m.auction.approved = Array(5).fill(false);
+  m.auction.needsHumanConfirm = false;   // ★ 追加
   m.active = seat;
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
   m.auction.botAt.forEach((_, i) => {
@@ -595,7 +620,8 @@ function answerAppealResponse(m, seat, choice, room) {
   m.phase = 'auction'; m.deadline = 0; publish(m, room);
 }
 
-function auctionDone(m, seat, room) {
+function auctionDone(m, seat, room, skipProperRaise = false) {
+  if (m.auction) m.auction.needsHumanConfirm = false;   // ★ 追加
   if (seat < 0 || m.auction.high.num < 13) {
     if (m.round >= 10) {
       seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat;
@@ -616,7 +642,7 @@ function auctionDone(m, seat, room) {
     m.properRecomputed = true;
   }
   const properBid = m.properBids[seat] || 13;
-  if (m.auction.high.num < properBid && m.auction.high.player === seat) {
+  if (!skipProperRaise && m.auction.high.num < properBid && m.auction.high.player === seat) {   // ★ skipProperRaise
     if (!m.auction.active.includes(seat)) m.auction.active.push(seat);
     const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
     m.auction.botAt[seat] = Date.now() + pacingMs;
@@ -797,7 +823,6 @@ function artfulCard(m, entry, trick) {
   const c = entry.card, led = trick[0].card.suit, black = s => s === "♣" || s === "♠";
   return c.id === "♠A" || c.id === "♥Q" && trick.some(x => x.card.id === "♠A") || c.rank === "J" && m.contract.suit !== "NT" && (c.suit === m.contract.suit || c.suit !== m.contract.suit && black(c.suit) === black(m.contract.suit)) || c.rank === "2" && c.suit === led && trick.every(x => x.card.suit === led);
 }
-
 function playCard(m, seat, id, room, env) {
   if (m.phase !== "play" || m.active !== seat) return;
   const legal = legalCards(m, seat), card = legal.find(x => x.id === id);
@@ -1018,6 +1043,29 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "next-round") return nextRound(m, room);
   if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
   if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
+
+  // ★ 追加: 明示的確定（properBid 段階上げをスキップ）
+  if (a.type === "confirm-auction") {
+    if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
+      m.auction.needsHumanConfirm = false;
+      auctionDone(m, seat, room, true);
+    }
+    return;
+  }
+  // ★ 追加: まだ上げる（全承認リセットして競り再開）
+  if (a.type === "reopen-auction") {
+    if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
+      m.auction.needsHumanConfirm = false;
+      m.auction.approved = Array(5).fill(false);
+      m.auction.botSeen = Array(5).fill(-1);
+      const now = Date.now();
+      m.auction.botAt = m.seats.map(() => now + 4000);
+      m.notice = m.seats[seat].player.username + ' がまだ上げることを選びました';
+      publish(m, room);
+    }
+    return;
+  }
+
   if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room);
   else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true);
   else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room);
@@ -1214,7 +1262,8 @@ export const room = {
           botSeen: Array(5).fill(-1),
           botAt: m.seats.map(() => now + 4000),
           requiredBidSeat: null,
-          bidPlans: {}
+          bidPlans: {},
+          needsHumanConfirm: false   // ★ 追加
         };
         m.properBids = [13, 13, 13, 13, 13];
         m.properPlans = [null, null, null, null, null];
@@ -1257,8 +1306,16 @@ export const room = {
         if (m.seats[m.active]?.bot) answerAppealResponse(m, m.active, "declare", room);
         else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room);
       } else if (m.phase === "auction") {
+        // ★ needsHumanConfirm 中の人間プレイヤーは自動承認しない（自動確定しない）
         for (const seat of m.auction.active.slice()) {
-          if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true);
+          if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) {
+            // 確定待ち人間は lastAction をリセットして自動処理しない
+            if (m.auction.needsHumanConfirm && seat === m.auction.high.player) {
+              m.auction.lastAction[seat] = now;
+              continue;
+            }
+            doApprove(m, seat, room, true);
+          }
           if (m.phase !== "auction") break;
         }
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) {
@@ -1268,7 +1325,6 @@ export const room = {
         if (m.phase === "auction" && m.auction.active.length === 1) {
           const onlySeat = m.auction.active[0];
           if (m.auction.high.player === onlySeat && m.seats[onlySeat].bot) {
-            // 人間の承認待ちでないことを確認
             const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== onlySeat && !m.auction.approved[s]);
             if (!humanPending) {
               const properBid = m.properBids[onlySeat] || 13;
@@ -1351,4 +1407,5 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
+
 
