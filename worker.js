@@ -276,6 +276,7 @@ export default {
   }
 };
 // ===== [worker.js 前半 終了] =====
+
 // ===== [worker.js 後半 開始] =====
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
@@ -450,12 +451,12 @@ function publicState(m) {
       abandoned: !!p.abandoned,
       rating: p.player.rating, bot: p.bot,
       handCount: p.hand.length, points: p.points, taken: p.taken, active: m.active,
-      approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.active) && !m.auction.active.includes(seat),
+      approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.approved) ? !!m.auction.approved[seat] : false,
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
     revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
-    auction: m.auction ? { high: m.auction.high, active: m.auction.active, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
+    auction: m.auction ? { high: m.auction.high, active: m.auction.active, approved: m.auction.approved, minBid: m.auction.minBid || 13, requiredBidSeat: m.auction.requiredBidSeat ?? null, autoApprove: m.auction.autoApprove } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call, bidPlan: m.contract.bidPlan } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
     trickNo: m.trickNo, deadline: m.deadline, result: m.result || null
@@ -500,9 +501,11 @@ function doApprove(m, seat, room, forced = false) {
     if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room);
     return;
   }
+  // 自分が最高宣言者の場合
   if (m.auction.high.player === seat) {
-    if (m.auction.active.length === 1) {
-      // Q28=B: 全員承認後、適正値まで段階上げを続ける
+    const others = m.auction.active.filter(s => s !== seat);
+    const allApproved = others.length === 0 || others.every(s => m.auction.approved[s]);
+    if (allApproved) {
       const properBid = m.properBids[seat] || 13;
       if (m.auction.high.num < properBid) {
         const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
@@ -520,18 +523,20 @@ function doApprove(m, seat, room, forced = false) {
     }
     return;
   }
+  // ソフト承認: approved[seat] = true のみ
+  m.auction.approved[seat] = true;
   m.auction.lastAction[seat] = Date.now();
   m.auction.autoApprove[seat] = false;
-  m.auction.active = m.auction.active.filter(x => x !== seat);
-  m.notice = forced ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で承認しました。" : m.seats[seat].player.username + "が承認しました。";
-  if (!m.auction.active.length) { auctionDone(m, -1, room); return; }
-  if (m.auction.active.length === 1 && m.auction.high.player === m.auction.active[0]) {
-    const last = m.auction.active[0];
-    if (m.auction.autoApprove[last]) { auctionDone(m, last, room); return; }
-    m.notice = m.seats[last].player.username + "以外は承認しました。さらに宣言するか、承認して確定できます。";
-  }
+  m.notice = forced
+    ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で保留しました。"
+    : m.seats[seat].player.username + "が保留しました（誰かが上げれば復帰可能）。";
+  // 競り終了判定: high.player 以外が全員 approved
+  const others = m.auction.active.filter(s => s !== m.auction.high.player);
+  const allApproved = others.length === 0 || others.every(s => m.auction.approved[s]);
+  if (allApproved) { auctionDone(m, m.auction.high.player, room); return; }
+  // 次のCOMの手番を4秒後にセット
   m.auction.active.forEach(i => {
-    if (m.seats[i].bot) {
+    if (m.seats[i].bot && i !== seat && !m.auction.approved[i]) {
       m.auction.botSeen[i] = Math.min(m.auction.botSeen[i], m.auction.version - 1);
       m.auction.botAt[i] = Date.now() + 4000;
     }
@@ -548,6 +553,8 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.high = { num: n, suit: s, player: seat, solo: solo === true };
   if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null;
   m.auction.version++;
+  // ソフト承認: approved を全員 false にリセット
+  m.auction.approved = Array(5).fill(false);
   m.active = seat;
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
   m.auction.botAt.forEach((_, i) => {
@@ -606,7 +613,7 @@ function auctionDone(m, seat, room) {
     m.properPlans[seat] = proper.plan;
     m.properRecomputed = true;
   }
-  // Q28=B: 適正値に達していなければ段階上げを続ける
+  // Q28=B: 適正値に達していなければ段階上げ
   const properBid = m.properBids[seat] || 13;
   if (m.auction.high.num < properBid && m.auction.high.player === seat) {
     if (!m.auction.active.includes(seat)) m.auction.active.push(seat);
@@ -894,15 +901,12 @@ function botAuctionBid(m, seat, room) {
   const limit = currentHigh.suit === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
   const canTossUp = sameColorCount < limit || myTwoRole;
 
-  // S4（17検知時）：即20
   if (signal.S4 && currentHigh.num === 17 && canTossUp) {
     doBid(m, seat, 20, signal.targetSuit, room, false);
     m.seats[seat].bidSignals.sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
     for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S4', suit: signal.targetSuit, num: 20 });
     return;
   }
-
-  // S3（NTサポート）
   if (signal.S3 && currentHigh.suit === 'NT' && canTossUp) {
     const targetNum = currentHigh.num + 1;
     if (targetNum <= 20) {
@@ -912,16 +916,12 @@ function botAuctionBid(m, seat, room) {
       return;
     }
   }
-
-  // S2（2役）
   if (signal.S2 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
     doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
     m.seats[seat].bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
     for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: currentHigh.num });
     return;
   }
-
-  // S1
   if (signal.S1 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
     doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
     m.seats[seat].bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
@@ -1203,6 +1203,7 @@ export const room = {
         m.phase = "auction";
         m.auction = {
           active: rule ? rule.eligible : [0, 1, 2, 3, 4],
+          approved: Array(5).fill(false),
           minBid: rule?.minBid || 13,
           high: { num: 12, suit: "", player: -1, solo: false },
           version: 0, startedAt: now,
@@ -1256,13 +1257,12 @@ export const room = {
         else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room);
       } else if (m.phase === "auction") {
         for (const seat of m.auction.active.slice()) {
-          if (!m.seats[seat].bot && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true);
+          if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) doApprove(m, seat, room, true);
           if (m.phase !== "auction") break;
         }
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) {
-          if (m.seats[seat].bot && m.auction.active.includes(seat) && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room);
+          if (m.seats[seat].bot && m.auction.active.includes(seat) && !m.auction.approved[seat] && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room);
         }
-        // Q28=B: 全員承認後の適正値段階上げ
         if (m.phase === "auction" && m.auction.active.length === 1) {
           const onlySeat = m.auction.active[0];
           if (m.auction.high.player === onlySeat && m.seats[onlySeat].bot) {
@@ -1345,3 +1345,5 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
+
+
