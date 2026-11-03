@@ -533,16 +533,13 @@ function drawAuction(){
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
   
-  // ★ 追加: 確定待ちパネル（hash check より先に判定）
+  // ★ 修正: 確定待ちパネル（hash check より先に判定）
   if (g.auction.needsHumanConfirm && g.auction.high.player === g.mySeat) {
     const h = g.auction.high;
-    const properBid = g.properBids[g.mySeat] || 13;
-    const warn = properBid > h.num ? `<div class="micro-copy" style="color:#e8d7a9;text-align:center;margin-bottom:8px;">※ 適正値は ${properBid}${h.suit} です</div>` : '';
     p.classList.remove('hidden');
     p.innerHTML = `
       <div class="panel-title">他のプレイヤーは全員承認しました</div>
       <div style="text-align:center;font-size:28px;color:#f3d48e;font-weight:900;margin:10px 0;letter-spacing:.05em;">${h.num}${h.suit}</div>
-      ${warn}
       <div class="micro-copy" style="text-align:center;margin-bottom:12px;">この宣言でよろしければ確定してください</div>
       <div class="panel-row" style="display:flex;gap:8px;">
         <button id="bid-finalize" class="primary-button" style="flex:1;min-height:48px;">この宣言で確定</button>
@@ -565,7 +562,11 @@ function drawAuction(){
       } else {
         g.auction.approved = Array(5).fill(false);
         g.auction.botSeen = Array(5).fill(-1);
-        drawAuction(); drawSeats(); scheduleComBids();
+        setTimeout(() => {
+          drawAuction();
+          drawSeats();
+          scheduleComBids();
+        }, 10);
       }
     };
     return;
@@ -992,6 +993,9 @@ function auctionEnd(w, skipProperRaise = false){
   kittyStart();
 }
 // ===== [app.js 後半 開始] =====
+// ===== [app.js 後半 開始] =====
+// ※ 前半の続きとして記述
+
 function callUi(){
   g.phase='call';
   phase('副官指名');
@@ -2195,8 +2199,4 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
-
-
-
-
 
