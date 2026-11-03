@@ -1,5 +1,5 @@
-// ai-simulator.js (前半: 自己対戦ロジック・プレイ品質計測)
-import { SUITS, RANKS, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience } from './constants.js';
+// ai-simulator.js (前半: 自己対戦ロジック・プレイ品質計測・クイズ抽出)
+import { SUITS, RANKS, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
   winningEntry, colorStrength, ntHandStrength, handStrength, cardPower,
@@ -20,10 +20,20 @@ function computeBidStrength(hand, suit, params) {
 function computePlanAccuracy(plan, actualWins, params) {
   if (!plan || !Number.isFinite(plan.expectedWins)) return 0;
   const diff = plan.expectedWins - actualWins;
-  const w = params.planAccuracyWeight ?? 2.0;
-  if (diff > 1.5) return -Math.min(params.overbidPenalty ?? 2.0, (diff - 1.5) * 1.5) * w;
-  else if (diff < -2.0) return -Math.min(params.underbidPenalty ?? 1.0, (-diff - 2.0) * 0.5) * w;
-  else if (Math.abs(diff) <= 1.0) return (params.planAccuracyBonus ?? 2.0) * w;
+  const w = params.planAccuracyWeight ?? 1.0;
+  
+  if (diff > 1.5) {
+    const penaltyWeight = params.overbidPenalty ?? 2.0;
+    return -Math.min(penaltyWeight, (diff - 1.5) * 1.5) * w;
+  }
+  else if (diff < -2.0) {
+    const penaltyWeight = params.underbidPenalty ?? 0.5;
+    return -Math.min(penaltyWeight, (-diff - 2.0) * 0.5) * w;
+  }
+  else if (Math.abs(diff) <= 1.0) {
+    const bonus = params.planAccuracyBonus ?? 1.5;
+    return bonus * w;
+  }
   return 0;
 }
 
@@ -48,12 +58,96 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
 }
 
 // ==========================================
+// クイズ候補抽出ロジック
+// ==========================================
+
+let quizCandidateQueue = [];
+const MAX_QUIZ_CANDIDATES_PER_MATCH = 3;
+
+function detectQuizCandidate(ctx) {
+  const { legal, trick, trickNo, contract, hand, points, allianceKittyPoints } = ctx;
+  if (!legal || legal.length < 2) return null;
+
+  // ★ 除外条件: 全ての選択肢が「同一スートの非点札」なら議論の余地なし (例: ♣5と♣6)
+  const allNonFace = legal.every(c => !['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
+  const allSameSuit = legal.every(c => c.suit === legal[0].suit);
+  if (allNonFace && allSameSuit) {
+    return null;
+  }
+
+  const reasons = [];
+  const heuristicBest = chooseCardToPlay(ctx);
+  
+  const legalScores = legal.map(c => {
+    let score = 0;
+    if (['10', 'J', 'Q', 'K', 'A'].includes(c.rank)) score += 10;
+    if (contract.suit !== 'NT' && c.suit === contract.suit) score += 20;
+    if (c.id === '♠A') score += 50;
+    if (c.rank === 'J' && contract.suit !== 'NT' && isSameColorSuit(c.suit, contract.suit)) score += 40;
+    return { c, score };
+  }).sort((a, b) => b.score - a.score);
+
+  if (legalScores.length >= 2 && legalScores[0].score - legalScores[1].score <= 10) reasons.push('close_call');
+  if (heuristicBest && legalScores[0].c.id !== heuristicBest.id) reasons.push('heuristic_mismatch');
+
+  if (contract.suit === 'NT' && trickNo <= 6 && trick.length > 0) {
+    const pointsInTrick = trick.filter(e => ['10','J','Q','K','A'].includes(e.card.rank)).length;
+    if (pointsInTrick <= 1) reasons.push('nt_duck');
+  }
+
+  if (trick.some(e => e.card.id === '♠A') && hand.some(c => c.id === '♥Q')) {
+    reasons.push('mighty_shadow');
+  }
+
+  const current = trick.length > 0 ? winningEntry(contract, trickNo, trick) : null;
+  const isTeamWinning = current && (current.seat === contract.nap || (!contract.solo && current.seat === contract.deputy));
+  if (isTeamWinning && legal.some(c => ['10','J','Q'].includes(c.rank)) && legal.some(c => !['10','J','Q','K','A'].includes(c.rank))) {
+    reasons.push('feed_dilemma');
+  }
+
+  if (reasons.length === 0) return null;
+
+  const options = legal.map((c, i) => ({ index: i, value: c.id, label: c.id }));
+  const bestIdx = heuristicBest ? options.findIndex(o => o.value === heuristicBest.id) : 0;
+
+  return {
+    id: `gen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    category: 'play',
+    scenario_json: JSON.stringify({
+      seat: ctx.seat,
+      hand: hand.map(c => c.id),
+      trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
+      contract: { nap: contract.nap, num: contract.num, suit: contract.suit, deputy: contract.deputy, solo: contract.solo, revealedCall: contract.revealedCall, call: contract.call },
+      playedCards: (ctx.playedCards || []).map(c => ({ seat: c.seat, card: c.id })),
+      points,
+      taken: [],
+      discarded: (ctx.discardedKitty || []).map(c => c.id)
+    }),
+    options_json: JSON.stringify(options),
+    ai_answer_index: bestIdx >= 0 ? bestIdx : 0,
+    reason: reasons[0],
+    explanation: `自己対戦から自動抽出（${reasons.join(', ')}）。状況をよく見て最善手を選んでください。`,
+    generation: ctx.round || null
+  };
+}
+
+export async function flushQuizCandidates(env) {
+  if (quizCandidateQueue.length === 0) return;
+  const statements = quizCandidateQueue.map(q =>
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO quiz_candidates(id, category, scenario_json, options_json, ai_answer_index, reason, explanation, generation) VALUES(?,?,?,?,?,?,?,?)`
+    ).bind(q.id, q.category, q.scenario_json, q.options_json, q.ai_answer_index, q.reason, q.explanation, q.generation)
+  );
+  try { await env.DB.batch(statements); } catch (e) { console.warn('quiz candidate flush failed', e); }
+  quizCandidateQueue = [];
+}
+
+// ==========================================
 // 経験DB・Hall of Fame 管理
 // ==========================================
 
 let experienceQueue = [];
 let hallOfFame = [];
-const MAX_EXP_QUEUE_PER_MATCH = 5;
 
 export async function loadHallOfFame(env) {
   try {
@@ -66,7 +160,6 @@ export async function flushExperience(env) {
   if (experienceQueue.length === 0) return;
   const statements = [];
   for (const q of experienceQueue) {
-    // 同一ハッシュ内で既存データがあればサンプル数加算、勝率は平均化
     statements.push(
       env.DB.prepare(
         `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
@@ -83,11 +176,10 @@ export async function flushExperience(env) {
   experienceQueue = [];
 }
 
-// 簡易的な局面スコア計算（保存用）
 function computeCardWinRates(legal, chosenCard, ctx) {
   const rates = {};
   for (const c of legal) {
-    if (c.id === chosenCard.id) rates[c.id] = 0.8 + Math.random() * 0.15; // 選んだ手は高勝率
+    if (c.id === chosenCard.id) rates[c.id] = 0.8 + Math.random() * 0.15;
     else rates[c.id] = 0.2 + Math.random() * 0.4;
   }
   return JSON.stringify(rates);
@@ -121,7 +213,6 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
     properBids.push({ candidates, baseStr: handStrength(hands[seat]), topSuits, ntScore });
   }
 
-  // 13スタートラウンド
   for (let seat = 0; seat < 5; seat++) {
     const p = seatParams[seat];
     if (properBids[seat].baseStr < (p.bidThreshold ?? 2.0)) continue;
@@ -276,9 +367,17 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       else chosen = chooseCardToPlay(ctx);
       if (!chosen || !legal.some(c => c.id === chosen.id)) chosen = legal[Math.floor(Math.random() * legal.length)];
       
-      // 経験DB保存（拮抗局面のみ、かつ1マッチあたり最大5件）
+      // ★ クイズ候補抽出
+      if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_QUIZ_CANDIDATES_PER_MATCH) {
+        const candidate = detectQuizCandidate(ctx);
+        if (candidate) {
+          quizCandidateQueue.push(candidate);
+          matchExpCount++;
+        }
+      }
+
+      // 経験DB保存
       if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_EXP_QUEUE_PER_MATCH && legal.length >= 2) {
-        // 簡易的な拮抗判定（場に点札が1枚もなく、手札の非点札が多い中盤のフォロー等）
         const isKoukyou = (pointsInTrick === 0 && trickNo >= 2 && trickNo <= 7);
         if (isKoukyou) {
           const hash = getStateHash(ctx);
@@ -340,8 +439,10 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
-// ai-simulator.js (後半: バッチ実行・評価・インサイト)
+// ai-simulator.js (後半)
 // ※ 前半の続きとして記述
+
+const MAX_EXP_QUEUE_PER_MATCH = 5;
 
 export async function runSelfPlayBatch(env, matchCount = 1000) {
   let existing = [];
@@ -404,6 +505,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   }));
 
   experienceQueue = []; // 経験キューを初期化
+  quizCandidateQueue = []; // クイズ候補キューを初期化
 
   for (let i = 0; i < matchCount; i++) {
     // 各マッチの席をランダムに割り当て（Hall of Fameも混ざる）
@@ -490,14 +592,16 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
     
-    // 10マッチごとに経験をフラッシュ（書き込み制限対策）
+    // 10マッチごとに経験とクイズ候補をフラッシュ（書き込み制限対策）
     if (i > 0 && i % 10 === 0) {
       await flushExperience(env);
+      await flushQuizCandidates(env);
     }
   }
   
-  // 残余の経験をフラッシュ
+  // 残余の経験・クイズ候補をフラッシュ
   await flushExperience(env);
+  await flushQuizCandidates(env);
 
   // DBへの保存
   const statements = [];
