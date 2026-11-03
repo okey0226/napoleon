@@ -101,7 +101,22 @@ function resetAuctionTimer() {
 }
 
 function toast(t){const e=$('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.remove('show'),2600)}
-function screen(id){['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen','training-screen'].forEach(x=>{const el=$(x);if(el)el.classList.toggle('hidden',x!==id)});if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();}
+function screen(id){
+  ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','quiz-screen','training-screen'].forEach(x=>{
+    const el=$(x);
+    if(el){
+      if(x === id){
+        el.classList.remove('hidden');
+        el.style.removeProperty('display');
+      } else {
+        el.classList.add('hidden');
+        el.style.setProperty('display', 'none', 'important');
+      }
+    }
+  });
+  if(id==='mode-select-screen'){loadLeaderboard();loadAccount();startPresence()}
+  if(id==='strategy-screen'){loadStrategyLab()}; if(id!=='game-screen') stopTurnTimer();
+}
 function startPresence(){if(g.presenceRoom||!window.WebsimSocket?.joinRoom)return;const pending=window.WebsimSocket.joinRoom();g.presenceRoom=pending;pending.then(room=>{if(g.presenceRoom!==pending){room.close?.();return}g.presenceRoom=room;room.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='presence'){const el=$('concurrent-count');if(el)el.textContent='同接: '+m.count+'人'}}}).catch(()=>{if(g.presenceRoom===pending)g.presenceRoom=null})}
 async function stopPresence(){const current=g.presenceRoom;g.presenceRoom=null;try{(await current)?.close?.()}catch{}}
 function later(fn,ms){g.timer.push(setTimeout(fn,ms))}
@@ -561,12 +576,10 @@ function drawAuction(){
         g.room?.send({type:'game', action:{type:'reopen-auction'}});
       } else {
         g.auction.approved = Array(5).fill(false);
-        g.auction.botSeen = Array(5).fill(-1);
-        setTimeout(() => {
-          drawAuction();
-          drawSeats();
-          scheduleComBids();
-        }, 10);
+        // ★ COMが即座に再承認しないよう、思考済みフラグ（botSeen）を現在のバージョンに合わせて待機させる
+        g.auction.botSeen = Array(5).fill(g.auction.version);
+        drawAuction();
+        drawSeats();
       }
     };
     return;
