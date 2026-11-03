@@ -1,4 +1,4 @@
-// constants.js (PIMC精度改善・強気立ち対応版)
+// constants.js (全修正統合版)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -47,42 +47,19 @@ export const defaultStrategy = () => ({
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   ntMightyHoldThreshold: 8, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
   ntVoidExploitWeight: 1.5, ntDeputyFeedChance: 0.8, ntEarlyLeadAggression: 0.7, ntLateGameSafety: 1.0,
-  // NT特殊戦略
   ntAceProtectLeadWeight: 1.5, ntSameTwoGuardWeight: 1.2, allyVoidExploitWeight: 1.0,
   deputyBluffWeight: 0.8, ntDeputyMightyHoldThreshold: 8, ntMightyEmergencyTrick: 5,
-  // ナポレオンの序盤切り札リード
   napEarlyTrumpLeadWeight: 1.5, napEarlyTrumpLeadMaxTrick: 3, napEarlyTrumpMinCount: 4,
-  // 副官のオーバートランプ
   deputyOvertrumpWeight: 1.8,
-  // ビッドシミュレーション（PIMC）— 精度改善
   bidTimeBudgetMs: 600, bidMaxSamples: 800, bidSafetyMargin: 0.4, bidSimCount: 30,
-  // 計画精度評価（自己対戦学習用）
   planAccuracyWeight: 1.0, overbidPenalty: 2.0, underbidPenalty: 0.5, planAccuracyBonus: 1.5,
-  // 勝ち周・負け周ごとの想定得点/失点テーブル
   winPointMap: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
   lossPointMap: [0, 2, 4, 5, 7, 9, 11, 13, 15, 17, 20],
-  
-  // トスアップ戦略パラメータ
-  // 競りペーシング
-  bidPacingMs: 4000,          // 段階上げ間隔（4秒固定）
-  bidStartValue: 13,          // 常に13スタート
-  // 安全マージン（順位補正）— 強気に変更
-  tossUpSafetyMargin: 0.4,    // 1〜3位
-  tossUpSafetyMarginBottom: 0.2, // 4位以下
-  // シグナルボーナス（適正値への加算）
-  signalS1Bonus: 1,           // S1: 同色違スート宣言
-  signalS2Bonus: 2,           // S2: 同色2スート連続（2役）
-  signalThreeRoleBonus: 4,    // 3役: マイティ+正J+裏J
-  signalS3Bonus: 2,           // S3: NTサポート（マイティ以外のA2枚以上）
-  // シグナル発動条件
-  s1RequiredMinorCards: 2,    // S1: A/2の合計必要枚数
-  s3RequiredAces: 2,          // S3: マイティ以外のA必要枚数
-  // 制約
-  sameColorBidderLimit: 2,    // 同色立会い人数上限
-  ntBidderLimit: 2,           // NT立会い人数上限
-  // 3役アピール
-  s2ThreeRoleExtra: 1,        // 3役アピールの3回目の上げ幅（+1）
-  
+  bidPacingMs: 4000, bidStartValue: 13,
+  tossUpSafetyMargin: 0.4, tossUpSafetyMarginBottom: 0.2,
+  signalS1Bonus: 1, signalS2Bonus: 2, signalThreeRoleBonus: 4, signalS3Bonus: 2,
+  s1RequiredMinorCards: 2, s3RequiredAces: 2,
+  sameColorBidderLimit: 2, ntBidderLimit: 2, s2ThreeRoleExtra: 1,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -159,13 +136,15 @@ export const computeEloDelta = (myElo, oppElos, outcome) => {
   return Math.round(32 * (score - expected));
 };
 
+// ★ 修正: 高枚数で勝った時のリターンを増やす
 export const rateRound = (seat, roundData, params, weight = 1) => {
   const { nap, deputy, solo, num, won, takenPoints } = roundData;
   if (!Number.isFinite(seat) || seat < 0 || seat > 4) return 0;
   const isNapSide = seat === nap || (!solo && seat === deputy);
   let score = 0;
   if (isNapSide) {
-    score += won ? (1.5 + (num - 13) * 0.15) : -(0.8 + (num - 13) * 0.1);
+    // 勝った時の基本スコアに加え、宣言枚数(num)が高いほど大きなボーナスを与える
+    score += won ? (1.5 + (num - 13) * 0.4) : -(0.8 + (num - 13) * 0.1);
     score += (takenPoints[seat] || 0) * 0.05;
   } else {
     score += !won ? (0.8 + (num - 13) * 0.1) : -1.2;
@@ -213,7 +192,6 @@ export const PARAM_BOUNDS = {
   lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
   lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
   lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20],
-  // トスアップ戦略
   bidPacingMs: [2000, 6000], bidStartValue: [13, 13],
   tossUpSafetyMargin: [0, 1], tossUpSafetyMarginBottom: [0, 1],
   signalS1Bonus: [0, 3], signalS2Bonus: [0, 4], signalThreeRoleBonus: [0, 6], signalS3Bonus: [0, 4],
