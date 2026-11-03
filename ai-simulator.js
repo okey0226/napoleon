@@ -1,4 +1,4 @@
-// ai-simulator.js (自己対戦高速化対応版)
+// ai-simulator.js (初期戦略アンカーリング + 自己対戦高速化対応版)
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, crossoverStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
@@ -317,14 +317,11 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     nextPool.push(child);
   }
 
-  // ★ 追加: 自己対戦用にパラメータを高速化（タイムアウト防止）
+  // ★ 自己対戦用にパラメータを高速化（タイムアウト防止）
   const speedUpForSimulation = (p) => {
     const sp = { ...p };
-    // PIMCの思考時間を強制的に50msに制限（デフォルト600ms）
     sp.bidTimeBudgetMs = Math.min(sp.bidTimeBudgetMs || 600, 50);
-    // PIMCのサンプル数を強制的に50に制限（デフォルト800）
     sp.bidMaxSamples = Math.min(sp.bidMaxSamples || 800, 50);
-    // MCTSの思考時間と試行回数も制限
     sp.maxThinkTimeMs = Math.min(sp.maxThinkTimeMs || 3000, 50);
     sp.mctsSimulations = Math.min(sp.mctsSimulations || 150, 50);
     return sp;
@@ -334,6 +331,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
   const stats = pool.map(() => ({ n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0, bidSum: 0, bidN: 0, soloBidN: 0, planAccSum: 0, planAccN: 0, overbidN: 0, underbidN: 0 }));
 
+  // 通常の自己対戦（プール内での対戦）
   for (let i = 0; i < matchCount; i++) {
     const seatIdx = [], seatParams = [];
     for (let s = 0; s < 5; s++) { const idx = Math.floor(Math.random() * pool.length); seatIdx.push(idx); seatParams.push(pool[idx]); }
@@ -375,6 +373,52 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
+  }
+
+  // ★ 追加: 初期戦略（defaultStrategy）との対戦評価（アンカーリング）
+  const baselineStrategy = defaultStrategy();
+  // タイムアウト防止のため思考時間を制限
+  baselineStrategy.bidTimeBudgetMs = 50;
+  baselineStrategy.bidMaxSamples = 50;
+  baselineStrategy.maxThinkTimeMs = 50;
+  baselineStrategy.mctsSimulations = 50;
+
+  const baselineMatchesPerStrategy = 10; // 各プール戦略あたり10マッチ（相手はdefaultStrategyが4人）
+
+  for (let i = 0; i < pool.length; i++) {
+    const strategy = pool[i];
+    const st = stats[i];
+    let baselineTotalRating = 0;
+    
+    for (let m = 0; m < baselineMatchesPerStrategy; m++) {
+      const mySeat = Math.floor(Math.random() * 5);
+      const hands = [[], [], [], [], []], matchScores = [0, 0, 0, 0, 0], matchBidHistory = [];
+      const seatParams = [];
+      
+      for (let s = 0; s < 5; s++) {
+        seatParams.push(s === mySeat ? strategy : baselineStrategy);
+      }
+      
+      for (let r = 1; r <= 10; r++) {
+        simRound(hands, r, matchScores, seatParams, matchBidHistory);
+      }
+      
+      const sorted = [...matchScores].sort((a, b) => b - a);
+      const myScore = matchScores[mySeat];
+      const placement = 1 + sorted.filter(x => x > myScore).length;
+      
+      let delta = 0;
+      if (placement === 1) delta += RANK_1_BONUS;
+      else if (placement === 2) delta += RANK_2_BONUS;
+      else if (placement === 4) delta += RANK_4_PENALTY;
+      else if (placement === 5) delta += RANK_5_PENALTY;
+      
+      baselineTotalRating += delta;
+    }
+    
+    // 初期戦略に対する評価を既存の評価に加算（重み付け：1.5倍）
+    st.totalRating += baselineTotalRating * 1.5;
+    st.n += baselineMatchesPerStrategy;
   }
 
   const statements = [];
