@@ -1,4 +1,4 @@
-// ai-simulator.js (トスアップ戦略対応版)
+// ai-simulator.js (自己対戦高速化対応版)
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, crossoverStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
@@ -48,10 +48,9 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
 }
 
 // ==========================================
-// ★ 新規: 自己対戦用のトスアップ競りシミュレーション
+// 自己対戦用のトスアップ競りシミュレーション
 // ==========================================
 function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
-  // 各プレイヤーのbidSignals状態
   const bidSignals = Array.from({ length: 5 }, () => ({
     sent: null,
     received: [],
@@ -61,7 +60,6 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
 
   let high = { num: 12, suit: '', player: -1, solo: false, plan: null, bidPlan: null };
   
-  // 適正値計算（各プレイヤー、各スート）
   const properBids = [];
   for (let seat = 0; seat < 5; seat++) {
     const p = seatParams[seat];
@@ -82,13 +80,12 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
     properBids.push({ candidates, baseStr: handStrength(hands[seat]), topSuits, ntScore });
   }
 
-  // 13スタートラウンド：手札強度が閾値以上の全員が13を宣言（順番に）
+  // 13スタートラウンド
   for (let seat = 0; seat < 5; seat++) {
     const p = seatParams[seat];
     if (properBids[seat].baseStr < (p.bidThreshold ?? 3.5)) continue;
     const bestSuit = properBids[seat].topSuits[0];
     if (properBids[seat].candidates.length === 0) {
-      // 候補なしでも強度があれば13で立つ
       if (13 > high.num || (13 === high.num && bestSuit && high.suit && SUITS.indexOf(bestSuit) > SUITS.indexOf(high.suit))) {
         high = { num: 13, suit: bestSuit, player: seat, solo: false, plan: null, bidPlan: null };
       }
@@ -101,22 +98,16 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
     }
   }
 
-  // 反復ラウンド：シグナル送信・立ち上げ（最大4周）
   for (let iter = 0; iter < 4; iter++) {
     let acted = false;
     for (let seat = 0; seat < 5; seat++) {
       if (high.player === seat) continue;
       const p = seatParams[seat];
-      
-      // シグナル送信判定
       const signal = canSendSignal(hands[seat], high, seat, bidSignals[seat], p, null);
-      
-      // 同色立会い人数制約
       const sameColorCount = countSameColorBidders({}, (bidHistoryOut || []), high.suit);
       const myTwoRole = high.suit !== 'NT' && isTwoRole(hands[seat], high.suit);
       const limit = high.suit === 'NT' ? (p.ntBidderLimit ?? 2) : (p.sameColorBidderLimit ?? 2);
       
-      // S4（17検知時）：即20
       if (signal.S4 && high.num === 17) {
         high = { num: 20, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
         bidSignals[seat].sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
@@ -127,7 +118,6 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
       
       if (sameColorCount >= limit && !myTwoRole) continue;
       
-      // S3（NT）優先
       if (signal.S3 && high.suit === 'NT') {
         const targetNum = high.num + 1;
         if (targetNum <= 20) {
@@ -139,10 +129,8 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
         }
       }
       
-      // S2（2役）：同枚数で同色違スート宣言
       if (signal.S2 && signal.targetSuit) {
         if (high.num < 20) {
-          // 同枚数で同色違スート → 高を更新
           high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
           bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: high.num };
           bidHistoryOut.push({ round: 0, seat, num: high.num, suit: signal.targetSuit });
@@ -151,7 +139,6 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
         }
       }
       
-      // S1
       if (signal.S1 && signal.targetSuit) {
         if (high.num < 20) {
           high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
@@ -162,14 +149,12 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
         }
       }
       
-      // 自分が立つ：適正値まで段階上げ
       const candidates = properBids[seat].candidates;
       if (!candidates.length) continue;
       const best = candidates[0];
       const targetNum = Math.min(20, Math.max(high.num + 1, Math.min(best.properBid, high.num + 1)));
       if (targetNum <= high.num) continue;
       
-      // 異色で適正値を超えている → 撤退
       if (high.suit && high.suit !== 'NT' && best.suit && !isSameColorSuit(high.suit, best.suit)) {
         if (targetNum > best.properBid) continue;
       }
@@ -190,13 +175,11 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   const kitty = d.splice(0, 2);
   const currentBids = matchBidHistory.filter(b => b.round === round);
   
-  // ★ トスアップ競りシミュレーション
   const bidHistoryLocal = [];
   const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal);
   
   let nap, trump, num, isSoloBid, plan;
   if (high.player < 0) {
-    // 流局時：最下位が最低枚数で立つ（自己対戦用フォールバック）
     nap = matchScores.indexOf(Math.min(...matchScores));
     trump = SUITS[0];
     num = 13;
@@ -333,7 +316,21 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     child = mutateStrategy(child, 0.15);
     nextPool.push(child);
   }
-  const pool = nextPool;
+
+  // ★ 追加: 自己対戦用にパラメータを高速化（タイムアウト防止）
+  const speedUpForSimulation = (p) => {
+    const sp = { ...p };
+    // PIMCの思考時間を強制的に50msに制限（デフォルト600ms）
+    sp.bidTimeBudgetMs = Math.min(sp.bidTimeBudgetMs || 600, 50);
+    // PIMCのサンプル数を強制的に50に制限（デフォルト800）
+    sp.bidMaxSamples = Math.min(sp.bidMaxSamples || 800, 50);
+    // MCTSの思考時間と試行回数も制限
+    sp.maxThinkTimeMs = Math.min(sp.maxThinkTimeMs || 3000, 50);
+    sp.mctsSimulations = Math.min(sp.mctsSimulations || 150, 50);
+    return sp;
+  };
+
+  const pool = nextPool.map(p => speedUpForSimulation(p));
 
   const stats = pool.map(() => ({ n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0, bidSum: 0, bidN: 0, soloBidN: 0, planAccSum: 0, planAccN: 0, overbidN: 0, underbidN: 0 }));
 
@@ -392,7 +389,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     const avgBid = st.bidN ? st.bidSum / st.bidN : 0;
     const avgPlanAcc = st.planAccN ? st.planAccSum / st.planAccN : 0;
 
-    statements.push(env.DB.prepare("INSERT INTO ai_strategy_log(generation,params,nap_win_rate,deputy_win_rate,alliance_win_rate,overall_win_rate,avg_rating_delta,matches,avg_bid,parent_id,avg_plan_accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(generation, JSON.stringify(pool[i]), napRate, depRate, alRate, napRate, avgRating, st.n, avgBid, parentIds[i] || null, avgPlanAcc));
+    statements.push(env.DB.prepare("INSERT INTO ai_strategy_log(generation,params,nap_win_rate,deputy_win_rate,alliance_win_rate,overall_win_rate,avg_rating_delta,matches,avg_bid,parent_id,avg_plan_accuracy) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(generation, JSON.stringify(nextPool[i]), napRate, depRate, alRate, napRate, avgRating, st.n, avgBid, parentIds[i] || null, avgPlanAcc));
   }
   if (statements.length) await env.DB.batch(statements);
 
