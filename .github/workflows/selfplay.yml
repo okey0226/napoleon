@@ -1,9 +1,10 @@
-name: Daily Self-Play Training
+name: Self-Play Training (Every 3 Hours)
 
 on:
   schedule:
-    # 毎日 日本時間 午前3時 (UTC 18:00) に実行
-    - cron: '0 18 * * *'
+    # 3時間おきに実行 (UTC基準: 0時, 3時, 6時, 9時, 12時, 15時, 18時, 21時)
+    # 無料枠(月2000分)に収まりやすく、かつ学習頻度を上げる設定
+    - cron: '0 */3 * * *'
   workflow_dispatch: # 手動で実行できるようにする（テスト用）
 
 jobs:
@@ -26,5 +27,5 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-        # 100マッチを実行して学習させる（タイムアウト防止のため1000から変更）
+        # 1回あたり100マッチ（約3分）を実行して学習させる
         run: node run-selfplay.mjs 100
