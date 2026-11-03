@@ -5,7 +5,9 @@ export const quizSchema = [
   "CREATE TABLE IF NOT EXISTS quiz_answers (user_id TEXT NOT NULL, question_id TEXT NOT NULL, choice_index INTEGER NOT NULL, answered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, question_id))",
   "CREATE INDEX IF NOT EXISTS quiz_answers_q ON quiz_answers(question_id)",
   "CREATE INDEX IF NOT EXISTS quiz_answers_u ON quiz_answers(user_id)",
-  "CREATE TABLE IF NOT EXISTS quiz_insights (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL UNIQUE, human_majority INTEGER NOT NULL, ai_answer INTEGER NOT NULL, agreement_rate REAL NOT NULL, total_answers INTEGER NOT NULL, synced_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+  "CREATE TABLE IF NOT EXISTS quiz_insights (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL UNIQUE, human_majority INTEGER NOT NULL, ai_answer INTEGER NOT NULL, agreement_rate REAL NOT NULL, total_answers INTEGER NOT NULL, synced_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)"
 ];
 
 async function getSessionUser(request, env) {
@@ -25,6 +27,35 @@ function noCacheJson(data, init = {}) {
   return new Response(JSON.stringify(data), Object.assign({}, init, { headers }));
 }
 
+// ★ 追加: 静的クイズと動的候補を統合して解決する関数
+async function resolveQuestion(id, env) {
+  if (!id) return null;
+  if (id.startsWith('gen-')) {
+    try {
+      const row = await env.DB.prepare("SELECT * FROM quiz_candidates WHERE id=?").bind(id).first();
+      if (!row) return null;
+      return {
+        id: row.id,
+        category: row.category || 'play',
+        scenario: JSON.parse(row.scenario_json),
+        options: JSON.parse(row.options_json),
+        aiAnswerIndex: row.ai_answer_index,
+        explanation: row.explanation || '',
+        generated: true
+      };
+    } catch (e) {
+      console.error('resolveQuestion (dynamic) error:', e);
+      return null;
+    }
+  }
+  try {
+    return getQuestion(id);
+  } catch (e) {
+    console.error('resolveQuestion (static) error:', e);
+    return null;
+  }
+}
+
 export async function handleQuizRequest(request, env, url) {
   // GET /api/quiz/progress
   if (url.pathname === '/api/quiz/progress' && request.method === 'GET') {
@@ -35,6 +66,8 @@ export async function handleQuizRequest(request, env, url) {
       const answeredIds = new Set((results || []).map(r => r.question_id));
       const perCategory = {};
       let nextId = null;
+
+      // 静的クイズの集計
       for (const c of QUIZ_CATEGORIES) {
         let answered = 0;
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
@@ -44,25 +77,62 @@ export async function handleQuizRequest(request, env, url) {
         }
         perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
       }
-      return noCacheJson({ total: totalQuestionCount(), answered: answeredIds.size, perCategory, nextQuestionId: nextId });
+
+      // ★ 候補問題の集計
+      let candidateTotal = 0;
+      let candidateAnswered = 0;
+      let nextCandidateId = null;
+      try {
+        const { results: candRows } = await env.DB.prepare(
+          "SELECT id FROM quiz_candidates ORDER BY created_at ASC"
+        ).all();
+        candidateTotal = (candRows || []).length;
+        for (const r of (candRows || [])) {
+          if (answeredIds.has(r.id)) candidateAnswered++;
+          else if (!nextCandidateId) nextCandidateId = r.id;
+        }
+      } catch (e) {
+        console.warn('quiz_candidates query failed', e);
+      }
+
+      // 候補問題を優先して出題
+      if (nextCandidateId) {
+        nextId = nextCandidateId;
+      }
+
+      // 合計に候補問題数を加算
+      if (perCategory['play']) {
+        perCategory['play'].total += candidateTotal;
+        perCategory['play'].answered += candidateAnswered;
+      }
+
+      const total = totalQuestionCount() + candidateTotal;
+      return noCacheJson({
+        total,
+        answered: answeredIds.size,
+        perCategory,
+        nextQuestionId: nextId,
+        candidateTotal,
+        candidateAnswered
+      });
     } catch (e) { return noCacheJson({ error: e.message }, { status: 500 }); }
   }
 
   // GET /api/quiz/q/:id
-  const mQ = /^\/api\/quiz\/q\/([a-z0-9-]+)$/.exec(url.pathname);
+  const mQ = /^\/api\/quiz\/q\/([a-zA-Z0-9\-]+)$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
     
     let question = null;
     try {
-      question = getQuestion(mQ[1]);
+      question = await resolveQuestion(mQ[1], env);
     } catch (e) {
       return noCacheJson({ error: '問題生成エラー: ' + e.message }, { status: 500 });
     }
 
     if (!question) return noCacheJson({ error: 'not found' }, { status: 404 });
 
-    const category = question.category;
+    const category = question.category || 'play';
     let myAnswer = null;
     try {
       if (userId) {
@@ -91,7 +161,8 @@ export async function handleQuizRequest(request, env, url) {
       stats: reveal ? stats : null,
       totalAnswers: reveal ? totalAnswers : null,
       aiAnswerIndex: reveal ? (question.aiAnswerIndex ?? 0) : null,
-      explanation: reveal ? (question.explanation || '') : null
+      explanation: reveal ? (question.explanation || '') : null,
+      generated: !!question.generated
     });
   }
 
@@ -104,7 +175,7 @@ export async function handleQuizRequest(request, env, url) {
     const questionId = String(body.questionId || '');
     const choice = Number(body.choiceIndex);
     
-    const question = getQuestion(questionId);
+    const question = await resolveQuestion(questionId, env);
     if (!question) return noCacheJson({ error: 'question not found' }, { status: 404 });
     if (!Number.isInteger(choice) || choice < 0 || choice >= (question.options?.length || 0)) {
       return noCacheJson({ error: 'invalid choice' }, { status: 400 });
