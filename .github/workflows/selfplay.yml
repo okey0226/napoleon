@@ -27,4 +27,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
         # 1000マッチを実行して学習させる
-        run: node run-selfplay.mjs 1000
+        run: node run-selfplay.mjs 100
