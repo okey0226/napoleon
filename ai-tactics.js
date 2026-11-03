@@ -1,15 +1,69 @@
-// ai-tactics.js (NT戦略MECE統合・極限プレイ精度版)
-import { SUITS, RANKS, SV, CALIBRATION, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, HONEST_BID_FIXED_BONUS, ALLY_LOSS_PENALTY, ALLY_WIN_BONUS, ALLY_BLOCK_BONUS, sameColorSuitOf, isSameColorSuit, defaultStrategy, quantizeStrength, bidExperienceKey, callExperienceKey, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
+// ai-tactics.js (前半: 競り・PIMC・経験DBハッシュ)
+import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
-const FACE = ['10', 'J', 'Q', 'K', 'A'];
+// ==========================================
+// 経験DB用: ハッシュと類似度
+// ==========================================
 
-export function isTrump(contract, c) {
-  return contract.suit !== "NT" && c.suit === contract.suit;
+export function getStateHash(ctx) {
+  const role = ctx.seat === ctx.contract.nap ? 'N' : ((!ctx.contract.solo && ctx.contract.deputy === ctx.seat) ? 'D' : 'A');
+  const rem = 10 - ctx.trickNo;
+  const suit = ctx.contract.suit;
+  
+  // 点札はすべて記録（役札は別カウント）
+  const pointCards = ctx.hand.filter(c => FACE.includes(c.rank) && c.id !== '♠A' && !isRoleJ(c, ctx.contract)).map(c => c.id).sort().join(',');
+  
+  // 非点札は枚数のみ
+  const nonPointCounts = SUITS.map(s => ctx.hand.filter(c => c.suit === s && !FACE.includes(c.rank)).length).join('');
+  
+  // 役札フラグ
+  const roleFlags = (ctx.hand.some(c => c.id === '♠A') ? 'M' : '') +
+                    (ctx.hand.some(c => isTrumpJ(c, ctx.contract)) ? 'T' : '') +
+                    (ctx.hand.some(c => isSameColorJ(c, ctx.contract)) ? 'S' : '');
+                    
+  // 場の状況
+  const lead = ctx.trick.length ? ctx.trick[0].card.suit : '-';
+  const ptsInTrick = ctx.trick.filter(e => FACE.includes(e.card.rank)).length;
+  const winnerTeam = ctx.trick.length ? (isTeamNap(winningEntry(ctx.contract, ctx.trickNo, ctx.trick).seat, ctx.contract) ? 'M' : 'E') : '-';
+  const legalCount = ctx.legal.length;
+  
+  return `${role}_${rem}_${suit}_${pointCards}_${nonPointCounts}_${roleFlags}_${lead}_${ptsInTrick}_${winnerTeam}_${legalCount}`;
 }
 
-function isRoleJ(c, contract) {
-  return c.rank === 'J' && (isTrumpJ(c, contract) || isSameColorJ(c, contract));
+// 加重マンハッタン距離
+export function getSimilarityDistance(hash1, hash2) {
+  const p1 = hash1.split('_');
+  const p2 = hash2.split('_');
+  if (p1.length < 10 || p2.length < 10) return 999;
+
+  let dist = 0;
+  dist += Math.abs(Number(p1[1]) - Number(p2[1])) * 3.0; // 残りトリック
+  
+  const p1Points = p1[3] ? p1[3].split(',').length : 0;
+  const p2Points = p2[3] ? p2[3].split(',').length : 0;
+  dist += Math.abs(p1Points - p2Points) * 2.0; // 手札の点札数
+  
+  const p1Counts = p1[4].split('').map(Number);
+  const p2Counts = p2[4].split('').map(Number);
+  dist += p1Counts.reduce((sum, c, i) => sum + Math.abs(c - p2Counts[i]), 0) * 0.5; // 手札の非点札枚数差
+  
+  dist += Math.abs(Number(p1[7]) - Number(p2[7])) * 1.5; // 場の点札数
+  
+  if (p1[5] !== p2[5]) dist += 1.0; // 役札の有無
+  if (p1[6] !== p2[6]) dist += 0.5; // リードスート
+
+  return dist;
 }
+
+// ==========================================
+// 基本ロジック（カードパワー等）
+// ==========================================
+
+export function isTrump(contract, c) { return contract.suit !== "NT" && c.suit === contract.suit; }
+function isRoleJ(c, contract) { return c.rank === 'J' && (isTrumpJ(c, contract) || isSameColorJ(c, contract)); }
+function isSameColorJ(c, contract) { return contract.suit !== 'NT' && c.rank === 'J' && c.suit !== contract.suit && isSameColorSuit(c.suit, contract.suit); }
+function isTrumpJ(c, contract) { return contract.suit !== 'NT' && c.rank === 'J' && c.suit === contract.suit; }
+function isTeamNap(seat, contract) { return seat === contract.nap || (!contract.solo && contract.revealedCall && seat === contract.deputy); }
 
 export function cardPower(contract, trickNo, card, trick, strictAllSame = false) {
   const led = trick.length > 0 ? trick[0].card.suit : card.suit;
@@ -150,15 +204,10 @@ function smartRolloutPlay(seat, mySeat, allySeat, hand, trick, trump, trickNo) {
   }
 
   if (isMyTeam && isMyTeamWinning) {
-    const mediumFaces = legal.filter(c => {
-      if (isRoleJ(c, contract)) return false;
-      return ['10', 'J', 'Q'].includes(c.rank);
-    });
+    const mediumFaces = legal.filter(c => !isRoleJ(c, contract) && ['10', 'J', 'Q'].includes(c.rank));
     if (mediumFaces.length) return mediumFaces.reduce((best, c) => (powerOf(c) < powerOf(best) ? c : best), mediumFaces[0]);
-    
     const otherCards = legal.filter(c => !['K', 'A'].includes(c.rank) && !isRoleJ(c, contract));
     if (otherCards.length) return otherCards.reduce((best, c) => (powerOf(c) < powerOf(best) ? c : best), otherCards[0]);
-    
     return legal.reduce((best, c) => (powerOf(c) < powerOf(best) ? c : best), legal[0]);
   }
 
@@ -479,6 +528,12 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
     const expected = baseBid + signalBonus * 0.5 - safetyMargin * 0.2;
     properBid = Math.max(13, Math.min(20, Math.round(expected)));
   }
+  
+  // 最低限の強気さ（Aが2枚以上あれば14で立つ）
+  const aceCount = hand.filter(c => c.rank === 'A').length;
+  if (properBid === 13 && (aceCount >= 2 || roleCards.count >= 2)) {
+    properBid = 14;
+  }
 
   return {
     properBid,
@@ -672,8 +727,11 @@ export function chooseSoloCall(hand, trump) {
   });
   return { suit: sorted[0].suit, rank: sorted[0].rank, id: sorted[0].id };
 }
+// ai-tactics.js (後半: プレイロジック・NT戦略・MCTS)
+// ※ 前半の続きとして記述
+
 // ==========================================
-// プレイ関数群（MECEに基づくNT戦略の統合）
+// プレイ関数群（MECE・極限精度）
 // ==========================================
 
 function isFace(c) { return FACE.includes(c.rank); }
@@ -804,6 +862,7 @@ function adjustForMatchStanding(ctx) {
   return null;
 }
 
+// 味方勝ち時の共通フィード処理
 function followWhenTeamWinning(legal, contract, call, trick, trickNo, lowXFunc, ctx) {
   const feedCards = legal.filter(c => !isRoleJ(c, contract) && ['10', 'J', 'Q'].includes(c.rank) && c.id !== call?.id);
   if (feedCards.length) {
@@ -867,8 +926,9 @@ function chooseNTStrategy(ctx) {
     return lowX(ctx, legal);
   }
 
-  // 3. 連合軍の戦略
+  // 3. 連合軍の戦略（ナポレオン軍以外）
   else {
+    // 相手（ナポレオン軍）が勝っていて点札がある → 勝てるなら勝つ、無理なら点札以外を捨てる
     if (!isTeamWinning && pointsInTrick > 0) {
       if (winningCards.length) {
         const scoreWins = winningCards.filter(c => isFace(c));
@@ -880,6 +940,7 @@ function chooseNTStrategy(ctx) {
       }
     }
 
+    // 終盤の勝ち札
     if (trickNo >= 7 && winningCards.length) {
       const absoluteWins = winningCards.filter(c => isAbsoluteWinner(c, contract, trick, playedCards));
       if (absoluteWins.length) return absoluteWins[0];
@@ -889,7 +950,7 @@ function chooseNTStrategy(ctx) {
   }
 }
 
-// スート契約用ロジック (従来の関数)
+// スート契約用: ナポレオンのリード
 function chooseNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, call, discardedKitty, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
@@ -998,6 +1059,7 @@ function chooseNapoleonLead(ctx) {
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
+// スート契約用: ナポレオンのフォロー
 function chooseNapoleonFollow(ctx) {
   const { hand, legal, trick, trickNo, contract, playedCards, voids, seat, currentNapPoints, params, call } = ctx;
   if (!legal || !legal.length) return null;
@@ -1042,6 +1104,7 @@ function chooseNapoleonFollow(ctx) {
   return lowX(ctx, legal);
 }
 
+// スート契約用: 副官のフォロー
 export function chooseDeputyCard(ctx) {
   const { hand, legal, trick, trickNo, contract, call, seat, playedCards, voids, params, discardedKitty, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
@@ -1173,6 +1236,7 @@ export function chooseDeputyCard(ctx) {
   return lowX(ctx, legal);
 }
 
+// スート契約用: 連合軍のリード
 function estimateNapWeakSuit(playedCards, contract) {
   const counts = {};
   for (const c of (playedCards || []).filter(c => c.seat === contract.nap)) counts[c.suit] = (counts[c.suit] || 0) + 1;
@@ -1261,6 +1325,7 @@ function chooseAllianceLead(ctx) {
   return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
+// スート契約用: 連合軍のフォロー
 function chooseAllianceFollow(ctx) {
   const { legal, trick, trickNo, contract, params, seat, playedCards, hand, voids } = ctx;
   if (!legal || !legal.length) return null;
@@ -1347,6 +1412,7 @@ function chooseAllianceFollow(ctx) {
   return lowX(ctx, legal);
 }
 
+// メイン選択関数
 export function chooseCardToPlay(ctx) {
   const { seat, contract, legal, hand } = ctx;
   if (!legal || !legal.length) return null;
@@ -1377,7 +1443,7 @@ export function chooseCardToPlay(ctx) {
 }
 
 // ==========================================
-// MCTS
+// MCTS (経験DB事前分布対応)
 // ==========================================
 
 function determinizeState(ctx) {
@@ -1553,15 +1619,32 @@ export function getMCTSStats(ctx) {
   const legal = ctx.legal;
   const N = {}, W = {};
   legal.forEach(c => { N[c.id] = 0; W[c.id] = 0; });
+
+  // 経験DBからの事前分布（Priors）
+  if (ctx.experience && ctx.experience.stateCache) {
+    const exp = ctx.experience.stateCache;
+    if (exp && exp.card_win_rates) {
+      try {
+        const rates = JSON.parse(exp.card_win_rates);
+        const sampleW = Math.min(20, exp.samples);
+        for (const c of legal) {
+          if (rates[c.id] !== undefined) {
+            N[c.id] = sampleW;
+            W[c.id] = rates[c.id] * sampleW;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
   if (!legal || legal.length <= 1) return { N, W, iterations: 0 };
 
   const params = ctx.params || defaultStrategy();
   const cParam = params.mctsExploration || 1.414;
   const startTime = Date.now();
   const maxTimeMs = params.maxThinkTimeMs || 3000;
-  const matchMode = adjustForMatchStanding(ctx);
-
   let iterations = 0;
+
   while (iterations < 100000) {
     if (Date.now() - startTime > maxTimeMs) break;
     let bestCard = null;
@@ -1596,11 +1679,10 @@ export function getMCTSStats(ctx) {
 export function chooseCardWithMCTS(ctx) {
   const legal = ctx.legal;
   if (!legal || legal.length <= 1) return legal[0];
-
   if (ctx.trickNo > 8 && legal.length <= 2) return chooseCardToPlay(ctx);
 
   const { N, W, iterations } = getMCTSStats(ctx);
-  if (iterations < 80) return chooseCardToPlay(ctx);
+  if (iterations < 80 && !ctx.experience?.stateCache) return chooseCardToPlay(ctx);
 
   let bestCard = legal[0];
   let bestWinRate = -1;
