@@ -4,7 +4,8 @@ import {
   winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard,
   isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
-  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer
+  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer,
+  getStateHash, getSimilarityDistance
 } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 import { handleQuizRequest, quizSchema } from './quiz-api.js';
@@ -41,6 +42,9 @@ export const schema = [
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_call_exp_key ON ai_call_experience(call_id, trump_suit)",
   "CREATE TABLE IF NOT EXISTS ai_play_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, phase TEXT NOT NULL, points_tier TEXT NOT NULL, rank_tier TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_play_exp_key ON ai_play_experience(role, phase, points_tier, rank_tier)",
+  "CREATE TABLE IF NOT EXISTS ai_state_experience (state_hash TEXT PRIMARY KEY, card_win_rates TEXT NOT NULL, samples INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS ai_state_exp_gen ON ai_state_experience(generation DESC, samples DESC)",
+  "CREATE TABLE IF NOT EXISTS ai_hall_of_fame (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, params TEXT NOT NULL, avg_rating_delta REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "ALTER TABLE players ADD COLUMN dorm_period INTEGER DEFAULT 310",
   "ALTER TABLE players ADD COLUMN favorite_song TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
@@ -75,7 +79,7 @@ async function loadBotStrategy(env) {
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
-  const map = { bids: {}, calls: {}, plays: {} };
+  const map = { bids: {}, calls: {}, plays: {}, stateCache: null };
   try {
     const [bids, calls, plays] = await Promise.all([
       env.DB.prepare("SELECT strength_key, trump_type, num, wins, samples FROM ai_bid_experience WHERE samples > 0").all(),
@@ -133,7 +137,9 @@ export default {
             env.DB.prepare("DELETE FROM ai_weights"),
             env.DB.prepare("DELETE FROM ai_bid_experience"),
             env.DB.prepare("DELETE FROM ai_call_experience"),
-            env.DB.prepare("DELETE FROM ai_play_experience")
+            env.DB.prepare("DELETE FROM ai_play_experience"),
+            env.DB.prepare("DELETE FROM ai_state_experience"),
+            env.DB.prepare("DELETE FROM ai_hall_of_fame")
           ]);
           __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
           __cachedExperience = null; __cachedExperienceTime = 0;
@@ -271,7 +277,6 @@ export default {
         return response(results);
       }
 
-      // ▼ 追加：AI学習データ取得用のAPIエンドポイント ▼
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") {
         const limit = parseInt(url.searchParams.get("limit")) || 10;
         const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all();
@@ -301,14 +306,30 @@ export default {
         const exp = await loadExperience(env);
         return response(exp);
       }
-      // ▲ 追加ここまで ▲
-      
+
+      if (request.method === "GET" && url.pathname === "/api/ai/state-experience") {
+        const hash = url.searchParams.get("hash");
+        if (hash) {
+          const row = await env.DB.prepare("SELECT * FROM ai_state_experience WHERE state_hash=?").bind(hash).first();
+          return response(row || {});
+        }
+        const { results } = await env.DB.prepare("SELECT * FROM ai_state_experience ORDER BY updated_at DESC LIMIT 20").all();
+        return response(results || []);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/ai/hall-of-fame") {
+        const { results } = await env.DB.prepare("SELECT * FROM ai_hall_of_fame ORDER BY generation DESC LIMIT 10").all();
+        return response(results || []);
+      }
+
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
 // ===== [worker.js 前半 終了] =====
 // ===== [worker.js 後半 開始] =====
+// ※ 前半の続きとして記述
+
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
 async function getProfile(env, conn) {
@@ -540,16 +561,13 @@ function doApprove(m, seat, room, forced = false) {
     if (forced && seat === forcedSeat) doBid(m, seat, m.auction.minBid || 13, strongestSuit(m.seats[seat].hand), room);
     return;
   }
-  // 自分が最高宣言者の場合
   if (m.auction.high.player === seat) {
-    // ★ 確定待ち状態なら、この approve が「確定」アクション
     if (m.auction.needsHumanConfirm) {
       m.auction.needsHumanConfirm = false;
       auctionDone(m, seat, room, true);
       return;
     }
     const others = m.auction.active.filter(s => s !== seat);
-    // ★ 他の人間プレイヤー（botでない）が未承認なら待つ
     const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== seat && !m.auction.approved[s]);
     const allApproved = !humanPending && (others.length === 0 || others.every(s => m.auction.approved[s]));
     if (allApproved) {
@@ -570,20 +588,16 @@ function doApprove(m, seat, room, forced = false) {
     }
     return;
   }
-  // ソフト承認
   m.auction.approved[seat] = true;
   m.auction.lastAction[seat] = Date.now();
   m.auction.autoApprove[seat] = false;
   m.notice = forced
     ? m.seats[seat].player.username + "は30秒操作がなかったため、自動で保留しました。"
     : m.seats[seat].player.username + "が保留しました（誰かが上げれば復帰可能）。";
-  // 競り終了判定: high.player 以外の active 全員が approved、かつ他の人間が未承認でない
   const others = m.auction.active.filter(s => s !== m.auction.high.player);
-  // ★ 他の人間プレイヤー（botでない）が未承認なら終わらせない
   const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== m.auction.high.player && !m.auction.approved[s]);
   const allApproved = !humanPending && (others.length === 0 || others.every(s => m.auction.approved[s]));
   if (allApproved) {
-    // ★ 宣言者が人間なら確定ボタンを待つ
     if (!m.seats[m.auction.high.player].bot) {
       m.auction.needsHumanConfirm = true;
       m.auction.lastAction[m.auction.high.player] = Date.now();
@@ -612,9 +626,8 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.high = { num: n, suit: s, player: seat, solo: solo === true };
   if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null;
   m.auction.version++;
-  // ソフト承認: approved を全員 false にリセット
   m.auction.approved = Array(5).fill(false);
-  m.auction.needsHumanConfirm = false;   // ★ 追加
+  m.auction.needsHumanConfirm = false;
   m.active = seat;
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
   m.auction.botAt.forEach((_, i) => {
@@ -1434,3 +1447,4 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
+
