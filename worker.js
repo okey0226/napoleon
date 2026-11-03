@@ -270,6 +270,38 @@ export default {
         const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games FROM players p ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
         return response(results);
       }
+
+      // ▼ 追加：AI学習データ取得用のAPIエンドポイント ▼
+      if (request.method === "GET" && url.pathname === "/api/ai/strategies") {
+        const limit = parseInt(url.searchParams.get("limit")) || 10;
+        const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all();
+        return response(results || []);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/ai/insights") {
+        const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 10").all();
+        const insights = generateInsights(results || []);
+        return response({ insights });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/ai/generations") {
+        const { results } = await env.DB.prepare(`
+          SELECT generation, AVG(nap_win_rate) as nap, AVG(alliance_win_rate) as ally, COUNT(*) as count, MAX(created_at) as time
+          FROM ai_strategy_log GROUP BY generation ORDER BY generation ASC LIMIT 20
+        `).all();
+        return response(results || []);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/ai/top-strategy") {
+        const top = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
+        return response({ strategy: top?.weights ? safeJsonParse(top.weights, null) : null });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/ai/experience") {
+        const exp = await loadExperience(env);
+        return response(exp);
+      }
+      // ▲ 追加ここまで ▲
       
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
@@ -462,7 +494,7 @@ function publicState(m) {
       minBid: m.auction.minBid || 13,
       requiredBidSeat: m.auction.requiredBidSeat ?? null,
       autoApprove: m.auction.autoApprove,
-      needsHumanConfirm: m.auction.needsHumanConfirm === true   // ★ 追加
+      needsHumanConfirm: m.auction.needsHumanConfirm === true
     } : null,
     contract: m.contract ? { nap: m.contract.nap, num: m.contract.num, suit: m.contract.suit, deputy: m.contract.revealedCall ? m.contract.deputy : -1, solo: m.contract.revealedCall ? m.contract.solo : false, revealedCall: !!m.contract.revealedCall, call: m.contract.call, bidPlan: m.contract.bidPlan } : null,
     trick: m.trick.map(x => ({ seat: x.seat, card: x.card })),
@@ -582,7 +614,7 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.version++;
   // ソフト承認: approved を全員 false にリセット
   m.auction.approved = Array(5).fill(false);
-  m.auction.needsHumanConfirm = false;   // ★ 追加
+  m.auction.needsHumanConfirm = false;
   m.active = seat;
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
   m.auction.botAt.forEach((_, i) => {
@@ -621,7 +653,7 @@ function answerAppealResponse(m, seat, choice, room) {
 }
 
 function auctionDone(m, seat, room, skipProperRaise = false) {
-  if (m.auction) m.auction.needsHumanConfirm = false;   // ★ 追加
+  if (m.auction) m.auction.needsHumanConfirm = false;
   if (seat < 0 || m.auction.high.num < 13) {
     if (m.round >= 10) {
       seat = finalAuctionRule(m.matchScores, m.mult).bottomSeat;
@@ -642,7 +674,7 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
     m.properRecomputed = true;
   }
   const properBid = m.properBids[seat] || 13;
-  if (!skipProperRaise && m.auction.high.num < properBid && m.auction.high.player === seat) {   // ★ skipProperRaise
+  if (!skipProperRaise && m.auction.high.num < properBid && m.auction.high.player === seat) {
     if (!m.auction.active.includes(seat)) m.auction.active.push(seat);
     const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
     m.auction.botAt[seat] = Date.now() + pacingMs;
@@ -1044,7 +1076,6 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
   if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
 
-  // ★ 追加: 明示的確定（properBid 段階上げをスキップ）
   if (a.type === "confirm-auction") {
     if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
       m.auction.needsHumanConfirm = false;
@@ -1052,7 +1083,6 @@ async function processAction(conn, msg, room, env) {
     }
     return;
   }
-  // ★ 追加: まだ上げる（全承認リセットして競り再開）
   if (a.type === "reopen-auction") {
     if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
       m.auction.needsHumanConfirm = false;
@@ -1263,7 +1293,7 @@ export const room = {
           botAt: m.seats.map(() => now + 4000),
           requiredBidSeat: null,
           bidPlans: {},
-          needsHumanConfirm: false   // ★ 追加
+          needsHumanConfirm: false
         };
         m.properBids = [13, 13, 13, 13, 13];
         m.properPlans = [null, null, null, null, null];
@@ -1306,10 +1336,8 @@ export const room = {
         if (m.seats[m.active]?.bot) answerAppealResponse(m, m.active, "declare", room);
         else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room);
       } else if (m.phase === "auction") {
-        // ★ needsHumanConfirm 中の人間プレイヤーは自動承認しない（自動確定しない）
         for (const seat of m.auction.active.slice()) {
           if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) {
-            // 確定待ち人間は lastAction をリセットして自動処理しない
             if (m.auction.needsHumanConfirm && seat === m.auction.high.player) {
               m.auction.lastAction[seat] = now;
               continue;
@@ -1321,7 +1349,6 @@ export const room = {
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) {
           if (m.seats[seat].bot && m.auction.active.includes(seat) && !m.auction.approved[seat] && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) botAuctionBid(m, seat, room);
         }
-        // ★ Q28=B: 全員承認後の適正値段階上げ（humanPending チェック付き）
         if (m.phase === "auction" && m.auction.active.length === 1) {
           const onlySeat = m.auction.active[0];
           if (m.auction.high.player === onlySeat && m.seats[onlySeat].bot) {
@@ -1407,5 +1434,3 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
-
-
