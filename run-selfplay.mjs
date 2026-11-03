@@ -3,7 +3,7 @@
 import { runSelfPlayBatch } from './ai-simulator.js';
 import { defaultStrategy } from './constants.js';
 
-// Cloudflare D1のHTTP APIを叩いてSQLを実行する関数
+// Cloudflare D1のHTTP APIを叩いてSQLを一括実行する関数
 async function executeD1Request(queries) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -17,7 +17,7 @@ async function executeD1Request(queries) {
 
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${dbId}/query`;
   
-  // バッチリクエストのボディを構築
+  // D1 APIのバッチリクエスト形式
   const body = {
     batch: queries.map(q => ({
       sql: q.sql,
@@ -42,7 +42,7 @@ async function executeD1Request(queries) {
 
     const data = await response.json();
     if (!response.ok || !data.success) {
-      throw new Error("D1 API Error: " + JSON.stringify(data.errors || data));
+      throw new Error("D1 Batch Query Error: " + JSON.stringify(data.errors || data));
     }
     return data.result;
   } catch (err) {
@@ -92,7 +92,7 @@ const mockDB = {
 };
 
 async function main() {
-  // コマンドライン引数から実行するマッチ数を取得（デフォルトは100マッチに減らしてタイムアウトを防ぐ）
+  // コマンドライン引数から実行するマッチ数を取得
   const args = process.argv.slice(2);
   const matchCount = parseInt(args[0], 10) || 100; 
   
