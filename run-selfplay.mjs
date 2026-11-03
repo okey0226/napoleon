@@ -3,8 +3,8 @@
 import { runSelfPlayBatch } from './ai-simulator.js';
 import { defaultStrategy } from './constants.js';
 
-// Cloudflare D1のHTTP APIを叩いてSQLを実行する関数
-async function executeD1Query(sql, params = []) {
+// Cloudflare D1のHTTP APIを叩いてSQLを一括実行する関数
+async function executeD1Batch(queries) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const dbId = process.env.D1_DATABASE_ID;
@@ -13,23 +13,42 @@ async function executeD1Query(sql, params = []) {
     throw new Error("環境変数 (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID) が設定されていません。");
   }
 
+  if (!queries || queries.length === 0) return { success: true, results: [] };
+
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${dbId}/query`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ sql, params })
-  });
+  
+  // D1 APIは sql に配列を渡すことでバッチ実行できる
+  const sqls = queries.map(q => q.sql);
+  const paramsList = queries.map(q => q.params || []);
 
-  const data = await response.json();
-  if (!response.ok || !data.success) {
-    throw new Error("D1 Query Error: " + JSON.stringify(data.errors || data));
+  // タイムアウト設定（60秒）
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ sql: sqls, params: paramsList }),
+      signal: controller.signal
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error("D1 Batch Query Error: " + JSON.stringify(data.errors || data));
+    }
+    return data.result;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error("D1 API Timeout (60s)");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  // Cloudflare D1のレスポンス形式に合わせて結果を返す
-  return data.result[0];
 }
 
 // ai-simulator.js が期待する env.DB の形をエミュレート（モック化）する
@@ -42,40 +61,46 @@ const mockDB = {
         this._params = args;
         return this;
       },
+      // run, all, first が単体で呼ばれた場合は即時実行（バッチの外）
       run: async function() {
-        return await executeD1Query(this._sql, this._params);
+        const result = await executeD1Batch([{ sql: this._sql, params: this._params }]);
+        return result[0] || {};
       },
       all: async function() {
-        const result = await executeD1Query(this._sql, this._params);
-        return { results: result.results || [] };
+        const result = await executeD1Batch([{ sql: this._sql, params: this._params }]);
+        return { results: result[0]?.results || [] };
       },
       first: async function() {
-        const result = await executeD1Query(this._sql, this._params);
-        return result.results?.[0] || null;
+        const result = await executeD1Batch([{ sql: this._sql, params: this._params }]);
+        return result[0]?.results?.[0] || null;
       }
     };
   },
+  // batch が呼ばれた場合は一括で送信する
   batch: async (statements) => {
-    // バッチ処理は1つずつ実行（D1 APIの制限回避のため）
-    for (const stmt of statements) {
-      await executeD1Query(stmt._sql, stmt._params);
-    }
+    const queries = statements.map(stmt => ({
+      sql: stmt._sql,
+      params: stmt._params
+    }));
+    await executeD1Batch(queries);
     return { success: true };
   }
 };
 
 async function main() {
-  // コマンドライン引数から実行するマッチ数を取得（デフォルトは100マッチ）
+  // コマンドライン引数から実行するマッチ数を取得（デフォルトは100マッチに減らしてタイムアウトを防ぐ）
   const args = process.argv.slice(2);
-  const matchCount = parseInt(args[0], 10) || 100;
+  const matchCount = parseInt(args[0], 10) || 100; 
   
   console.log(`自己対戦バッチを開始します... (${matchCount}マッチ)`);
   
   const env = { DB: mockDB };
   
+  const startTime = Date.now();
   try {
     const result = await runSelfPlayBatch(env, matchCount);
-    console.log('自己対戦とD1への保存が完了しました:', result);
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`自己対戦とD1への保存が完了しました (${duration}秒):`, result);
   } catch (e) {
     console.error('自己対戦中にエラーが発生しました:', e);
     process.exit(1);
