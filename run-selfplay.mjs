@@ -65,7 +65,6 @@ const mockDB = {
         this._params = args;
         return this;
       },
-      // run, all, first が単体で呼ばれた場合は即時実行（単一クエリとして送信）
       run: async function() {
         const result = await executeD1Request([{ sql: this._sql, params: this._params }]);
         return result[0] || {};
@@ -80,7 +79,6 @@ const mockDB = {
       }
     };
   },
-  // batch が呼ばれた場合は一括で送信する
   batch: async (statements) => {
     const queries = statements.map(stmt => ({
       sql: stmt._sql,
@@ -92,7 +90,6 @@ const mockDB = {
 };
 
 async function main() {
-  // コマンドライン引数から実行するマッチ数を取得
   const args = process.argv.slice(2);
   const matchCount = parseInt(args[0], 10) || 100; 
   
