@@ -45,6 +45,8 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS ai_state_experience (state_hash TEXT PRIMARY KEY, card_win_rates TEXT NOT NULL, samples INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS ai_state_exp_gen ON ai_state_experience(generation DESC, samples DESC)",
   "CREATE TABLE IF NOT EXISTS ai_hall_of_fame (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, params TEXT NOT NULL, avg_rating_delta REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)",
   "ALTER TABLE players ADD COLUMN dorm_period INTEGER DEFAULT 310",
   "ALTER TABLE players ADD COLUMN favorite_song TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
@@ -139,7 +141,8 @@ export default {
             env.DB.prepare("DELETE FROM ai_call_experience"),
             env.DB.prepare("DELETE FROM ai_play_experience"),
             env.DB.prepare("DELETE FROM ai_state_experience"),
-            env.DB.prepare("DELETE FROM ai_hall_of_fame")
+            env.DB.prepare("DELETE FROM ai_hall_of_fame"),
+            env.DB.prepare("DELETE FROM quiz_candidates")
           ]);
           __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
           __cachedExperience = null; __cachedExperienceTime = 0;
