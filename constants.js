@@ -1,4 +1,4 @@
-// constants.js (PIMC精度改善版)
+// constants.js (PIMC精度改善・強気立ち対応版)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -55,7 +55,7 @@ export const defaultStrategy = () => ({
   // 副官のオーバートランプ
   deputyOvertrumpWeight: 1.8,
   // ビッドシミュレーション（PIMC）— 精度改善
-  bidTimeBudgetMs: 600, bidMaxSamples: 800, bidSafetyMargin: 0.8, bidSimCount: 30,
+  bidTimeBudgetMs: 600, bidMaxSamples: 800, bidSafetyMargin: 0.4, bidSimCount: 30,
   // 計画精度評価（自己対戦学習用）
   planAccuracyWeight: 1.0, overbidPenalty: 2.0, underbidPenalty: 0.5, planAccuracyBonus: 1.5,
   // 勝ち周・負け周ごとの想定得点/失点テーブル
@@ -66,9 +66,9 @@ export const defaultStrategy = () => ({
   // 競りペーシング
   bidPacingMs: 4000,          // 段階上げ間隔（4秒固定）
   bidStartValue: 13,          // 常に13スタート
-  // 安全マージン（順位補正）— 保守化
-  tossUpSafetyMargin: 0.8,    // 1〜3位
-  tossUpSafetyMarginBottom: 0.4, // 4位以下
+  // 安全マージン（順位補正）— 強気に変更
+  tossUpSafetyMargin: 0.4,    // 1〜3位
+  tossUpSafetyMarginBottom: 0.2, // 4位以下
   // シグナルボーナス（適正値への加算）
   signalS1Bonus: 1,           // S1: 同色違スート宣言
   signalS2Bonus: 2,           // S2: 同色2スート連続（2役）
