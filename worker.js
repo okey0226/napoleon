@@ -614,7 +614,7 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.version++;
   // ソフト承認: approved を全員 false にリセット
   m.auction.approved = Array(5).fill(false);
-  m.auction.needsHumanConfirm = false;
+  m.auction.needsHumanConfirm = false;   // ★ 追加
   m.active = seat;
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
   m.auction.botAt.forEach((_, i) => {
