@@ -5,6 +5,13 @@ export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
 export const ELO_INIT = 1000;
 export const FACE = ['10', 'J', 'Q', 'K', 'A'];
 
+export const CALIBRATION = { 13: 0.62, 14: 0.55, 15: 0.45, 16: 0.35, 17: 0.25, 18: 0.15, 19: 0.08, 20: 0.04 };
+export const SWEET_SPOT_BONUS = 2.5;
+export const HONEST_BID_FIXED_BONUS = 2.0;
+export const ALLY_LOSS_PENALTY = -5;
+export const ALLY_WIN_BONUS = 5;
+export const ALLY_BLOCK_BONUS = 2;
+
 export const shuffledDeck = () => {
   let d = [];
   SUITS.forEach(s => RANKS.forEach(r => d.push({ suit: s, rank: r, id: s + r })));
@@ -58,10 +65,27 @@ export const defaultStrategy = () => ({
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
   },
-  // 経験DB関連
-  expHitWeight: 1.0,       // 経験ヒット時の信頼度
-  similarityThreshold: 5.0, // 類似度検索の距離閾値
+  expHitWeight: 1.0,
+  similarityThreshold: 5.0,
 });
+
+export const sweetSpotFactor = (p) => {
+  const target = 0.55, width = 0.4;
+  return Math.exp(-Math.pow(p - target, 2) / (2 * Math.pow(width, 2)));
+};
+
+export const estimatedWinRate = (strength, num) => {
+  const base = CALIBRATION[num] || 0.05;
+  return Math.max(0.01, Math.min(0.99, base + (strength - 10) * 0.06));
+};
+
+export const findMaxHonestBid = (strength) => {
+  let max = 12;
+  for (let n = 13; n <= 20; n++) {
+    if (estimatedWinRate(strength, n) >= 0.35) max = n;
+  }
+  return max;
+};
 
 export const sameColorSuitOf = (suit) => {
   if (suit === '♣') return '♠';
@@ -84,24 +108,6 @@ export const pointsTierOf = (pts) => pts === 0 ? 'zero' : pts < 3 ? 'mid' : 'hig
 
 export const experienceConfidence = (samples) => Math.min(1, samples / 10);
 export const blendWithExperience = (p, exp) => exp && exp.samples >= 3 ? (p * 0.7 + (exp.wins / exp.samples) * 0.3) : p;
-
-// ★ 評価関数フィードバック（5世代ごとに呼び出される想定）
-export const updateStrategyFromExperience = (baseParams, stats) => {
-  const p = { ...baseParams };
-  // 例: 「A温存」と「A切り」の勝率差から safeAceWeight を調整
-  if (stats.aceHoldWins > 100 && stats.aceHoldWinRate > stats.acePlayWinRate + 0.05) {
-    p.safeAceWeight = Math.min(1.0, p.safeAceWeight + 0.1);
-  } else if (stats.acePlayWins > 100 && stats.acePlayWinRate > stats.aceHoldWinRate + 0.05) {
-    p.safeAceWeight = Math.max(0.1, p.safeAceWeight - 0.1);
-  }
-  // 例: 高枚数立ち成功率から bidThreshold を調整
-  if (stats.highBidSuccessRate > 0.6 && stats.highBidAttempts > 50) {
-    p.bidThreshold = Math.max(1.5, p.bidThreshold - 0.1);
-  } else if (stats.highBidSuccessRate < 0.3 && stats.highBidAttempts > 50) {
-    p.bidThreshold = Math.min(5.0, p.bidThreshold + 0.1);
-  }
-  return p;
-};
 
 export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
   const abandoned = new Set(Array.isArray(abandonedSeats) ? abandonedSeats : []);
@@ -146,6 +152,125 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
     score += (takenPoints[seat] || 0) * 0.05;
   }
   return Math.max(-3, Math.min(3, score)) * weight;
+};
+
+export const updateStrategyFromExperience = (baseParams, stats) => {
+  const p = { ...baseParams };
+  if (stats.aceHoldWins > 100 && stats.aceHoldWinRate > stats.acePlayWinRate + 0.05) {
+    p.safeAceWeight = Math.min(1.0, p.safeAceWeight + 0.1);
+  } else if (stats.acePlayWins > 100 && stats.acePlayWinRate > stats.aceHoldWinRate + 0.05) {
+    p.safeAceWeight = Math.max(0.1, p.safeAceWeight - 0.1);
+  }
+  if (stats.highBidSuccessRate > 0.6 && stats.highBidAttempts > 50) {
+    p.bidThreshold = Math.max(1.5, p.bidThreshold - 0.1);
+  } else if (stats.highBidSuccessRate < 0.3 && stats.highBidAttempts > 50) {
+    p.bidThreshold = Math.min(5.0, p.bidThreshold + 0.1);
+  }
+  return p;
+};
+
+export const PARAM_BOUNDS = {
+  bidThreshold: [2, 10], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
+  followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
+  safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
+  opponentInferenceWeight: [0.0, 1.0], suitConflictWeight: [0.0, 2.0],
+  mightyShadowWeight: [0.0, 1.0], weakOpponentBoost: [0.0, 1.0], bluffLossMultiplier: [0.1, 2.0],
+  cooperationBonus: [0.0, 1.0], ntPreference: [0.5, 1.5], ntSuitLengthBonus: [0.0, 3.0],
+  ntAceWeight: [0.5, 3.0], ntMightyBonus: [1.0, 5.0], highBidNtThreshold: [13, 20],
+  aceWeakSuitBonus: [0.0, 1.0], aceShortBonus: [0.0, 1.0], aceLongPenalty: [0.0, 1.0],
+  sameTwoAceCounter: [0.0, 1.0], sameTwoShortBonus: [0.0, 1.0], sameTwoLongPenalty: [0.0, 1.0],
+  sameTwoHighBidBonus: [0.0, 1.0], trumpExhaustionThreshold: [1, 10], baitModeWindow: [0, 10],
+  baitMinTrumps: [1, 10], strongTrumpLeadAggression: [0.0, 1.0], aceCashUrgency: [0.0, 2.0],
+  pointCardSafetyThreshold: [0.0, 1.0], tenHoldThreshold: [0.0, 1.0], nonTrumpAceWaiting: [0.0, 1.0],
+  baitBackJWindow: [0, 10], baitBackJChance: [0.0, 1.0], faceCardOnNapWin: [0.0, 1.0],
+  preserveNextStronger: [0.0, 1.0], deputyRevealUrgency: [0.0, 1.0], deputyCoverWeight: [0.0, 1.0],
+  sameTwoDeputyBonus: [0.0, 1.0], allyFaceCardBonus: [0.0, 1.0], napWeaknessLeadWeight: [0.0, 2.0],
+  trumpAvoidWeight: [0.0, 2.0], sameColorSuitAvoid: [0.0, 2.0], spadeLeadPriority: [0.0, 1.0],
+  nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
+  allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10],
+  teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
+  mctsSimulations: [10, 1000], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
+  rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
+  ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
+  ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
+  ntLateGameSafety: [0.5, 2.0],
+  ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
+  allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
+  ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
+  napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
+  napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
+  bidTimeBudgetMs: [100, 1500], bidMaxSamples: [50, 2000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
+  planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0],
+  underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
+  winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
+  winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
+  winPointMap_8: [8, 20], winPointMap_9: [9, 20], winPointMap_10: [10, 20],
+  lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
+  lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
+  lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20],
+  bidPacingMs: [2000, 6000], bidStartValue: [13, 13],
+  tossUpSafetyMargin: [0, 1], tossUpSafetyMarginBottom: [0, 1],
+  signalS1Bonus: [0, 3], signalS2Bonus: [0, 4], signalThreeRoleBonus: [0, 6], signalS3Bonus: [0, 4],
+  s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
+  sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3],
+  s2ThreeRoleExtra: [1, 2],
+  expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0]
+};
+
+export const mutateStrategy = (base, rate) => {
+  const out = { ...base };
+  for (const k of Object.keys(out)) {
+    if (k === 'nnWeights') {
+      out.nnWeights = { ...out.nnWeights };
+      for (const nk of Object.keys(out.nnWeights)) {
+        if (Math.random() < 0.1) out.nnWeights[nk] += (Math.random() * 2 - 1) * rate * 0.5;
+      }
+      continue;
+    }
+    if (k === 'lossPointMap' || k === 'winPointMap') {
+      out[k] = [...out[k]];
+      for (let i = 1; i < out[k].length; i++) {
+        if (Math.random() < 0.1) {
+          const delta = (Math.random() * 2 - 1) * rate;
+          let val = out[k][i] + delta;
+          const [min, max] = PARAM_BOUNDS[`${k}_${i}`] || [0, 20];
+          val = Math.max(min, Math.min(max, val));
+          out[k][i] = Math.round(val);
+        }
+      }
+      continue;
+    }
+    
+    if (Math.random() < 0.1) {
+      const delta = (Math.random() * 2 - 1) * rate;
+      let val = out[k] * (1 + delta);
+      if (PARAM_BOUNDS[k]) {
+        const [min, max] = PARAM_BOUNDS[k];
+        val = Math.max(min, Math.min(max, val));
+      }
+      out[k] = val;
+    }
+  }
+  return out;
+};
+
+export const crossoverStrategy = (parentA, parentB) => {
+  const child = { ...parentA };
+  for (const k of Object.keys(parentA)) {
+    if (k === 'nnWeights') {
+      child.nnWeights = {};
+      for (const nk of Object.keys(parentA.nnWeights)) {
+        child.nnWeights[nk] = Math.random() < 0.5 ? parentA.nnWeights[nk] : parentB.nnWeights[nk];
+      }
+      continue;
+    }
+    if (k === 'lossPointMap' || k === 'winPointMap') {
+      child[k] = parentA[k].map((v, i) => Math.random() < 0.5 ? v : parentB[k][i]);
+      continue;
+    }
+    if (Math.random() < 0.5) child[k] = parentB[k];
+  }
+  return child;
 };
 
 export const RANK_1_BONUS = 25;
