@@ -1,8 +1,8 @@
-// ai-simulator.js (初期戦略アンカーリング + 自己対戦高速化対応版)
+// ai-simulator.js (プレイ品質・高枚数ボーナス統合版)
 import { SUITS, RANKS, CALIBRATION, shuffledDeck, sortHand, defaultStrategy, mutateStrategy, crossoverStrategy, PARAM_BOUNDS, sweetSpotFactor, estimatedWinRate, findMaxHonestBid, SWEET_SPOT_BONUS, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
-  winningEntry, colorStrength, ntHandStrength, handStrength,
+  winningEntry, colorStrength, ntHandStrength, handStrength, cardPower,
   computeProperBid, canSendSignal, isTwoRole, isThreeRole, countSameColorBidders, getRoleCards
 } from './ai-tactics.js';
 
@@ -20,9 +20,19 @@ function computePlanAccuracy(plan, actualWins, params) {
   if (!plan || !Number.isFinite(plan.expectedWins)) return 0;
   const diff = plan.expectedWins - actualWins;
   const w = params.planAccuracyWeight ?? 1.0;
-  if (diff > 1.5) return -Math.min(params.overbidPenalty ?? 2.0, (diff - 1.5) * 1.5) * w;
-  else if (diff < -2.0) return -Math.min(params.underbidPenalty ?? 0.5, (-diff - 2.0) * 0.5) * w;
-  else if (Math.abs(diff) <= 1.0) return (params.planAccuracyBonus ?? 1.5) * w;
+  
+  if (diff > 1.5) {
+    const penaltyWeight = params.overbidPenalty ?? 2.0;
+    return -Math.min(penaltyWeight, (diff - 1.5) * 1.5) * w;
+  }
+  else if (diff < -2.0) {
+    const penaltyWeight = params.underbidPenalty ?? 0.5;
+    return -Math.min(penaltyWeight, (-diff - 2.0) * 0.5) * w;
+  }
+  else if (Math.abs(diff) <= 1.0) {
+    const bonus = params.planAccuracyBonus ?? 1.5;
+    return bonus * w;
+  }
   return 0;
 }
 
@@ -80,7 +90,6 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
     properBids.push({ candidates, baseStr: handStrength(hands[seat]), topSuits, ntScore });
   }
 
-  // 13スタートラウンド
   for (let seat = 0; seat < 5; seat++) {
     const p = seatParams[seat];
     if (properBids[seat].baseStr < (p.bidThreshold ?? 3.5)) continue;
@@ -220,37 +229,65 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
   let napTricks = 0;
   let deputyTricks = 0;
+  let overkillCount = 0;
+  let feedSuccessCount = 0;
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
+    let pointsInTrick = 0;
     for (let i = 0; i < 5; i++) {
       const seat = (active + i) % 5, hand = hands[seat];
       if (!hand.length) break;
       const legal = trick.length === 0 ? hand : (hand.filter(c => c.suit === trick[0].card.suit).length ? hand.filter(c => c.suit === trick[0].card.suit) : hand);
       const currentWinner = trick.length ? winningEntry(contractBase, trickNo, trick) : null;
-      const isCurrentNapWinning = currentWinner ? (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy)) : false;
+      const isMyTeam = seat === nap || (!contractBase.solo && seat === deputy);
+      const isCurrentWinnerMyTeam = currentWinner ? (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy)) : false;
       
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy,
         params: params[seat] || defaultStrategy(),
         discardedKitty: discard,
-        isMySideNap: seat === nap || (revealed && seat === deputy),
-        isCurrentNapWinning, isRevealed: revealed,
+        isMySideNap: isMyTeam,
+        isCurrentNapWinning: isCurrentWinnerMyTeam,
+        isRevealed: revealed,
         isNapLeading: trick.length > 0 && trick[0].seat === nap,
         lastSeat: trick.length === 4,
         call,
         bidHistory: matchBidHistory,
-        matchScores: matchScores
+        matchScores: matchScores,
+        points: roundPts,
+        allianceKittyPoints: allianceKittyPts
       };
+      
       let chosen;
       if (!contractBase.solo && revealed && seat === deputy) chosen = chooseDeputyCard(ctx);
       else chosen = chooseCardToPlay(ctx);
       if (!chosen || !legal.some(c => c.id === chosen.id)) chosen = legal[Math.floor(Math.random() * legal.length)];
+      
+      if (trick.length > 0) {
+        const isWinnerMyTeam = currentWinner && (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy));
+        const winnerMyTeam = winnerSeat => winnerSeat === nap || (!contractBase.solo && winnerSeat === deputy);
+        
+        if (currentWinner) {
+          const powerBefore = cardPower(contractBase, trickNo, currentWinner.card, trick);
+          const powerAfter = cardPower(contractBase, trickNo, chosen, [...trick, { seat, card: chosen }]);
+          
+          if (winnerMyTeam(currentWinner.seat) === isMyTeam && powerAfter > powerBefore) {
+            if (pointsInTrick === 0 || ['K', 'A'].includes(chosen.rank)) overkillCount++;
+          }
+          if (winnerMyTeam(currentWinner.seat) === isMyTeam && ['10', 'J', 'Q'].includes(chosen.rank)) {
+            feedSuccessCount++;
+          }
+        }
+      }
+
       if (trick.length && chosen.suit !== trick[0].card.suit) { if (!voids[seat]) voids[seat] = {}; voids[seat][trick[0].card.suit] = true; }
       played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat });
       if (!revealed && chosen.id === call.id) { revealed = true; revealTrickNo = trickNo; }
       trick.push({ seat, card: chosen });
       hands[seat] = hand.filter(c => c.id !== chosen.id);
+
+      pointsInTrick = trick.filter(e => ['10', 'J', 'Q', 'K', 'A'].includes(e.card.rank)).length;
     }
     if (trick.length < 5) break;
     const w = winningEntry(contractBase, trickNo, trick);
@@ -282,6 +319,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory) {
     nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1,
     plan, expectedWins: plan?.expectedWins ?? null, actualWins,
+    overkillCount, feedSuccessCount,
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
@@ -317,7 +355,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     nextPool.push(child);
   }
 
-  // ★ 自己対戦用にパラメータを高速化（タイムアウト防止）
   const speedUpForSimulation = (p) => {
     const sp = { ...p };
     sp.bidTimeBudgetMs = Math.min(sp.bidTimeBudgetMs || 600, 50);
@@ -331,7 +368,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
   const stats = pool.map(() => ({ n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0, bidSum: 0, bidN: 0, soloBidN: 0, planAccSum: 0, planAccN: 0, overbidN: 0, underbidN: 0 }));
 
-  // 通常の自己対戦（プール内での対戦）
   for (let i = 0; i < matchCount; i++) {
     const seatIdx = [], seatParams = [];
     for (let s = 0; s < 5; s++) { const idx = Math.floor(Math.random() * pool.length); seatIdx.push(idx); seatParams.push(pool[idx]); }
@@ -345,10 +381,20 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       const st = stats[seatIdx[seat]];
       st.n++;
       let matchRating = 0;
+      let totalOverkills = 0;
+      let totalFeeds = 0;
+
       for (const c of contracts) {
+        totalOverkills += c.overkillCount || 0;
+        totalFeeds += c.feedSuccessCount || 0;
+        
         if (c.nap === seat) {
           st.napN++; st.bidSum += c.num; st.bidN++;
-          if (c.made) st.napW++;
+          if (c.made) {
+            st.napW++;
+            const highBidSuccessBonus = Math.max(0, c.num - 13) * 1.5;
+            matchRating += highBidSuccessBonus;
+          }
           if (c.solo) st.soloBidN++;
           matchRating += c.rating.napDelta || 0;
           matchRating += c.rating.planAccuracy || 0;
@@ -363,6 +409,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         else if (!c.solo && c.deputy === seat) { st.depN++; if (c.made) st.depW++; matchRating += c.rating.deputyDelta || 0; }
         else { st.alN++; if (!c.made) st.alW++; matchRating += c.rating.allyDelta || 0; }
       }
+      
+      matchRating += (totalFeeds * 2.0) - (totalOverkills * 2.0);
+
       if (placement[seat] === 1) matchRating += RANK_1_BONUS;
       else if (placement[seat] === 2) matchRating += RANK_2_BONUS;
       else if (placement[seat] === 4) matchRating += RANK_4_PENALTY;
@@ -373,52 +422,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
 
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
-  }
-
-  // ★ 追加: 初期戦略（defaultStrategy）との対戦評価（アンカーリング）
-  const baselineStrategy = defaultStrategy();
-  // タイムアウト防止のため思考時間を制限
-  baselineStrategy.bidTimeBudgetMs = 50;
-  baselineStrategy.bidMaxSamples = 50;
-  baselineStrategy.maxThinkTimeMs = 50;
-  baselineStrategy.mctsSimulations = 50;
-
-  const baselineMatchesPerStrategy = 10; // 各プール戦略あたり10マッチ（相手はdefaultStrategyが4人）
-
-  for (let i = 0; i < pool.length; i++) {
-    const strategy = pool[i];
-    const st = stats[i];
-    let baselineTotalRating = 0;
-    
-    for (let m = 0; m < baselineMatchesPerStrategy; m++) {
-      const mySeat = Math.floor(Math.random() * 5);
-      const hands = [[], [], [], [], []], matchScores = [0, 0, 0, 0, 0], matchBidHistory = [];
-      const seatParams = [];
-      
-      for (let s = 0; s < 5; s++) {
-        seatParams.push(s === mySeat ? strategy : baselineStrategy);
-      }
-      
-      for (let r = 1; r <= 10; r++) {
-        simRound(hands, r, matchScores, seatParams, matchBidHistory);
-      }
-      
-      const sorted = [...matchScores].sort((a, b) => b - a);
-      const myScore = matchScores[mySeat];
-      const placement = 1 + sorted.filter(x => x > myScore).length;
-      
-      let delta = 0;
-      if (placement === 1) delta += RANK_1_BONUS;
-      else if (placement === 2) delta += RANK_2_BONUS;
-      else if (placement === 4) delta += RANK_4_PENALTY;
-      else if (placement === 5) delta += RANK_5_PENALTY;
-      
-      baselineTotalRating += delta;
-    }
-    
-    // 初期戦略に対する評価を既存の評価に加算（重み付け：1.5倍）
-    st.totalRating += baselineTotalRating * 1.5;
-    st.n += baselineMatchesPerStrategy;
   }
 
   const statements = [];
