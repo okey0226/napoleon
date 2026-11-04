@@ -476,7 +476,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   };
 }
 
-export async function runSelfPlayBatch(env, matchCount = 1000) {
+export async function runSelfPlayBatch(env, matchCount = 5) {
   let existing = [];
   try {
     const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC LIMIT 10").all();
@@ -512,14 +512,14 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     nextPool.push(child);
   }
 
+  // ★ 修正: oracleSamples / oracleMctsTimeMs は縮小しない（品質優先）
   const speedUpForSimulation = (p) => {
     const sp = { ...p };
     sp.bidTimeBudgetMs = Math.min(sp.bidTimeBudgetMs || 600, 50);
     sp.bidMaxSamples = Math.min(sp.bidMaxSamples || 800, 50);
     sp.maxThinkTimeMs = Math.min(sp.maxThinkTimeMs || 3000, 50);
     sp.mctsSimulations = Math.min(sp.mctsSimulations || 150, 50);
-    sp.oracleSamples = Math.min(sp.oracleSamples || 200, 50);
-    sp.oracleMctsTimeMs = Math.min(sp.oracleMctsTimeMs || 200, 50);
+    // oracleSamples / oracleMctsTimeMs はそのまま
     return sp;
   };
 
@@ -578,7 +578,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         totalFeeds += c.feedSuccessCount || 0;
         totalGolden += c.goldenFormationCount || 0;
 
-        // 価値損失とカテゴリ別統計
         for (const d of (c.playDecisions || [])) {
           if (d.seat !== seat) continue;
           if (d.valueLossRate == null) continue;
@@ -591,7 +590,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
           else { st.valueLossColor += d.valueLossRate; st.valueLossColorN++; }
         }
 
-        // 競り指標
         if (c.bidHistory) {
           for (const act of c.bidHistory) {
             if (act.seat !== seat) continue;
@@ -636,15 +634,8 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
         }
       }
 
-      // 集計値から平均を計算
       const avgVL = st.valueLossN > 0 ? st.valueLossSum / st.valueLossN : 0;
-      const avgVLEarly = st.valueLossEarlyN > 0 ? st.valueLossEarly / st.valueLossEarlyN : 0;
-      const avgVLMid = st.valueLossMidN > 0 ? st.valueLossMid / st.valueLossMidN : 0;
-      const avgVLLate = st.valueLossLateN > 0 ? st.valueLossLate / st.valueLossLateN : 0;
-      const avgVLNT = st.valueLossNTN > 0 ? st.valueLossNT / st.valueLossNTN : 0;
-      const avgVLColor = st.valueLossColorN > 0 ? st.valueLossColor / st.valueLossColorN : 0;
 
-      // 新しい評価体系による重み付け
       const wPlayQuality = p.weightPlayQuality ?? 5.0;
       const wFeed = p.weightFeedSuccess ?? 3.0;
       const wSignal = p.weightSignalSuccess ?? 2.0;
@@ -652,13 +643,9 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       const wPlanAcc = p.weightPlanAccuracy ?? 3.0;
       const wBidQuality = p.weightBiddingQuality ?? 2.0;
       const wNapAttempts = p.weightNapAttempts ?? 4.0;
-      const wRoleWin = p.weightRoleWinRate ?? 2.0;
       const wOverkill = p.weightOverkill ?? 2.0;
-      const wDeputyOvertrump = p.weightDeputyOvertrump ?? 3.0;
       const wOpportunityLoss = p.weightOpportunityLoss ?? 3.0;
-      const wWastedAce = p.weightWastedAce ?? 1.0;
 
-      // プレイ品質: 1 - valueLossRate（0〜1）
       matchRating += (1 - avgVL) * wPlayQuality;
       matchRating += totalFeeds * wFeed;
       matchRating += signalSuccessCount * wSignal;
@@ -667,12 +654,10 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       matchRating += smartPassCount * wBidQuality;
       matchRating += (contracts.filter(c => c.nap === seat).length) * wNapAttempts;
 
-      // ミス率ペナルティ
       matchRating -= totalOverkills * wOverkill;
       matchRating -= overcallCount * 4.0;
       matchRating -= opportunityLossCount * wOpportunityLoss;
 
-      // 順位ボーナス（縮小）
       if (placement[seat] === 1) matchRating += 5;
       else if (placement[seat] === 2) matchRating += 2;
       else if (placement[seat] === 4) matchRating -= 2;
@@ -693,7 +678,7 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
 
-    if (i > 0 && i % 5 === 0) {
+    if (i > 0 && i % 2 === 0) {
       await flushExperience(env);
       await flushQuizCandidates(env);
     }
