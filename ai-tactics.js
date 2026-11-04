@@ -385,6 +385,48 @@ export function getRoleCards(hand, trump) {
 export function isTwoRole(hand, trump) { return getRoleCards(hand, trump).count >= 2; }
 export function isThreeRole(hand, trump) { return getRoleCards(hand, trump).count >= 3; }
 
+export function canSendS1(hand, trump, params) {
+  if (trump === 'NT') return false;
+  const sameColorSuit = sameColorSuitOf(trump);
+  const hasSameColorJ = hand.some(c => c.rank === 'J' && c.suit === sameColorSuit);
+  if (!hasSameColorJ) return false;
+  const minorCards = hand.filter(c => c.rank === 'A' || c.rank === '2').length;
+  return minorCards >= (params?.s1RequiredMinorCards ?? 2);
+}
+
+export function canSendS3(hand, params) {
+  const nonMightyAces = hand.filter(c => c.rank === 'A' && c.id !== '♠A').length;
+  return nonMightyAces >= (params?.s3RequiredAces ?? 2);
+}
+
+export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
+  if (!currentHigh || currentHigh.num !== 17) return { canTransfer: false, targetBid: 0 };
+  if (!currentHigh.suit || currentHigh.suit === 'NT') return { canTransfer: false, targetBid: 0 };
+  const sameColorSuit = sameColorSuitOf(currentHigh.suit);
+  const hasSameColorRole = hand.some(c => c.suit === sameColorSuit && (c.rank === 'J' || c.rank === 'A'));
+  if (!hasSameColorRole) return { canTransfer: false, targetBid: 0 };
+  return { canTransfer: true, targetBid: 20 };
+}
+
+// ★ 修正: この関数がエクスポートされていなかった
+export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
+  if (!trumpSuit || trumpSuit === 'NT') return 0;
+  const sameColor = sameColorSuitOf(trumpSuit);
+  const colorSuits = new Set([trumpSuit, sameColor]);
+  const bidders = new Set();
+  (bidHistory || []).forEach(b => {
+    if (colorSuits.has(b.suit)) bidders.add(b.seat);
+  });
+  return bidders.size;
+}
+
+export function detectPartnerSignal(bidSignals, bidHistory, currentHigh, mySeat) {
+  if (!currentHigh || currentHigh.num < 13 || currentHigh.player === mySeat) return null;
+  const received = bidSignals?.received || [];
+  if (!received.length) return null;
+  return received[received.length - 1];
+}
+
 export function classifyHandArchetype(hand, trump, params) {
   const trumps = hand.filter(c => c.suit === trump);
   const sideAces = hand.filter(c => c.suit !== trump && c.rank === 'A' && c.id !== '♠A');
@@ -474,54 +516,9 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   const properBid = Math.max(13, Math.min(20, baseBid));
   return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
 }
+
 // ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS・オラクルB)
 // ※ 前半の続きとして記述
-
-export function bidPacing(currentBid, properBid, lastBidAt, pacingMs) {
-  const now = Date.now();
-  const elapsed = now - (lastBidAt || 0);
-  const shouldWait = elapsed < pacingMs;
-  if (currentBid >= properBid) return { nextBid: currentBid, shouldWait: false, waitMs: 0, reachedProper: true };
-  if (shouldWait) return { nextBid: currentBid, shouldWait: true, waitMs: pacingMs - elapsed, reachedProper: false };
-  return { nextBid: Math.min(currentBid + 1, properBid), shouldWait: false, waitMs: 0, reachedProper: false };
-}
-
-export function classifySignalType(bidHistory, seat, trump) {
-  const seatBids = (bidHistory || []).filter(b => b.seat === seat);
-  if (seatBids.length < 2) return null;
-  const last = seatBids[seatBids.length - 1];
-  const prev = seatBids[seatBids.length - 2];
-  if (isSameColorSuit(prev.suit, last.suit) && prev.num === last.num) return 'S2';
-  return 'S1';
-}
-
-export function canSendSignal(hand, currentHigh, mySeat, bidSignals, params, matchScores) {
-  const result = { S1: false, S2: false, S3: false, S4: false, targetSuit: null, targetBid: 0 };
-  if (!currentHigh || currentHigh.num < 13 || currentHigh.player === mySeat) return result;
-  const trump = currentHigh.suit;
-  const sameColorBidders = countSameColorBidders(bidSignals, [], trump);
-  const limit = trump === 'NT' ? (params.ntBidderLimit ?? 2) : (params.sameColorBidderLimit ?? 2);
-  const myTwoRole = isTwoRole(hand, trump);
-  if (sameColorBidders >= limit && !myTwoRole) return result;
-  const rt = evaluateRiskTransfer(hand, currentHigh, params, matchScores);
-  if (rt.canTransfer) {
-    result.S4 = true;
-    result.targetSuit = sameColorSuitOf(trump);
-    result.targetBid = 20;
-    return result;
-  }
-  if (trump === 'NT') {
-    if (canSendS3(hand, params)) { result.S3 = true; result.targetSuit = 'NT'; result.targetBid = currentHigh.num + 1; }
-    return result;
-  }
-  if (canSendS1(hand, trump, params)) {
-    result.S1 = true;
-    result.targetSuit = sameColorSuitOf(trump);
-    result.targetBid = currentHigh.num;
-    if (isTwoRole(hand, trump)) result.S2 = true;
-  }
-  return result;
-}
 
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null, playedCards = [], voids = [{},{},{},{},{}]) {
   if (!Array.isArray(hand) || !hand.length) return null;
@@ -1621,4 +1618,3 @@ export function oracleB(ctx, matchId, round, trickNo, decisionIndex, params = {}
 
   return { bestCard, evMap: EV, votes };
 }
-
