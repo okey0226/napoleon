@@ -1,4 +1,4 @@
-// quiz-app.js — 何切る問題集（play特化 / v44）
+// quiz-app.js — 何切る問題集（play特化 / v45）
 const $ = id => document.getElementById(id);
 const QUIZ_LABELS = { play: '何を出す？' };
 const CATEGORY_PHASE = { play: 'カードプレイ' };
@@ -60,7 +60,7 @@ function addTakenCards(seatEl, cards) {
 }
 
 export function openQuizScreen() {
-  const screens = ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen'];
+  const screens = ['home-screen','mode-select-screen','profile-screen','game-screen','records-screen','strategy-screen','training-screen'];
   screens.forEach(id => {
     const el = $(id);
     if (el) {
@@ -205,7 +205,9 @@ function renderGameReplica(q, fallbackId = '') {
 
   let contractInfoHTML = '';
   if (contract) {
-    const parts = [`<strong class="contract-bid">宣言 ${contract.num}${contract.suit}${contract.solo ? '（ソロ）' : ''}</strong>`];
+    // ★ 修正: contract.num が undefined の場合のフォールバック
+    const bidNum = (contract.num !== undefined && contract.num !== null) ? contract.num : '?';
+    const parts = [`<strong class="contract-bid">宣言 ${bidNum}${contract.suit}${contract.solo ? '（ソロ）' : ''}</strong>`];
     const callId = q.scenario?.call?.id || null;
     if (callId) parts.push(`<span class="contract-call-label">副官札</span><div class="contract-kitty-cards">${cardElHTML(callId, 'contract-kitty-card')}</div>`);
     const discarded = q.scenario?.discarded || [];
