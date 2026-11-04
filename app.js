@@ -548,7 +548,6 @@ function drawAuction(){
   const p=$('auction-panel');if(!p)return;
   if (!g.auction) return;
   
-  // ★ 修正: 確定待ちパネル（hash check より先に判定）
   if (g.auction.needsHumanConfirm && g.auction.high.player === g.mySeat) {
     const h = g.auction.high;
     p.classList.remove('hidden');
@@ -576,7 +575,6 @@ function drawAuction(){
         g.room?.send({type:'game', action:{type:'reopen-auction'}});
       } else {
         g.auction.approved = Array(5).fill(false);
-        // ★ COMが即座に再承認しないよう、思考済みフラグ（botSeen）を現在のバージョンに合わせて待機させる
         g.auction.botSeen = Array(5).fill(g.auction.version);
         drawAuction();
         drawSeats();
@@ -640,16 +638,13 @@ function humanApprove(forced=false){
   if(g.phase!=='auction'||!g.auction||!g.auction.active.includes(g.mySeat))return;
   if(g.round>=10&&g.auction.high.num<13){if(forced&&(g.auction.requiredBidSeat??g.auction.active[0])===g.mySeat){g.bid=g.auction.minBid;g.suit=strongestSuit(g.players[g.mySeat].hand);humanBid()}return}
   if(!forced)auctionActivity();
-  // ★ 確定待ちなら、ここで確定扱い
   if(g.auction.needsHumanConfirm && g.auction.high.player === g.mySeat){
     g.auction.needsHumanConfirm = false;
     auctionEnd(g.mySeat, true);
     return;
   }
-  // 自分が最高宣言者の場合
   if(g.auction.high.player===g.mySeat){
     const others = g.auction.active.filter(s => s !== g.mySeat);
-    // ★ 他の人間プレイヤー（botでない）が未承認なら待つ
     const humanPending = g.auction.active.some(s => s !== g.mySeat && !g.players[s]?.bot && !g.auction.approved[s]);
     const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
     if(allApproved){
@@ -680,16 +675,13 @@ function humanApprove(forced=false){
     }
     return;
   }
-  // ソフト承認
   g.auction.approved[g.mySeat] = true;
   addGameLog(forced?'あなたが自動保留':'あなたが保留（再立候補可）');
   message(forced?'30秒操作がなかったため、自動で保留しました':'あなたは保留しました（誰かが上げれば復帰可能）');
   const others = g.auction.active.filter(s => s !== g.auction.high.player);
-  // ★ 他の人間プレイヤー（botでない）が未承認なら終わらせない
   const humanPending = g.auction.active.some(s => !g.players[s]?.bot && s !== g.auction.high.player && !g.auction.approved[s]);
   const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
   if(allApproved && g.auction.high.player >= 0){
-    // ★ 宣言者が人間なら確定待ち
     if(g.auction.high.player === g.mySeat){
       g.auction.needsHumanConfirm = true;
       message('全員承認しました。あなたの確定を待っています');
@@ -719,7 +711,7 @@ function humanBid(){
   if(g.auction.requiredBidSeat===g.mySeat)g.auction.requiredBidSeat=null;
   g.auction.version++;
   g.auction.approved = Array(5).fill(false);
-  g.auction.needsHumanConfirm = false;   // ★ 新規宣言で確定待ち解除
+  g.auction.needsHumanConfirm = false;
   g.active=g.mySeat;
   g.bidSignals[g.mySeat].lastBidAt = Date.now();
   message('あなたが'+g.bid+g.suit+'を宣言しました');
@@ -758,7 +750,7 @@ function comBid(i,version){
     g.auction.high={num:20,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
-    g.auction.needsHumanConfirm = false;   // ★ 追加
+    g.auction.needsHumanConfirm = false;
     g.active=i;
     bidSignals.sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
     bidSignals.lastBidAt = Date.now();
@@ -778,7 +770,7 @@ function comBid(i,version){
       g.auction.high={num:targetNum,suit:'NT',player:i,solo:false};
       g.auction.version++;
       g.auction.approved = Array(5).fill(false);
-      g.auction.needsHumanConfirm = false;   // ★ 追加
+      g.auction.needsHumanConfirm = false;
       g.active=i;
       bidSignals.sent = { type: 'S3', suit: 'NT', num: targetNum };
       bidSignals.lastBidAt = Date.now();
@@ -797,7 +789,7 @@ function comBid(i,version){
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
-    g.auction.needsHumanConfirm = false;   // ★ 追加
+    g.auction.needsHumanConfirm = false;
     g.active=i;
     bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -815,7 +807,7 @@ function comBid(i,version){
     g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
-    g.auction.needsHumanConfirm = false;   // ★ 追加
+    g.auction.needsHumanConfirm = false;
     g.active=i;
     bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
     bidSignals.lastBidAt = Date.now();
@@ -834,11 +826,9 @@ function comBid(i,version){
     removeBid(i); addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
     g.auction.approved[i] = true;
     const others = g.auction.active.filter(s => s !== g.auction.high.player);
-    // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
     const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
     const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
     if (allApproved && g.auction.high.player >= 0) {
-      // ★ 宣言者が人間なら確定待ち
       if (g.auction.high.player === g.mySeat) {
         g.auction.needsHumanConfirm = true;
         message('全員承認しました。あなたの確定を待っています');
@@ -856,11 +846,9 @@ function comBid(i,version){
       g.auction.approved[i] = true;
       addGameLog(name(i)+'が保留（適正値超過）'); message(name(i)+'は保留しました');
       const others = g.auction.active.filter(s => s !== g.auction.high.player);
-      // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
       const humanPending = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
       const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
       if (allApproved && g.auction.high.player >= 0) {
-        // ★ 宣言者が人間なら確定待ち
         if (g.auction.high.player === g.mySeat) {
           g.auction.needsHumanConfirm = true;
           message('全員承認しました。あなたの確定を待っています');
@@ -880,7 +868,7 @@ function comBid(i,version){
       g.auction.high={num:targetNum,suit:bestSuit,player:i,solo:false};
       g.auction.version++;
       g.auction.approved = Array(5).fill(false);
-      g.auction.needsHumanConfirm = false;   // ★ 追加
+      g.auction.needsHumanConfirm = false;
       g.active=i;
       bidSignals.lastBidAt = Date.now();
       g.auction.bidPlans[i] = g.properPlans[i];
@@ -897,7 +885,7 @@ function comBid(i,version){
     g.auction.high={num:13,suit:bestSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
-    g.auction.needsHumanConfirm = false;   // ★ 追加
+    g.auction.needsHumanConfirm = false;
     g.active=i;
     bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
@@ -916,7 +904,7 @@ function comBid(i,version){
     g.auction.high={num:nextNum,suit:nextSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
-    g.auction.needsHumanConfirm = false;   // ★ 追加
+    g.auction.needsHumanConfirm = false;
     g.active=i;
     bidSignals.lastBidAt = Date.now();
     g.auction.bidPlans[i] = g.properPlans[i];
@@ -924,16 +912,13 @@ function comBid(i,version){
     drawAuction(); drawSeats(); scheduleComBids(); return;
   }
   
-  // 承認
   if(g.auction.high.player===i){if(g.auction.active.length===1)auctionEnd(i);return}
   g.auction.approved[i] = true;
   addGameLog(name(i)+'が保留'); message(name(i)+'は保留しました');
   const others2 = g.auction.active.filter(s => s !== g.auction.high.player);
-  // ★ 人間プレイヤー（mySeat）が active にいて未承認なら終わらせない
   const humanPending2 = g.auction.active.includes(g.mySeat) && g.mySeat !== g.auction.high.player && !g.auction.approved[g.mySeat];
   const allApproved2 = !humanPending2 && (others2.length === 0 || others2.every(s => g.auction.approved[s]));
   if (allApproved2 && g.auction.high.player >= 0) {
-    // ★ 宣言者が人間なら確定待ち
     if (g.auction.high.player === g.mySeat) {
       g.auction.needsHumanConfirm = true;
       message('全員承認しました。あなたの確定を待っています');
@@ -946,7 +931,7 @@ function comBid(i,version){
 }
 
 function auctionEnd(w, skipProperRaise = false){
-  if (g.auction) g.auction.needsHumanConfirm = false;   // ★ 追加
+  if (g.auction) g.auction.needsHumanConfirm = false;
   clearTimeout(g.auction?.humanTimeout);
   stopTurnTimer();
   
@@ -968,7 +953,7 @@ function auctionEnd(w, skipProperRaise = false){
   }
   
   const properBid = g.properBids[w] || 13;
-  if (!skipProperRaise && g.auction.high.num < properBid && g.auction.high.player === w) {   // ★ skipProperRaise 追加
+  if (!skipProperRaise && g.auction.high.num < properBid && g.auction.high.player === w) {
     if (!g.auction.active.includes(w)) g.auction.active.push(w);
     const pacingMs = g.aiWeights.bidPacingMs ?? 4000;
     message(`${name(w)}が適正値（${properBid}）まで段階上げ中…`);
@@ -1362,7 +1347,7 @@ function playTurn(){
       if (seat === g.mySeat) return;
       
       const legalCardsList=legal(seat);
-      if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+4)%5;playTurn();return}
+      if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+1)%5;playTurn();return}
       
       const result = await computeBotPlay(seat);
       
@@ -1386,7 +1371,7 @@ function playTurn(){
       addGameLog("⚠️ COM思考エラー: "+(e?.message||String(e))+" → ランダムなカードを出しました");
       const l=legal(errSeat);
       if(l.length){const random=l[Math.floor(Math.random()*l.length)];addDebugLog('bot-error-fallback-random',{seat:errSeat,fallback:random.id,legalIds:l.map(x=>x.id)});play(errSeat,random)}
-      else{g.active=(errSeat+4)%5;playTurn()}
+      else{g.active=(errSeat+1)%5;playTurn()}
     }
   }, 650 + Math.random() * 550);
 }
@@ -1436,7 +1421,7 @@ function play(i,c){
   $('trick-cards')?.append(cardEl(c,'trick-card played-seat-'+i));
   
   if(g.trick.length<5){
-    g.active=(i+4)%5;
+    g.active=(i+1)%5; // ★ 修正: 時計回り
     playTurn();
     return
   }
@@ -2212,4 +2197,3 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
-
