@@ -27,7 +27,6 @@ export const sortHand = (hand) => {
 };
 
 export const defaultStrategy = () => ({
-  // 競り
   bidThreshold: 2.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
   deputyFeedBias: 0.5, opponentInferenceWeight: 0.4, suitConflictWeight: 0.6,
@@ -43,7 +42,7 @@ export const defaultStrategy = () => ({
   napWeaknessLeadWeight: 0.8, trumpAvoidWeight: 0.9, sameColorSuitAvoid: 0.8,
   spadeLeadPriority: 0.7, nonDeclaredSuitWeight: 0.6, queenHoardWeight: 0.6,
   sameTwoHoardWeight: 0.5, allyYieldBonus: 0.5, allySameTwoLeadChance: 0.55, allySameTwoWindow: 4,
-  teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 1.0,
+  teamCooperationWeight: 1.5, feedBonusWeight: 1.0, overkillPenalty: 2.0,
   mctsSimulations: 150, mctsExploration: 1.414, handInferenceWeight: 0.5,
   rolloutPolicyWeight: 0.8, bayesUpdateRate: 0.05,
   ntMightyHoldThreshold: 8, ntMightyShadowWeight: 1.5, ntAceLeadPriority: 1.2,
@@ -61,6 +60,7 @@ export const defaultStrategy = () => ({
   signalS1Bonus: 1, signalS2Bonus: 2, signalThreeRoleBonus: 4, signalS3Bonus: 2,
   s1RequiredMinorCards: 2, s3RequiredAces: 2,
   sameColorBidderLimit: 2, ntBidderLimit: 2, s2ThreeRoleExtra: 1,
+  goldenFormationBonus: 3.0, overkillPenalty: 3.0, deputyOvertrumpPenalty: 4.0, lastSeatDuckBonus: 2.0,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -114,9 +114,7 @@ export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
   const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
   const placementBySeat = [];
   ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
-  
   const baseDeltas = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
-  
   return matchScores.map((s, i) => {
     const isAbandoned = abandoned.has(i);
     const rank = placementBySeat[i];
@@ -145,10 +143,10 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
   const isNapSide = seat === nap || (!solo && seat === deputy);
   let score = 0;
   if (isNapSide) {
-    score += won ? (1.5 + (num - 13) * 0.4) : -(0.8 + (num - 13) * 0.1);
+    score += won ? (2.0 + (num - 13) * 0.5) : -(0.5 + (num - 13) * 0.1);
     score += (takenPoints[seat] || 0) * 0.05;
   } else {
-    score += !won ? (0.8 + (num - 13) * 0.1) : -1.2;
+    score += !won ? (0.5 + (num - 13) * 0.1) : -1.5;
     score += (takenPoints[seat] || 0) * 0.05;
   }
   return Math.max(-3, Math.min(3, score)) * weight;
@@ -156,21 +154,15 @@ export const rateRound = (seat, roundData, params, weight = 1) => {
 
 export const updateStrategyFromExperience = (baseParams, stats) => {
   const p = { ...baseParams };
-  if (stats.aceHoldWins > 100 && stats.aceHoldWinRate > stats.acePlayWinRate + 0.05) {
-    p.safeAceWeight = Math.min(1.0, p.safeAceWeight + 0.1);
-  } else if (stats.acePlayWins > 100 && stats.acePlayWinRate > stats.aceHoldWinRate + 0.05) {
-    p.safeAceWeight = Math.max(0.1, p.safeAceWeight - 0.1);
-  }
-  if (stats.highBidSuccessRate > 0.6 && stats.highBidAttempts > 50) {
-    p.bidThreshold = Math.max(1.5, p.bidThreshold - 0.1);
-  } else if (stats.highBidSuccessRate < 0.3 && stats.highBidAttempts > 50) {
-    p.bidThreshold = Math.min(5.0, p.bidThreshold + 0.1);
-  }
+  if (stats.aceHoldWins > 100 && stats.aceHoldWinRate > stats.acePlayWinRate + 0.05) p.safeAceWeight = Math.min(1.0, p.safeAceWeight + 0.1);
+  else if (stats.acePlayWins > 100 && stats.acePlayWinRate > stats.aceHoldWinRate + 0.05) p.safeAceWeight = Math.max(0.1, p.safeAceWeight - 0.1);
+  if (stats.highBidSuccessRate > 0.6 && stats.highBidAttempts > 50) p.bidThreshold = Math.max(1.5, p.bidThreshold - 0.1);
+  else if (stats.highBidSuccessRate < 0.3 && stats.highBidAttempts > 50) p.bidThreshold = Math.min(5.0, p.bidThreshold + 0.1);
   return p;
 };
 
 export const PARAM_BOUNDS = {
-  bidThreshold: [2, 10], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
+  bidThreshold: [2, 3.5], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
   safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
   opponentInferenceWeight: [0.0, 1.0], suitConflictWeight: [0.0, 2.0],
@@ -189,19 +181,17 @@ export const PARAM_BOUNDS = {
   nonDeclaredSuitWeight: [0.0, 2.0], queenHoardWeight: [0.0, 2.0], sameTwoHoardWeight: [0.0, 2.0],
   allyYieldBonus: [0.0, 1.0], allySameTwoLeadChance: [0.0, 1.0], allySameTwoWindow: [0, 10],
   teamCooperationWeight: [0.0, 5.0], feedBonusWeight: [0.0, 3.0], overkillPenalty: [0.0, 3.0],
-  mctsSimulations: [10, 1000], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
+  mctsSimulations: [10, 2000], mctsExploration: [0.5, 2.0], handInferenceWeight: [0.0, 1.0],
   rolloutPolicyWeight: [0.0, 1.0], bayesUpdateRate: [0.01, 0.5],
   ntMightyHoldThreshold: [0, 9], ntMightyShadowWeight: [0.0, 3.0], ntAceLeadPriority: [0.5, 2.0],
   ntVoidExploitWeight: [0.5, 3.0], ntDeputyFeedChance: [0.0, 1.0], ntEarlyLeadAggression: [0.1, 1.0],
-  ntLateGameSafety: [0.5, 2.0],
-  ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
+  ntLateGameSafety: [0.5, 2.0], ntAceProtectLeadWeight: [0.0, 3.0], ntSameTwoGuardWeight: [0.0, 3.0],
   allyVoidExploitWeight: [0.0, 2.0], deputyBluffWeight: [0.0, 1.0],
   ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
   napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
   napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
   bidTimeBudgetMs: [100, 1500], bidMaxSamples: [50, 2000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
-  planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0],
-  underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
+  planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0], underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
   winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
   winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
   winPointMap_8: [8, 20], winPointMap_9: [9, 20], winPointMap_10: [10, 20],
@@ -212,9 +202,9 @@ export const PARAM_BOUNDS = {
   tossUpSafetyMargin: [0, 1], tossUpSafetyMarginBottom: [0, 1],
   signalS1Bonus: [0, 3], signalS2Bonus: [0, 4], signalThreeRoleBonus: [0, 6], signalS3Bonus: [0, 4],
   s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
-  sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3],
-  s2ThreeRoleExtra: [1, 2],
-  expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0]
+  sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3], s2ThreeRoleExtra: [1, 2],
+  expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0],
+  goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0]
 };
 
 export const mutateStrategy = (base, rate) => {
@@ -222,9 +212,7 @@ export const mutateStrategy = (base, rate) => {
   for (const k of Object.keys(out)) {
     if (k === 'nnWeights') {
       out.nnWeights = { ...out.nnWeights };
-      for (const nk of Object.keys(out.nnWeights)) {
-        if (Math.random() < 0.1) out.nnWeights[nk] += (Math.random() * 2 - 1) * rate * 0.5;
-      }
+      for (const nk of Object.keys(out.nnWeights)) if (Math.random() < 0.1) out.nnWeights[nk] += (Math.random() * 2 - 1) * rate * 0.5;
       continue;
     }
     if (k === 'lossPointMap' || k === 'winPointMap') {
@@ -240,7 +228,6 @@ export const mutateStrategy = (base, rate) => {
       }
       continue;
     }
-    
     if (Math.random() < 0.1) {
       const delta = (Math.random() * 2 - 1) * rate;
       let val = out[k] * (1 + delta);
@@ -259,9 +246,7 @@ export const crossoverStrategy = (parentA, parentB) => {
   for (const k of Object.keys(parentA)) {
     if (k === 'nnWeights') {
       child.nnWeights = {};
-      for (const nk of Object.keys(parentA.nnWeights)) {
-        child.nnWeights[nk] = Math.random() < 0.5 ? parentA.nnWeights[nk] : parentB.nnWeights[nk];
-      }
+      for (const nk of Object.keys(parentA.nnWeights)) child.nnWeights[nk] = Math.random() < 0.5 ? parentA.nnWeights[nk] : parentB.nnWeights[nk];
       continue;
     }
     if (k === 'lossPointMap' || k === 'winPointMap') {
