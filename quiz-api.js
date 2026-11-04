@@ -27,17 +27,22 @@ function noCacheJson(data, init = {}) {
   return new Response(JSON.stringify(data), Object.assign({}, init, { headers }));
 }
 
-// ★ 静的クイズと動的候補を統合して解決する関数
+// ★ 修正: 静的クイズと動的候補を統合して解決する関数
 async function resolveQuestion(id, env) {
   if (!id) return null;
   if (id.startsWith('gen-')) {
     try {
       const row = await env.DB.prepare("SELECT * FROM quiz_candidates WHERE id=?").bind(id).first();
       if (!row) return null;
+      const scenario = JSON.parse(row.scenario_json);
+      // ★ 修正: contract.num がない古いデータはスキップ
+      if (!scenario.contract || scenario.contract.num === undefined) {
+        return null;
+      }
       return {
         id: row.id,
         category: row.category || 'play',
-        scenario: JSON.parse(row.scenario_json),
+        scenario: scenario,
         options: JSON.parse(row.options_json),
         aiAnswerIndex: row.ai_answer_index,
         explanation: row.explanation || '',
@@ -66,7 +71,7 @@ export async function handleQuizRequest(request, env, url) {
       const answeredIds = new Set((results || []).map(r => r.question_id));
       const perCategory = {};
 
-      // ★ 未回答IDをためていくバッファ
+      // ★ 修正: 未回答IDをためていくバッファ
       const unanswered = [];
 
       // 静的クイズの集計
@@ -75,7 +80,7 @@ export async function handleQuizRequest(request, env, url) {
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
           const id = makeQuestionId(c, i);
           if (answeredIds.has(id)) answered++;
-          else unanswered.push(id);        // ← 最初の1件ではなく全件push
+          else unanswered.push(id);
         }
         perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
       }
@@ -90,7 +95,7 @@ export async function handleQuizRequest(request, env, url) {
         candidateTotal = (candRows || []).length;
         for (const r of (candRows || [])) {
           if (answeredIds.has(r.id)) candidateAnswered++;
-          else unanswered.push(r.id);      // ← 候補も同じプールへ
+          else unanswered.push(r.id);
         }
       } catch (e) {
         console.warn('quiz_candidates query failed', e);
@@ -102,7 +107,7 @@ export async function handleQuizRequest(request, env, url) {
         perCategory['play'].answered += candidateAnswered;
       }
 
-      // ★ 未回答プールからランダムに1問選ぶ
+      // ★ 修正: 未回答プールからランダムに1問選ぶ
       const nextId = unanswered.length > 0
         ? unanswered[Math.floor(Math.random() * unanswered.length)]
         : null;
@@ -123,7 +128,7 @@ export async function handleQuizRequest(request, env, url) {
   const mQ = /^\/api\/quiz\/q\/([a-zA-Z0-9\-]+)$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
-
+    
     let question = null;
     try {
       question = await resolveQuestion(mQ[1], env);
@@ -131,7 +136,11 @@ export async function handleQuizRequest(request, env, url) {
       return noCacheJson({ error: '問題生成エラー: ' + e.message }, { status: 500 });
     }
 
-    if (!question) return noCacheJson({ error: 'not found' }, { status: 404 });
+    if (!question) {
+      // ★ 修正: 古い候補データなどで問題が見つからない場合、次の問題を探すか404を返す
+      // ここではシンプルに404を返し、フロントエンドの loadNext でリカバリーさせる
+      return noCacheJson({ error: 'not found' }, { status: 404 });
+    }
 
     const category = question.category || 'play';
     let myAnswer = null;
@@ -153,10 +162,10 @@ export async function handleQuizRequest(request, env, url) {
       } catch {}
     }
     return noCacheJson({
-      id: question.id,
+      id: question.id, 
       category: category,
       title: question.title || '',
-      scenario: question.scenario || {},
+      scenario: question.scenario || {}, 
       options: question.options || [],
       myAnswer, reveal,
       stats: reveal ? stats : null,
@@ -175,7 +184,7 @@ export async function handleQuizRequest(request, env, url) {
     try { body = await request.json(); } catch { return noCacheJson({ error: 'invalid' }, { status: 400 }); }
     const questionId = String(body.questionId || '');
     const choice = Number(body.choiceIndex);
-
+    
     const question = await resolveQuestion(questionId, env);
     if (!question) return noCacheJson({ error: 'question not found' }, { status: 404 });
     if (!Number.isInteger(choice) || choice < 0 || choice >= (question.options?.length || 0)) {
