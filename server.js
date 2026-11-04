@@ -333,7 +333,7 @@ function playCard(m, seat, id, room, env) {
 
   m.humanAutoPlayAt = null;
   m.botThinkAt = 0;
-  if (m.trick.length < 5) { m.active = (seat + 4) % 5; m.deadline = Date.now() + 30000; m.notice = "カードを出してください。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
+  if (m.trick.length < 5) { m.active = (seat + 1) % 5; m.deadline = Date.now() + 30000; m.notice = "カードを出してください。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); return; }
 
   const winningEntryObj = winningEntry(m.contract, m.trickNo, m.trick), w = winningEntryObj.seat;
   const taken = m.trick.filter(x => ["10", "J", "Q", "K", "A"].includes(x.card.rank)).map(x => x.card);
@@ -443,14 +443,11 @@ function timeoutAction(m, room) {
   }
 }
 
-// ★ 修正: CORS許可と推論APIの追加
 const server = http.createServer((req, res) => {
-  // ブラウザからのAPIアクセスを許可するCORSヘッダー
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // プリフライトリクエスト（OPTIONS）の処理
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -463,7 +460,6 @@ const server = http.createServer((req, res) => {
     return; 
   }
 
-  // ★追加: COM思考APIエンドポイント
   if (req.method === 'POST' && req.url === '/api/com-calculate') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -471,10 +467,7 @@ const server = http.createServer((req, res) => {
       try {
         const ctx = JSON.parse(body);
         if (!ctx.params) ctx.params = defaultStrategy();
-        
-        // サーバーのパワーでMCTSを実行
         const chosen = chooseCardWithMCTS(ctx);
-        
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ cardId: chosen ? chosen.id : null }));
       } catch (e) {
