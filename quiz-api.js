@@ -27,7 +27,7 @@ function noCacheJson(data, init = {}) {
   return new Response(JSON.stringify(data), Object.assign({}, init, { headers }));
 }
 
-// ★ 追加: 静的クイズと動的候補を統合して解決する関数
+// ★ 静的クイズと動的候補を統合して解決する関数
 async function resolveQuestion(id, env) {
   if (!id) return null;
   if (id.startsWith('gen-')) {
@@ -65,7 +65,9 @@ export async function handleQuizRequest(request, env, url) {
       const { results } = await env.DB.prepare("SELECT question_id FROM quiz_answers WHERE user_id=?").bind(userId).all();
       const answeredIds = new Set((results || []).map(r => r.question_id));
       const perCategory = {};
-      let nextId = null;
+
+      // ★ 未回答IDをためていくバッファ
+      const unanswered = [];
 
       // 静的クイズの集計
       for (const c of QUIZ_CATEGORIES) {
@@ -73,15 +75,14 @@ export async function handleQuizRequest(request, env, url) {
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
           const id = makeQuestionId(c, i);
           if (answeredIds.has(id)) answered++;
-          else if (!nextId) nextId = id;
+          else unanswered.push(id);        // ← 最初の1件ではなく全件push
         }
         perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
       }
 
-      // ★ 候補問題の集計
+      // 候補問題の集計
       let candidateTotal = 0;
       let candidateAnswered = 0;
-      let nextCandidateId = null;
       try {
         const { results: candRows } = await env.DB.prepare(
           "SELECT id FROM quiz_candidates ORDER BY created_at ASC"
@@ -89,15 +90,10 @@ export async function handleQuizRequest(request, env, url) {
         candidateTotal = (candRows || []).length;
         for (const r of (candRows || [])) {
           if (answeredIds.has(r.id)) candidateAnswered++;
-          else if (!nextCandidateId) nextCandidateId = r.id;
+          else unanswered.push(r.id);      // ← 候補も同じプールへ
         }
       } catch (e) {
         console.warn('quiz_candidates query failed', e);
-      }
-
-      // 候補問題を優先して出題
-      if (nextCandidateId) {
-        nextId = nextCandidateId;
       }
 
       // 合計に候補問題数を加算
@@ -105,6 +101,11 @@ export async function handleQuizRequest(request, env, url) {
         perCategory['play'].total += candidateTotal;
         perCategory['play'].answered += candidateAnswered;
       }
+
+      // ★ 未回答プールからランダムに1問選ぶ
+      const nextId = unanswered.length > 0
+        ? unanswered[Math.floor(Math.random() * unanswered.length)]
+        : null;
 
       const total = totalQuestionCount() + candidateTotal;
       return noCacheJson({
@@ -122,7 +123,7 @@ export async function handleQuizRequest(request, env, url) {
   const mQ = /^\/api\/quiz\/q\/([a-zA-Z0-9\-]+)$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
-    
+
     let question = null;
     try {
       question = await resolveQuestion(mQ[1], env);
@@ -152,10 +153,10 @@ export async function handleQuizRequest(request, env, url) {
       } catch {}
     }
     return noCacheJson({
-      id: question.id, 
+      id: question.id,
       category: category,
       title: question.title || '',
-      scenario: question.scenario || {}, 
+      scenario: question.scenario || {},
       options: question.options || [],
       myAnswer, reveal,
       stats: reveal ? stats : null,
@@ -174,7 +175,7 @@ export async function handleQuizRequest(request, env, url) {
     try { body = await request.json(); } catch { return noCacheJson({ error: 'invalid' }, { status: 400 }); }
     const questionId = String(body.questionId || '');
     const choice = Number(body.choiceIndex);
-    
+
     const question = await resolveQuestion(questionId, env);
     if (!question) return noCacheJson({ error: 'question not found' }, { status: 404 });
     if (!Number.isInteger(choice) || choice < 0 || choice >= (question.options?.length || 0)) {
