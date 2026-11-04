@@ -61,6 +61,15 @@ export const defaultStrategy = () => ({
   s1RequiredMinorCards: 2, s3RequiredAces: 2,
   sameColorBidderLimit: 2, ntBidderLimit: 2, s2ThreeRoleExtra: 1,
   goldenFormationBonus: 3.0, overkillPenalty: 3.0, deputyOvertrumpPenalty: 4.0, lastSeatDuckBonus: 2.0,
+  // determinizeState ベイズ推定のハイパーパラメータ
+  det_w_bid: 1.0, det_w_void: 3.0, det_w_follow: 0.5, det_w_feed: 1.0,
+  // オラクルBのパラメータ
+  oracleSamples: 200, oracleMctsTimeMs: 200,
+  // 統計的重み付けパラメータ
+  weightPlayQuality: 5.0, weightFeedSuccess: 3.0, weightSignalSuccess: 2.0,
+  weightGoldenFormation: 1.0, weightPlanAccuracy: 3.0, weightBiddingQuality: 2.0,
+  weightNapAttempts: 4.0, weightMatchQuality: 2.0, weightRoleWinRate: 2.0,
+  weightOverkill: 2.0, weightDeputyOvertrump: 3.0, weightOpportunityLoss: 3.0, weightWastedAce: 1.0,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -204,7 +213,14 @@ export const PARAM_BOUNDS = {
   s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
   sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3], s2ThreeRoleExtra: [1, 2],
   expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0],
-  goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0]
+  goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0],
+  det_w_bid: [0.0, 3.0], det_w_void: [1.0, 6.0], det_w_follow: [0.0, 2.0], det_w_feed: [0.0, 3.0],
+  oracleSamples: [50, 500], oracleMctsTimeMs: [50, 500],
+  weightPlayQuality: [0.0, 10.0], weightFeedSuccess: [0.0, 5.0], weightSignalSuccess: [0.0, 5.0],
+  weightGoldenFormation: [0.0, 5.0], weightPlanAccuracy: [0.0, 5.0], weightBiddingQuality: [0.0, 5.0],
+  weightNapAttempts: [0.0, 8.0], weightMatchQuality: [0.0, 5.0], weightRoleWinRate: [0.0, 5.0],
+  weightOverkill: [0.0, 5.0], weightDeputyOvertrump: [0.0, 5.0], weightOpportunityLoss: [0.0, 5.0],
+  weightWastedAce: [0.0, 3.0]
 };
 
 export const mutateStrategy = (base, rate) => {
