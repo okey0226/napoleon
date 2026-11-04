@@ -1,4 +1,4 @@
-// ai-tactics.js (完全版: MECE戦略・座席順優位性・競り精度向上)
+// ai-tactics.js (前半: 基本ロジック・競り判断のMECE分類・文脈補正)
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 // ==========================================
@@ -371,7 +371,7 @@ export function evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKit
 }
 
 // ==========================================
-// トスアップ戦略
+// 競り判断：MECEな手札分類と文脈補正
 // ==========================================
 
 export function getRoleCards(hand, trump) {
@@ -385,80 +385,112 @@ export function getRoleCards(hand, trump) {
 export function isTwoRole(hand, trump) { return getRoleCards(hand, trump).count >= 2; }
 export function isThreeRole(hand, trump) { return getRoleCards(hand, trump).count >= 3; }
 
-export function canSendS1(hand, trump, params) {
-  if (trump === 'NT') return false;
-  const sameColorSuit = sameColorSuitOf(trump);
-  const hasSameColorJ = hand.some(c => c.rank === 'J' && c.suit === sameColorSuit);
-  if (!hasSameColorJ) return false;
-  const minorCards = hand.filter(c => c.rank === 'A' || c.rank === '2').length;
-  return minorCards >= (params?.s1RequiredMinorCards ?? 2);
+export function classifyHandArchetype(hand, trump, params) {
+  const trumps = hand.filter(c => c.suit === trump);
+  const sideAces = hand.filter(c => c.suit !== trump && c.rank === 'A' && c.id !== '♠A');
+  const roles = getRoleCards(hand, trump);
+  const hasHighTrump = trumps.some(c => ['A', 'K', 'J'].includes(c.rank));
+  
+  // ラン（連続した勝ちスート）の簡易計算
+  const runSuits = [];
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    const myCards = hand.filter(c => c.suit === suit).sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank));
+    if (myCards.length < 3) continue;
+    let consecutive = 0;
+    for (let i = 0; i < myCards.length; i++) {
+      if (myCards[i].rank === RANKS[RANKS.length - 1 - i]) consecutive++;
+      else break;
+    }
+    if (consecutive >= 3) runSuits.push(suit);
+  }
+  
+  if (roles.count >= 3 || (roles.mighty && roles.trumpJ && sideAces.length >= 2)) return 'ROLE_OVERWHELM';
+  if (trumps.length >= 6 || (trumps.length >= 5 && hasHighTrump)) return 'TRUMP_DOMINANT';
+  if (sideAces.length >= 3 || (sideAces.length >= 2 && trumps.length >= 4)) return 'SIDE_ACE_HEAVY';
+  if (runSuits.length > 0) return 'RUN_SUIT';
+  if (trumps.length >= 3 || roles.count >= 1) return 'BALANCED';
+  return 'WEAK';
 }
 
-export function canSendS3(hand, params) {
-  const nonMightyAces = hand.filter(c => c.rank === 'A' && c.id !== '♠A').length;
-  return nonMightyAces >= (params?.s3RequiredAces ?? 2);
+export function evaluateDeputyValue(hand, trump, mySeat, bidSignals, bidHistory) {
+  const candidates = [];
+  const isIn = id => hand.some(c => c.id === id);
+  
+  // 候補カードの抽出（MECE）
+  if (!isIn('♠A')) candidates.push({ id: '♠A', suit: '♠', rank: 'A', type: 'MIGHTY' });
+  if (trump !== 'NT' && !isIn(trump + 'J')) candidates.push({ id: trump + 'J', suit: trump, rank: 'J', type: 'TRUMP_J' });
+  if (trump !== 'NT' && !isIn(sameColorSuitOf(trump) + 'J')) candidates.push({ id: sameColorSuitOf(trump) + 'J', suit: sameColorSuitOf(trump), rank: 'J', type: 'SAME_COLOR_J' });
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    if (!isIn(suit + 'A') && !bidSignals.some(s => s.suit === suit && s.type === 'S1')) candidates.push({ id: suit + 'A', suit, rank: 'A', type: 'SIDE_ACE' });
+  }
+  for (const suit of SUITS) {
+    if (suit === trump) continue;
+    if (!isIn(suit + '2')) candidates.push({ id: suit + '2', suit, rank: '2', type: 'TWO' });
+  }
+  
+  let best = { card: null, ev: -Infinity };
+  for (const cand of candidates) {
+    let ev = 0;
+    for (let s = 0; s < 5; s++) {
+      if (s === mySeat) continue;
+      const pSeat = 1 / 4; // 均等分布と仮定
+      const strength = 1.0;
+      const posSynergy = (s === (mySeat + 4) % 5) ? 1.5 : 0; // 黄金配置
+      const feedComp = cand.suit === trump ? 1.2 : (hand.filter(c => c.suit === cand.suit).length >= 3 ? 1.0 : 0.5);
+      ev += pSeat * (strength + posSynergy + feedComp);
+    }
+    if (ev > best.ev) best = { card: cand, ev };
+  }
+  return best;
 }
 
-export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
-  if (!currentHigh || currentHigh.num !== 17) return { canTransfer: false, targetBid: 0 };
-  if (!currentHigh.suit || currentHigh.suit === 'NT') return { canTransfer: false, targetBid: 0 };
-  const sameColorSuit = sameColorSuitOf(currentHigh.suit);
-  const hasSameColorRole = hand.some(c => c.suit === sameColorSuit && (c.rank === 'J' || c.rank === 'A'));
-  if (!hasSameColorRole) return { canTransfer: false, targetBid: 0 };
-  return { canTransfer: true, targetBid: 20 };
-}
-
-export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
-  if (!trumpSuit || trumpSuit === 'NT') return 0;
-  const sameColor = sameColorSuitOf(trumpSuit);
-  const colorSuits = new Set([trumpSuit, sameColor]);
-  const bidders = new Set();
-  (bidHistory || []).forEach(b => { if (colorSuits.has(b.suit)) bidders.add(b.seat); });
-  return bidders.size;
-}
-
-export function detectPartnerSignal(bidSignals, bidHistory, currentHigh, mySeat) {
-  if (!currentHigh || currentHigh.num < 13 || currentHigh.player === mySeat) return null;
+export function analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistory, round) {
+  let adjustment = 0;
+  let forcePass = false;
+  
+  const myScore = matchScores ? matchScores[mySeat] : 0;
+  const rank = matchScores ? matchScores.filter(s => s > myScore).length + 1 : 3;
+  if (rank === 1) adjustment -= 1;
+  if (rank >= 4 && round < 10) adjustment += 1;
+  
   const received = bidSignals?.received || [];
-  if (!received.length) return null;
-  return received[received.length - 1];
+  if (received.some(s => s.type === 'S2') || received.some(s => s.type === 'S4')) forcePass = true;
+  
+  return { adjustment, forcePass };
 }
 
-export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, bidHistory) {
+export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, bidHistory, round = 1) {
+  const archetype = classifyHandArchetype(hand, trump, params);
+  if (archetype === 'WEAK') return { properBid: 0, archetype, plan: null };
+  
   const plan = evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards, voids);
-  const p20 = plan.pMake?.[20] ?? 0;
-  const roleCards = getRoleCards(hand, trump);
-  const sufficientSamples = (plan.pimcDetail?.samples ?? 0) >= 300;
-  const isOverwhelming = (sufficientSamples && p20 >= 0.55) || (plan.sureWins >= 8 && roleCards.count >= 2) || (plan.sureWins >= 9);
-  let baseBid = plan.bestBidByExpectation || 13;
-  if (isOverwhelming) baseBid = 20;
-  let signalBonus = 0;
-  const received = bidSignals?.received || [];
-  const hasS1 = received.some(s => s.type === 'S1');
-  const hasS2 = received.some(s => s.type === 'S2');
-  const hasThreeRole = received.some(s => s.type === '3ROLE');
-  const hasS3 = received.some(s => s.type === 'S3');
-  if (hasThreeRole) signalBonus = params.signalThreeRoleBonus ?? 4;
-  else if (hasS2) signalBonus = params.signalS2Bonus ?? 2;
-  else if (hasS3) signalBonus = params.signalS3Bonus ?? 2;
-  else if (hasS1) signalBonus = params.signalS1Bonus ?? 1;
-  let safetyMargin = params.tossUpSafetyMargin ?? 0.4;
-  if (matchScores && Array.isArray(matchScores)) {
-    const sorted = [...matchScores].sort((a, b) => b - a);
-    const myScore = matchScores[mySeat] || 0;
-    const rank = sorted.indexOf(myScore) + 1;
-    if (rank >= 4) safetyMargin = params.tossUpSafetyMarginBottom ?? 0.2;
-  }
-  let properBid;
-  if (isOverwhelming) properBid = 20;
-  else {
-    const expected = baseBid + signalBonus * 0.5 - safetyMargin * 0.2;
-    properBid = Math.max(13, Math.min(20, Math.round(expected)));
-  }
-  const aceCount = hand.filter(c => c.rank === 'A').length;
-  if (properBid === 13 && (aceCount >= 2 || roleCards.count >= 2)) properBid = 14;
-  return { properBid, baseBid, isOverwhelming, pMake20: p20, roleCardCount: roleCards.count, baseAdjustedE: plan.bestAdjustedE || 0, signalBonus, safetyMargin, expected: properBid, plan };
+  const deputy = evaluateDeputyValue(hand, trump, mySeat, bidSignals?.received || [], bidHistory);
+  const context = analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistory, round);
+  
+  if (context.forcePass) return { properBid: 0, archetype, context, plan };
+  
+  const baseRanges = {
+    ROLE_OVERWHELM: [17, 20],
+    TRUMP_DOMINANT: [15, 19],
+    SIDE_ACE_HEAVY: [14, 17],
+    RUN_SUIT: [14, 16],
+    BALANCED: [13, 15]
+  };
+  const [min, max] = baseRanges[archetype] || [13, 15];
+  const expectedRatio = Math.min(1, Math.max(0, (plan.expectedWins - 13) / 7));
+  let baseBid = min + Math.round((max - min) * expectedRatio);
+  
+  baseBid += Math.min(1, Math.floor(deputy.ev / 3));
+  baseBid += context.adjustment;
+  
+  const properBid = Math.max(13, Math.min(20, baseBid));
+  
+  return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
 }
+// ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS)
+// ※ 前半の続きとして記述
 
 export function bidPacing(currentBid, properBid, lastBidAt, pacingMs) {
   const now = Date.now();
@@ -1330,3 +1362,4 @@ export function chooseCardWithMCTS(ctx) {
   if (bestN >= 20) return bestCard;
   return heuristicBest || bestCard;
 }
+
