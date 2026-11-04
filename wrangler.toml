@@ -14,4 +14,4 @@ run_worker_first = ["/api/*"]
 
 # ▼ 追加：毎時0分に自己対戦を実行するCronトリガー
 [triggers]
-crons = ["0 * * * *"]
+crons = []
