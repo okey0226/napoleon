@@ -516,7 +516,6 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   const properBid = Math.max(13, Math.min(20, baseBid));
   return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
 }
-
 // ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS・オラクルB)
 // ※ 前半の続きとして記述
 
