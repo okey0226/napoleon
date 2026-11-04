@@ -390,8 +390,6 @@ export function classifyHandArchetype(hand, trump, params) {
   const sideAces = hand.filter(c => c.suit !== trump && c.rank === 'A' && c.id !== '♠A');
   const roles = getRoleCards(hand, trump);
   const hasHighTrump = trumps.some(c => ['A', 'K', 'J'].includes(c.rank));
-  
-  // ラン（連続した勝ちスート）の簡易計算
   const runSuits = [];
   for (const suit of SUITS) {
     if (suit === trump) continue;
@@ -404,7 +402,6 @@ export function classifyHandArchetype(hand, trump, params) {
     }
     if (consecutive >= 3) runSuits.push(suit);
   }
-  
   if (roles.count >= 3 || (roles.mighty && roles.trumpJ && sideAces.length >= 2)) return 'ROLE_OVERWHELM';
   if (trumps.length >= 6 || (trumps.length >= 5 && hasHighTrump)) return 'TRUMP_DOMINANT';
   if (sideAces.length >= 3 || (sideAces.length >= 2 && trumps.length >= 4)) return 'SIDE_ACE_HEAVY';
@@ -416,28 +413,25 @@ export function classifyHandArchetype(hand, trump, params) {
 export function evaluateDeputyValue(hand, trump, mySeat, bidSignals, bidHistory) {
   const candidates = [];
   const isIn = id => hand.some(c => c.id === id);
-  
-  // 候補カードの抽出（MECE）
   if (!isIn('♠A')) candidates.push({ id: '♠A', suit: '♠', rank: 'A', type: 'MIGHTY' });
   if (trump !== 'NT' && !isIn(trump + 'J')) candidates.push({ id: trump + 'J', suit: trump, rank: 'J', type: 'TRUMP_J' });
   if (trump !== 'NT' && !isIn(sameColorSuitOf(trump) + 'J')) candidates.push({ id: sameColorSuitOf(trump) + 'J', suit: sameColorSuitOf(trump), rank: 'J', type: 'SAME_COLOR_J' });
   for (const suit of SUITS) {
     if (suit === trump) continue;
-    if (!isIn(suit + 'A') && !bidSignals.some(s => s.suit === suit && s.type === 'S1')) candidates.push({ id: suit + 'A', suit, rank: 'A', type: 'SIDE_ACE' });
+    if (!isIn(suit + 'A') && !(bidSignals || []).some(s => s.suit === suit && s.type === 'S1')) candidates.push({ id: suit + 'A', suit, rank: 'A', type: 'SIDE_ACE' });
   }
   for (const suit of SUITS) {
     if (suit === trump) continue;
     if (!isIn(suit + '2')) candidates.push({ id: suit + '2', suit, rank: '2', type: 'TWO' });
   }
-  
   let best = { card: null, ev: -Infinity };
   for (const cand of candidates) {
     let ev = 0;
     for (let s = 0; s < 5; s++) {
       if (s === mySeat) continue;
-      const pSeat = 1 / 4; // 均等分布と仮定
+      const pSeat = 1 / 4;
       const strength = 1.0;
-      const posSynergy = (s === (mySeat + 4) % 5) ? 1.5 : 0; // 黄金配置
+      const posSynergy = (s === (mySeat + 4) % 5) ? 1.5 : 0;
       const feedComp = cand.suit === trump ? 1.2 : (hand.filter(c => c.suit === cand.suit).length >= 3 ? 1.0 : 0.5);
       ev += pSeat * (strength + posSynergy + feedComp);
     }
@@ -449,28 +443,22 @@ export function evaluateDeputyValue(hand, trump, mySeat, bidSignals, bidHistory)
 export function analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistory, round) {
   let adjustment = 0;
   let forcePass = false;
-  
   const myScore = matchScores ? matchScores[mySeat] : 0;
   const rank = matchScores ? matchScores.filter(s => s > myScore).length + 1 : 3;
   if (rank === 1) adjustment -= 1;
   if (rank >= 4 && round < 10) adjustment += 1;
-  
   const received = bidSignals?.received || [];
   if (received.some(s => s.type === 'S2') || received.some(s => s.type === 'S4')) forcePass = true;
-  
   return { adjustment, forcePass };
 }
 
 export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, bidHistory, round = 1) {
   const archetype = classifyHandArchetype(hand, trump, params);
   if (archetype === 'WEAK') return { properBid: 0, archetype, plan: null };
-  
   const plan = evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards, voids);
   const deputy = evaluateDeputyValue(hand, trump, mySeat, bidSignals?.received || [], bidHistory);
   const context = analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistory, round);
-  
   if (context.forcePass) return { properBid: 0, archetype, context, plan };
-  
   const baseRanges = {
     ROLE_OVERWHELM: [17, 20],
     TRUMP_DOMINANT: [15, 19],
@@ -481,15 +469,12 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   const [min, max] = baseRanges[archetype] || [13, 15];
   const expectedRatio = Math.min(1, Math.max(0, (plan.expectedWins - 13) / 7));
   let baseBid = min + Math.round((max - min) * expectedRatio);
-  
   baseBid += Math.min(1, Math.floor(deputy.ev / 3));
   baseBid += context.adjustment;
-  
   const properBid = Math.max(13, Math.min(20, baseBid));
-  
   return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
 }
-// ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS)
+// ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS・オラクルB)
 // ※ 前半の続きとして記述
 
 export function bidPacing(currentBid, properBid, lastBidAt, pacingMs) {
@@ -1177,10 +1162,10 @@ export function chooseCardToPlay(ctx) {
 }
 
 // ==========================================
-// MCTS
+// MCTS（通常）
 // ==========================================
 
-function determinizeState(ctx) {
+function determinizeState(ctx, rng = Math.random) {
   const unseen = [];
   for (const s of SUITS) for (const r of RANKS) unseen.push(s + r);
   const seen = new Set();
@@ -1189,43 +1174,100 @@ function determinizeState(ctx) {
   (ctx.discardedKitty || []).forEach(c => seen.add(c.id));
   (ctx.trick || []).forEach(t => seen.add(t.card.id));
   const unseens = unseen.filter(id => !seen.has(id)).map(id => ({ suit: id[0], rank: id.slice(1), id }));
+
   const otherSeats = [0, 1, 2, 3, 4].filter(s => s !== ctx.seat);
-  const seatLikelihood = [{}, {}, {}, {}, {}];
-  if (ctx.bidHistory) { ctx.bidHistory.forEach(b => { if (b.seat !== ctx.seat && b.suit !== 'NT') seatLikelihood[b.seat][b.suit] = (seatLikelihood[b.seat][b.suit] || 0) + (b.num - 12) * 0.8; }); }
-  for (const s of otherSeats) {
-    for (const suit of SUITS) {
-      const playedInSuit = (ctx.playedCards || []).filter(c => c.seat === s && c.suit === suit).length;
-      seatLikelihood[s][suit] = (seatLikelihood[s][suit] || 0) - playedInSuit * 0.4;
-      if (ctx.voids?.[s]?.[suit]) seatLikelihood[s][suit] = -Infinity;
+
+  const score = [{}, {}, {}, {}, {}];
+  const w_bid = ctx.params?.det_w_bid ?? 1.0;
+  const w_void = ctx.params?.det_w_void ?? 3.0;
+  const w_follow = ctx.params?.det_w_follow ?? 0.5;
+  const w_feed = ctx.params?.det_w_feed ?? 1.0;
+
+  if (ctx.bidHistory) {
+    ctx.bidHistory.forEach(b => {
+      if (b.seat !== ctx.seat && b.suit !== 'NT') {
+        score[b.seat][b.suit] = (score[b.seat][b.suit] || 0) + (b.num - 12) * w_bid;
+      }
+    });
+  }
+
+  for (const pc of (ctx.playedCards || [])) {
+    if (pc.seat === ctx.seat) continue;
+    const s = pc.seat;
+    const ledSuit = (ctx.trick && ctx.trick.length > 0) ? ctx.trick[0].card.suit : null;
+    if (ledSuit && pc.suit !== ledSuit) {
+      score[s][ledSuit] = (score[s][ledSuit] || 0) - w_void;
+    }
+    score[s][pc.suit] = (score[s][pc.suit] || 0) + w_follow;
+    if (['10', 'J', 'Q', 'K', 'A'].includes(pc.rank)) {
+      score[s][pc.suit] = (score[s][pc.suit] || 0) + w_feed;
     }
   }
+
+  for (const s of otherSeats) {
+    for (const suit of SUITS) {
+      if (ctx.voids?.[s]?.[suit]) score[s][suit] = -Infinity;
+    }
+  }
+
   const handCounts = otherSeats.map(s => {
     const playedBySeat = (ctx.playedCards || []).filter(c => c.seat === s).length;
     const inTrick = ctx.trick.some(t => t.seat === s) ? 1 : 0;
     return Math.max(0, 10 - ctx.trickNo - inTrick - playedBySeat);
   });
-  const others = otherSeats.map(() => []);
-  const pool = unseens.slice();
-  for (let round = 0; round < 10 && pool.length > 0; round++) {
-    for (let i = 0; i < otherSeats.length && pool.length > 0; i++) {
-      if (others[i].length >= handCounts[i]) continue;
+
+  const MAX_ATTEMPTS = 100;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const pool = unseens.slice();
+    const others = otherSeats.map(() => []);
+    let success = true;
+
+    for (let i = 0; i < otherSeats.length; i++) {
       const seat = otherSeats[i];
-      let bestIdx = -1, bestScore = -Infinity;
-      for (let k = 0; k < pool.length; k++) {
-        const c = pool[k];
-        const like = seatLikelihood[seat][c.suit] || 0;
-        if (like === -Infinity) continue;
-        const score = like + Math.random() * 0.6;
-        if (score > bestScore) { bestScore = score; bestIdx = k; }
+      const need = handCounts[i];
+      for (let k = 0; k < need; k++) {
+        if (pool.length === 0) { success = false; break; }
+        const weights = pool.map(c => {
+          const sc = score[seat][c.suit];
+          if (sc === -Infinity) return 0;
+          return Math.exp(sc);
+        });
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        if (totalWeight === 0) {
+          const idx = Math.floor(rng() * pool.length);
+          others[i].push(pool.splice(idx, 1)[0]);
+          continue;
+        }
+        let r = rng() * totalWeight;
+        let idx = -1;
+        for (let j = 0; j < pool.length; j++) {
+          r -= weights[j];
+          if (r <= 0) { idx = j; break; }
+        }
+        if (idx < 0) idx = pool.length - 1;
+        others[i].push(pool.splice(idx, 1)[0]);
       }
-      if (bestIdx < 0) bestIdx = Math.floor(Math.random() * pool.length);
-      others[i].push(pool.splice(bestIdx, 1)[0]);
+      if (!success) break;
+    }
+
+    if (success && pool.length === 0) {
+      const hands = [[], [], [], [], []];
+      hands[ctx.seat] = ctx.hand.slice();
+      otherSeats.forEach((seat, i) => { hands[seat] = others[i]; });
+      return hands;
     }
   }
-  while (pool.length > 0) { let assigned = false; for (let i = 0; i < otherSeats.length && pool.length > 0; i++) { if (others[i].length < handCounts[i]) { others[i].push(pool.shift()); assigned = true; } } if (!assigned) pool.shift(); }
+
   const hands = [[], [], [], [], []];
   hands[ctx.seat] = ctx.hand.slice();
-  otherSeats.forEach((seat, i) => { hands[seat] = others[i]; });
+  const pool = unseens.slice();
+  for (let i = 0; i < otherSeats.length; i++) {
+    for (let k = 0; k < handCounts[i]; k++) {
+      if (pool.length === 0) break;
+      const idx = Math.floor(rng() * pool.length);
+      hands[otherSeats[i]].push(pool.splice(idx, 1)[0]);
+    }
+  }
   return hands;
 }
 
@@ -1361,5 +1403,222 @@ export function chooseCardWithMCTS(ctx) {
   if (heuristicBest && heuristicBest.id === bestCard.id) return bestCard;
   if (bestN >= 20) return bestCard;
   return heuristicBest || bestCard;
+}
+
+// ==========================================
+// オラクルB（多数決ロールアウト + ベイズ推定サンプリング）
+// ==========================================
+
+function hashSeed(...args) {
+  let h = 2166136261 >>> 0;
+  const str = args.join(':');
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let s = seed | 0;
+  return function () {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function simulateWithPolicyCompleteInfo(state, mySeat, contract, params, rng) {
+  let active = state.active;
+  let trick = state.trick.slice();
+  let trickNo = state.trickNo;
+  let hands = state.hands.map(h => h.slice());
+  let points = state.points.slice();
+  let voids = JSON.parse(JSON.stringify(state.voids || [{},{},{},{},{}]));
+
+  const getLegal = (seat) => {
+    const h = hands[seat];
+    if (!trick.length) return h;
+    const ledSuit = trick[0].card.suit;
+    const follow = h.filter(c => c.suit === ledSuit);
+    return follow.length ? follow : h;
+  };
+
+  let loopSafety = 0;
+  while (trickNo < 10) {
+    loopSafety++;
+    if (loopSafety > 100) break;
+    if (trick.length < 5) {
+      const legal = getLegal(active);
+      if (!legal.length) break;
+
+      const currentWinner = trick.length ? winningEntry(contract, trickNo, trick) : null;
+      const isTeamNap = active === contract.nap || (!contract.solo && active === contract.deputy);
+      const winnerIsTeamNap = currentWinner ? (currentWinner.seat === contract.nap || (!contract.solo && currentWinner.seat === contract.deputy)) : false;
+
+      let chosen = null;
+      if (currentWinner && isTeamNap === winnerIsTeamNap) {
+        const feedCards = legal.filter(c => ['10', 'J', 'Q'].includes(c.rank) && !isRoleJ(c, contract));
+        if (feedCards.length) chosen = feedCards[0];
+      }
+      if (!chosen) {
+        const winningCards = legal.filter(c => winningEntry(contract, trickNo, [...trick, { seat: active, card: c }])?.seat === active);
+        if (winningCards.length) {
+          chosen = winningCards.reduce((best, c) =>
+            cardPower(contract, trickNo, c, trick) < cardPower(contract, trickNo, best, trick) ? c : best
+          );
+        } else {
+          const nonFaces = legal.filter(c => !['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
+          chosen = (nonFaces.length ? nonFaces : legal).reduce((best, c) =>
+            cardPower(contract, trickNo, c, trick) < cardPower(contract, trickNo, best, trick) ? c : best
+          );
+        }
+      }
+
+      if (!chosen) chosen = legal[Math.floor(rng() * legal.length)];
+      hands[active] = hands[active].filter(c => c.id !== chosen.id);
+      if (trick.length > 0) {
+        const ledSuit = trick[0].card.suit;
+        if (chosen.suit !== ledSuit) {
+          if (!voids[active]) voids[active] = {};
+          voids[active][ledSuit] = true;
+        }
+      }
+      trick.push({ seat: active, card: chosen });
+      if (trick.length === 5) {
+        const wEntry = winningEntry(contract, trickNo, trick);
+        const w = wEntry.seat;
+        const taken = trick.filter(e => FACE.includes(e.card.rank)).length;
+        points[w] += taken;
+        active = w;
+        trick = [];
+        trickNo++;
+        const napPoints = points[contract.nap] + (contract.solo ? 0 : points[contract.deputy]);
+        const allyPoints = points.reduce((sum, p, i) => sum + (i !== contract.nap && (contract.solo || i !== contract.deputy) ? p : 0), 0);
+        const remaining = 10 - trickNo;
+        if (napPoints >= contract.num && (contract.num === 20 || allyPoints >= 1)) break;
+        if (allyPoints > 20 - contract.num) break;
+        if (napPoints + remaining * 5 < contract.num) break;
+      } else {
+        active = (active + 4) % 5;
+      }
+    }
+  }
+
+  const nap = contract.nap, deputy = contract.deputy, isSolo = contract.solo, num = contract.num;
+  const napPoints = points[nap] + (isSolo ? 0 : points[deputy]);
+  const allyPoints = points.reduce((sum, p, i) => sum + (i !== nap && (isSolo || i !== deputy) ? p : 0), 0);
+  const made = napPoints >= num && (num === 20 || napPoints < 20);
+  const myTeamIsNap = mySeat === nap || (!isSolo && mySeat === deputy);
+
+  let score = 0;
+  if (myTeamIsNap) {
+    if (made) {
+      score = 1.0;
+      const overkill = napPoints - num;
+      if (overkill > 0 && num < 20) {
+        const allyGap = 20 - allyPoints;
+        if (allyGap <= 2) score -= overkill * 0.01;
+        else score -= overkill * 0.05;
+      }
+      if (num < 20 && napPoints === num) score += 0.1;
+    } else {
+      score = 0.0;
+      const gap = num - napPoints;
+      score += Math.max(0, 0.5 - gap * 0.1);
+      score += Math.min(0.2, napPoints * 0.02);
+    }
+  } else {
+    if (!made) {
+      score = 1.0;
+      const gap = num - napPoints;
+      if (gap >= 3) score += 0.1;
+      score += Math.min(0.2, points[mySeat] * 0.05);
+    } else {
+      score = 0.0;
+      const overkill = napPoints - num;
+      if (overkill === 0 && allyPoints >= 2) score += 0.3;
+    }
+  }
+  return Math.max(0, Math.min(1.5, score));
+}
+
+function oracleMCTS(ctx, hands, timeMs, rng, params) {
+  const legal = ctx.legal;
+  const N = {}, W = {};
+  legal.forEach(c => { N[c.id] = 0; W[c.id] = 0; });
+  const cParam = 1.414;
+  const startTime = Date.now();
+  const maxSims = 2000;
+  let iterations = 0;
+
+  while (Date.now() - startTime < timeMs && iterations < maxSims) {
+    let bestCard = null;
+    let bestUcb = -Infinity;
+    for (const card of legal) {
+      if (N[card.id] === 0) { bestCard = card; break; }
+      const ucb = W[card.id] / N[card.id] + cParam * Math.sqrt(Math.log(iterations + 1) / N[card.id]);
+      if (ucb > bestUcb) { bestUcb = ucb; bestCard = card; }
+    }
+    if (!bestCard) bestCard = legal[0];
+
+    const simHands = hands.map(h => h.slice());
+    simHands[ctx.seat] = simHands[ctx.seat].filter(c => c.id !== bestCard.id);
+    const simTrick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
+    simTrick.push({ seat: ctx.seat, card: bestCard });
+    const simActive = (ctx.seat + 4) % 5;
+
+    const win = simulateWithPolicyCompleteInfo(
+      { hands: simHands, trick: simTrick, trickNo: ctx.trickNo, active: simActive, points: ctx.points ? ctx.points.slice() : [0,0,0,0,0], voids: ctx.voids, playedCards: ctx.playedCards },
+      ctx.seat, ctx.contract, params, rng
+    );
+    N[bestCard.id]++;
+    W[bestCard.id] += win;
+    iterations++;
+  }
+
+  const winRates = {};
+  for (const c of legal) winRates[c.id] = N[c.id] > 0 ? W[c.id] / N[c.id] : 0;
+  return winRates;
+}
+
+export function oracleB(ctx, matchId, round, trickNo, decisionIndex, params = {}) {
+  const ORACLE_SAMPLES = params.oracleSamples ?? 200;
+  const ORACLE_MCTS_TIME_MS = params.oracleMctsTimeMs ?? 200;
+  const legal = ctx.legal;
+  if (!legal || legal.length <= 1) {
+    return { bestCard: legal[0], evMap: legal.reduce((m, c) => ({ ...m, [c.id]: 1.0 }), {}), votes: {} };
+  }
+
+  const EV = {};
+  const votes = {};
+  legal.forEach(c => { EV[c.id] = 0; votes[c.id] = 0; });
+
+  for (let i = 0; i < ORACLE_SAMPLES; i++) {
+    const seed = hashSeed(matchId || 'm', round || 0, trickNo || 0, decisionIndex || 0, i);
+    const rng = mulberry32(seed);
+    const hands = determinizeState(ctx, rng);
+    const winRates = oracleMCTS(ctx, hands, ORACLE_MCTS_TIME_MS, rng, params);
+    let bestId = legal[0].id;
+    let bestRate = -1;
+    for (const c of legal) {
+      EV[c.id] += winRates[c.id];
+      if (winRates[c.id] > bestRate) { bestRate = winRates[c.id]; bestId = c.id; }
+    }
+    votes[bestId]++;
+  }
+
+  for (const c of legal) EV[c.id] /= ORACLE_SAMPLES;
+
+  let bestCard = legal[0];
+  let bestEv = -1;
+  for (const c of legal) {
+    if (EV[c.id] > bestEv) { bestEv = EV[c.id]; bestCard = c; }
+  }
+  const tied = legal.filter(c => Math.abs(EV[c.id] - bestEv) < 1e-9);
+  if (tied.length > 1) {
+    bestCard = tied.reduce((best, c) => votes[c.id] > votes[best.id] ? c : best, tied[0]);
+  }
+
+  return { bestCard, evMap: EV, votes };
 }
 
