@@ -1,4 +1,4 @@
-// ai-tactics.js (前半: 基本ロジック・競り判断のMECE分類・文脈補正)
+// ai-tactics.js (完全版)
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 // ==========================================
@@ -408,7 +408,7 @@ export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
   return { canTransfer: true, targetBid: 20 };
 }
 
-// ★ 修正: この関数がエクスポートされていなかった
+// ★ ここが漏れていた関数です
 export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
   if (!trumpSuit || trumpSuit === 'NT') return 0;
   const sameColor = sameColorSuitOf(trumpSuit);
@@ -516,8 +516,10 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
   const properBid = Math.max(13, Math.min(20, baseBid));
   return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
 }
-// ai-tactics.js (後半: プレイ戦略・シグナル送受信・MCTS・オラクルB)
-// ※ 前半の続きとして記述
+
+// ==========================================
+// 選択関数
+// ==========================================
 
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null, playedCards = [], voids = [{},{},{},{},{}]) {
   if (!Array.isArray(hand) || !hand.length) return null;
@@ -565,10 +567,6 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const targetNum = Math.min(best.properBid, Math.max(minBid, currentHighNum + 1));
   return { num: targetNum, suit: best.suit, solo: false, plan: best.plan };
 }
-
-// ==========================================
-// 選択関数
-// ==========================================
 
 export function chooseDiscard(hand, trump) {
   if (!Array.isArray(hand) || hand.length <= 2) return hand.slice();
