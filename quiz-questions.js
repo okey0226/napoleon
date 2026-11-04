@@ -234,7 +234,6 @@ function genPlayQuestion(rng, idx) {
 
   const targetStartSeat = desiredTurnIndex;
 
-  // 指定された turnIndex に一致するスナップショットを優先的に探す
   let valid = [];
   for (let attempt = 0; attempt < 10; attempt++) {
     const localRng = mulberry32(idx * 7919 + attempt * 9973);
@@ -243,7 +242,6 @@ function genPlayQuestion(rng, idx) {
     if (valid.length > 0) break;
   }
 
-  // フォールバック: 任意の turnIndex
   if (valid.length === 0) {
     for (let attempt = 0; attempt < 10; attempt++) {
       const localRng = mulberry32(idx * 7919 + attempt * 9973 + 999);
