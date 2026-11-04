@@ -1,4 +1,4 @@
-// ai-simulator.js (前半: 自己対戦ロジック・プレイ品質計測・クイズ抽出)
+// ai-simulator.js (自己対戦ロジック・プレイ品質計測・クイズ抽出)
 import { SUITS, RANKS, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
@@ -68,7 +68,6 @@ function detectQuizCandidate(ctx) {
   const { legal, trick, trickNo, contract, hand, points, allianceKittyPoints } = ctx;
   if (!legal || legal.length < 2) return null;
 
-  // ★ 除外条件: 全ての選択肢が「同一スートの非点札」なら議論の余地なし (例: ♣5と♣6)
   const allNonFace = legal.every(c => !['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
   const allSameSuit = legal.every(c => c.suit === legal[0].suit);
   if (allNonFace && allSameSuit) {
@@ -340,6 +339,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   let revealed = contractBase.solo, revealTrickNo = null, active = nap, trickNo = 0;
   let napTricks = 0, deputyTricks = 0;
   let overkillCount = 0, feedSuccessCount = 0;
+  let goldenFormationCount = 0;
   let matchExpCount = 0;
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
@@ -353,6 +353,15 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       const isMyTeam = seat === nap || (!contractBase.solo && seat === deputy);
       const isCurrentWinnerMyTeam = currentWinner ? (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy)) : false;
       
+      // 黄金配置のチェック（NAPリード・DEP最後、またはDEPリード・NAP最後）
+      if (trick.length === 0 && !contractBase.solo) {
+        const leadSeat = trick[0]?.seat;
+        if (leadSeat === nap && (i === 4 && seat === deputy)) goldenFormationCount++;
+        if (leadSeat === deputy && (i === 4 && seat === nap)) goldenFormationCount++;
+      }
+      // 簡易版: ナポレオン軍が最後の手番を迎える場合のボーナス判定用フラグ
+      const isLastSeatMyTeam = i === 4 && isMyTeam;
+
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy,
         params: params[seat] || defaultStrategy(),
@@ -367,7 +376,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       else chosen = chooseCardToPlay(ctx);
       if (!chosen || !legal.some(c => c.id === chosen.id)) chosen = legal[Math.floor(Math.random() * legal.length)];
       
-      // ★ クイズ候補抽出
+      // クイズ候補抽出
       if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_QUIZ_CANDIDATES_PER_MATCH) {
         const candidate = detectQuizCandidate(ctx);
         if (candidate) {
@@ -387,15 +396,18 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         }
       }
 
-      // プレイ品質のカウント
+      // プレイ品質のカウント（オーバーキル、フィード、オーバートランプ）
       if (trick.length > 0 && currentWinner) {
         const winnerMyTeam = winnerSeat => winnerSeat === nap || (!contractBase.solo && winnerSeat === deputy);
         const powerBefore = cardPower(contractBase, trickNo, currentWinner.card, trick);
         const powerAfter = cardPower(contractBase, trickNo, chosen, [...trick, { seat, card: chosen }]);
-        if (winnerMyTeam(currentWinner.seat) === isMyTeam && powerAfter > powerBefore) {
-          if (pointsInTrick === 0 || ['K', 'A'].includes(chosen.rank)) overkillCount++;
+        
+        // 味方の勝ちを上書き（オーバートランプ）した場合のペナルティ
+        if (winnerMyTeam(currentWinner.seat) && isMyTeam && powerAfter > powerBefore) {
+          if (chosen.rank === 'A' || ['K', 'Q'].includes(chosen.rank)) overkillCount++;
         }
-        if (winnerMyTeam(currentWinner.seat) === isMyTeam && ['10', 'J', 'Q'].includes(chosen.rank)) {
+        // フィード成功（味方が勝っている時に点札を出す）
+        if (winnerMyTeam(currentWinner.seat) && isMyTeam && ['10', 'J', 'Q'].includes(chosen.rank)) {
           feedSuccessCount++;
         }
       }
@@ -435,12 +447,10 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   return {
     nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1,
-    plan, expectedWins: plan?.expectedWins ?? null, actualWins, overkillCount, feedSuccessCount,
+    plan, expectedWins: plan?.expectedWins ?? null, actualWins, overkillCount, feedSuccessCount, goldenFormationCount,
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
-// ai-simulator.js (後半)
-// ※ 前半の続きとして記述
 
 const MAX_EXP_QUEUE_PER_MATCH = 5;
 
@@ -453,7 +463,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     console.warn("strategy log load failed", e);
   }
 
-  // Hall of Fame のロード
   await loadHallOfFame(env);
 
   const sanitizeParams = (raw) => {
@@ -493,22 +502,19 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
   };
 
   const currentPool = nextPool.map(p => speedUpForSimulation(p));
-  
-  // Hall of Fame から数体を対戦プールに混ぜる（多様性の維持）
   const hofCandidates = hallOfFame.slice(0, 3).map(p => speedUpForSimulation(p));
   const pool = [...currentPool, ...hofCandidates];
 
   const stats = pool.map(() => ({
     n: 0, totalRating: 0, napN: 0, napW: 0, depN: 0, depW: 0, alN: 0, alW: 0,
     bidSum: 0, bidN: 0, soloBidN: 0, planAccSum: 0, planAccN: 0, overbidN: 0, underbidN: 0,
-    totalOverkills: 0, totalFeeds: 0, highBidAttempts: 0, highBidSuccesses: 0
+    totalOverkills: 0, totalFeeds: 0, highBidAttempts: 0, highBidSuccesses: 0, goldenFormations: 0
   }));
 
-  experienceQueue = []; // 経験キューを初期化
-  quizCandidateQueue = []; // クイズ候補キューを初期化
+  experienceQueue = [];
+  quizCandidateQueue = [];
 
   for (let i = 0; i < matchCount; i++) {
-    // 各マッチの席をランダムに割り当て（Hall of Fameも混ざる）
     const seatIdx = [], seatParams = [];
     for (let s = 0; s < 5; s++) {
       const idx = Math.floor(Math.random() * pool.length);
@@ -534,12 +540,14 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       let matchRating = 0;
       let totalOverkills = 0;
       let totalFeeds = 0;
+      let totalGolden = 0;
       let highBidAttempts = 0;
       let highBidSuccesses = 0;
 
       for (const c of contracts) {
         totalOverkills += c.overkillCount || 0;
         totalFeeds += c.feedSuccessCount || 0;
+        totalGolden += c.goldenFormationCount || 0;
         
         if (c.nap === seat) {
           st.napN++; st.bidSum += c.num; st.bidN++;
@@ -574,10 +582,16 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       }
       
       // プレイ品質のボーナス/ペナルティ
-      matchRating += (totalFeeds * 2.0) - (totalOverkills * 2.0);
+      const overkillPenalty = (seatParams[seat].deputyOvertrumpPenalty ?? 4.0);
+      matchRating += (totalFeeds * 2.0) - (totalOverkills * overkillPenalty);
       
+      // 黄金配置（最後の手番の有効活用）ボーナス
+      const goldenBonus = (seatParams[seat].goldenFormationBonus ?? 3.0);
+      matchRating += totalGolden * goldenBonus;
+
       st.totalOverkills += totalOverkills;
       st.totalFeeds += totalFeeds;
+      st.goldenFormations += totalGolden;
       st.highBidAttempts += highBidAttempts;
       st.highBidSuccesses += highBidSuccesses;
 
@@ -589,24 +603,25 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
       const napWins = contracts.filter(c => c.nap === seat && c.made).length;
       matchRating += napWins * 3.0;
 
+      // ナポレオンを引き受けた回数へのボーナス（逃げ癖の抑制）
+      const napAttempts = contracts.filter(c => c.nap === seat).length;
+      matchRating += napAttempts * 2.0; 
+
       st.totalRating += Number.isFinite(matchRating) ? matchRating : 0;
     }
     
-    // 10マッチごとに経験とクイズ候補をフラッシュ（書き込み制限対策）
     if (i > 0 && i % 10 === 0) {
       await flushExperience(env);
       await flushQuizCandidates(env);
     }
   }
   
-  // 残余の経験・クイズ候補をフラッシュ
   await flushExperience(env);
   await flushQuizCandidates(env);
 
-  // DBへの保存
   const statements = [];
   const parentIds = existing.slice(0, 3).map(r => r.id);
-  for (let i = 0; i < currentPool.length; i++) { // Hall of Fameは保存しない
+  for (let i = 0; i < currentPool.length; i++) {
     const st = stats[i];
     if (!st.n) continue;
     const avgRating = Number.isFinite(st.totalRating / st.n) ? st.totalRating / st.n : 0;
@@ -627,7 +642,6 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     try { await env.DB.batch(statements); } catch (e) { console.error("strategy log insert failed", e); }
   }
 
-  // トップ戦略を ai_weights に保存
   try {
     const top = await env.DB.prepare("SELECT params FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 1").first();
     if (top) {
@@ -640,12 +654,10 @@ export async function runSelfPlayBatch(env, matchCount = 1000) {
     }
   } catch (e) { console.error("failed to update ai_weights", e); }
 
-  // 古いログの削除（上位100件のみ保持）
   try {
     await env.DB.prepare("DELETE FROM ai_strategy_log WHERE id NOT IN (SELECT id FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT 100)").run();
   } catch (e) { console.warn("log prune failed", e); }
 
-  // 評価関数フィードバック（5世代に1回）
   if (generation % 5 === 0) {
     try {
       const totalHighBidAttempts = stats.reduce((sum, s) => sum + s.highBidAttempts, 0);
@@ -693,7 +705,8 @@ export function generateInsights(strategies) {
     s1RequiredMinorCards: 'S1必要A/2枚数', s3RequiredAces: 'S3必要A枚数',
     sameColorBidderLimit: '同色立会い上限', ntBidderLimit: 'NT立会い上限',
     s2ThreeRoleExtra: '3役追加上げ幅',
-    expHitWeight: '経験DBヒット信頼度', similarityThreshold: '類似度閾値'
+    expHitWeight: '経験DBヒット信頼度', similarityThreshold: '類似度閾値',
+    goldenFormationBonus: '黄金配置ボーナス', deputyOvertrumpPenalty: 'オーバートランプ抑制', lastSeatDuckBonus: '最後手番ダック'
   };
 
   const deltas = [];
@@ -731,4 +744,3 @@ export function generateInsights(strategies) {
 
   return insights;
 }
-
