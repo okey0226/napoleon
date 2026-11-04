@@ -55,6 +55,12 @@ export const schema = [
   "ALTER TABLE players ADD COLUMN favorite_standing TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN com_rating INTEGER DEFAULT 1000",
   "ALTER TABLE ai_strategy_log ADD COLUMN avg_plan_accuracy REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN avg_value_loss REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN value_loss_early REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN value_loss_mid REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN value_loss_late REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN value_loss_nt REAL DEFAULT 0",
+  "ALTER TABLE ai_strategy_log ADD COLUMN value_loss_color REAL DEFAULT 0",
   ...quizSchema
 ];
 
@@ -72,7 +78,11 @@ async function loadBotStrategy(env) {
     const w = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
     if (w?.weights) {
       const parsed = safeJsonParse(w.weights, null);
-      if (parsed && typeof parsed === 'object') { __cachedBotStrategy = { ...defaultStrategy(), ...parsed }; __cachedBotStrategyTime = Date.now(); return __cachedBotStrategy; }
+      if (parsed && typeof parsed === 'object') {
+        __cachedBotStrategy = { ...defaultStrategy(), ...parsed };
+        __cachedBotStrategyTime = Date.now();
+        return __cachedBotStrategy;
+      }
     }
   } catch (e) { console.warn("bot strategy load failed", e); }
   return defaultStrategy();
@@ -97,15 +107,26 @@ async function loadExperience(env) {
   return map;
 }
 
-function sendSafe(conn, message) { if (!conn) return false; try { conn.send(message); return true; } catch (error) { console.warn("room send failed", conn.id, error); try { conn.close(4004, "Send failed"); } catch { } return false; } }
+function sendSafe(conn, message) {
+  if (!conn) return false;
+  try { conn.send(message); return true; }
+  catch (error) { console.warn("room send failed", conn.id, error); try { conn.close(4004, "Send failed"); } catch { } return false; }
+}
 const hex = b => Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, "0")).join("");
 const unhex = s => new Uint8Array((s.match(/.{2}/g) || []).map(x => parseInt(x, 16)));
-async function hashPassword(password, salt) { const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]); return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, key, 256)); }
+async function hashPassword(password, salt) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, key, 256));
+}
 const response = (data, status = 200) => Response.json(data, { status });
 const identity = req => ({ id: req.headers.get("x-websim-user-id"), username: req.headers.get("x-websim-username") || "player", anonymous: req.headers.get("x-websim-user-is-anonymous") === "true" });
 const validId = s => typeof s === "string" && /^[a-zA-Z0-9_-]{3,20}$/.test(s);
 const signed = req => { const u = identity(req); return u.id && !u.anonymous ? u : null; };
-function metricRank(db, table, successColumn, attemptColumn, successes, attempts) { if (!attempts) return Promise.resolve(null); return db.prepare("SELECT COUNT(*) AS ahead FROM " + table + " WHERE " + attemptColumn + ">0 AND " + successColumn + "*1.0/" + attemptColumn + ">?").bind(successes / attempts).first().then(row => row.ahead + 1); }
+
+function metricRank(db, table, successColumn, attemptColumn, successes, attempts) {
+  if (!attempts) return Promise.resolve(null);
+  return db.prepare("SELECT COUNT(*) AS ahead FROM " + table + " WHERE " + attemptColumn + ">0 AND " + successColumn + "*1.0/" + attemptColumn + ">?").bind(successes / attempts).first().then(row => row.ahead + 1);
+}
 
 async function forceInitDB(env) {
   for (const sql of schema) { try { await env.DB.prepare(sql).run(); } catch (e) { console.error("SQL error:", e.message); } }
@@ -113,17 +134,21 @@ async function forceInitDB(env) {
 
 export default {
   async scheduled(event, env, ctx) {
-    if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    ctx.waitUntil(runSelfPlayBatch(env, 50).catch(e => console.error("scheduled self-play failed", e)));
+    if (!globalThis.__dbInitialized) {
+      try { await forceInitDB(env); globalThis.__dbInitialized = true; }
+      catch (e) { console.error("DB init failed on cron", e); }
+    }
+    ctx.waitUntil(runSelfPlayBatch(env, 5).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
+
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/api/dev/run-selfplay") {
       try {
         await forceInitDB(env);
-        const result = await runSelfPlayBatch(env, 10);
+        const result = await runSelfPlayBatch(env, 1);
         return response({ ok: true, message: "Self-play executed", result });
       } catch (e) {
         return response({ error: e.message, stack: e.stack }, { status: 500 });
@@ -149,9 +174,16 @@ export default {
           return response({ ok: true, message: "AI learning data reset successfully" });
         }
         return response({ ok: true, message: "Database initialized successfully" });
-      } catch (e) { console.error("setup-db error:", e.message, e.stack); return response({ error: e.message, stack: e.stack }, { status: 500 }); }
+      } catch (e) {
+        console.error("setup-db error:", e.message, e.stack);
+        return response({ error: e.message, stack: e.stack }, { status: 500 });
+      }
     }
-    if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed", e); } }
+
+    if (!globalThis.__dbInitialized) {
+      try { await forceInitDB(env); globalThis.__dbInitialized = true; }
+      catch (e) { console.error("DB init failed", e); }
+    }
 
     try {
       if (url.pathname.startsWith('/api/quiz/')) {
@@ -200,6 +232,7 @@ export default {
         const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing,com_rating FROM players WHERE user_id=?").bind(userId).first();
         return response({ ...player, sessionToken: token });
       }
+
       if (request.method === "POST" && url.pathname === "/api/account/update-dorm") {
         const token = request.headers.get("x-session-token");
         let userId = null;
@@ -224,7 +257,6 @@ export default {
         let userId = null;
         if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
-        
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         const newComRating = Number(body.comRating);
         if (Number.isFinite(newComRating)) {
@@ -294,7 +326,12 @@ export default {
 
       if (request.method === "GET" && url.pathname === "/api/ai/generations") {
         const { results } = await env.DB.prepare(`
-          SELECT generation, AVG(nap_win_rate) as nap, AVG(alliance_win_rate) as ally, COUNT(*) as count, MAX(created_at) as time
+          SELECT generation,
+                 AVG(nap_win_rate) as nap,
+                 AVG(alliance_win_rate) as ally,
+                 AVG(avg_value_loss) as avg_vl,
+                 COUNT(*) as count,
+                 MAX(created_at) as time
           FROM ai_strategy_log GROUP BY generation ORDER BY generation ASC LIMIT 20
         `).all();
         return response(results || []);
@@ -326,12 +363,13 @@ export default {
       }
 
       return new Response("Not found", { status: 404 });
-    } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
+    } catch (err) {
+      return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 });
+    }
   }
 };
 // ===== [worker.js 前半 終了] =====
 // ===== [worker.js 後半 開始] =====
-// ※ 前半の続きとして記述
 
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
@@ -683,7 +721,7 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
   if (!m.properRecomputed) {
     const proper = computeProperBid(
       m.seats[seat].hand, m.auction.high.suit, m.botStrategy || defaultStrategy(),
-      seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory
+      seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory, m.round
     );
     m.properBids[seat] = proper.properBid;
     m.properPlans[seat] = proper.plan;
@@ -714,15 +752,24 @@ function startPlay(m, room) {
   const c = m.contract;
   if (!c) return;
   if (c.solo) c.deputy = c.nap;
-  else { for (let i = 0; i < 5; i++) { const found = m.seats[i].hand.some(x => x.id === c.call.id); if (found) { c.deputy = i; break; } } if (c.deputy < 0) c.deputy = c.nap; }
-  m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
+  else {
+    for (let i = 0; i < 5; i++) {
+      const found = m.seats[i].hand.some(x => x.id === c.call.id);
+      if (found) { c.deputy = i; break; }
+    }
+    if (c.deputy < 0) c.deputy = c.nap;
+  }
+  m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap;
+  m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
   m.notice = "カードを出してください。マストフォローです。"; publish(m, room);
   if (m.seats[m.active].bot) botAction(m, room);
 }
 
 function beginDiscard(m, seat, room) {
-  m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = []; sortHand(m.seats[seat].hand);
-  m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
+  m.seats[seat].hand.push(...m.kitty); m.openKitty = m.kitty.slice(); m.kitty = [];
+  sortHand(m.seats[seat].hand);
+  m.phase = "discard"; m.active = seat; m.deadline = Date.now() + 30000;
+  m.humanAutoPlayAt = null; m.botThinkAt = null;
   m.notice = "オープンの2枚を手札に入れ、2枚を捨ててください。"; publish(m, room);
   if (m.seats[seat].bot) botAction(m, room);
 }
@@ -769,9 +816,11 @@ async function finish(m, room, env) {
   const points = team.reduce((n, i) => n + m.seats[i].points, 0);
   const allianceKitty = m.allianceKittyPoints || 0;
   const made = points >= m.contract.num && (m.contract.num === 20 || points < 20);
-  const sign = made ? 1 : -1; const scores = Array(5).fill(0);
+  const sign = made ? 1 : -1;
+  const scores = Array(5).fill(0);
   m.matchStats[nap].declarerAttempts++; m.matchStats[nap].bidTotal = (m.matchStats[nap].bidTotal || 0) + m.contract.num;
-  if (m.contract.suit === "NT") m.matchStats[nap].ntBids = (m.matchStats[nap].ntBids || 0) + 1; else m.matchStats[nap].colorBids = (m.matchStats[nap].colorBids || 0) + 1;
+  if (m.contract.suit === "NT") m.matchStats[nap].ntBids = (m.matchStats[nap].ntBids || 0) + 1;
+  else m.matchStats[nap].colorBids = (m.matchStats[nap].colorBids || 0) + 1;
   m.matchStats[nap].exactAttempts++;
   if (m.contract.num >= 15) { m.matchStats[nap].boldAttempts++; if (made && points === m.contract.num) m.matchStats[nap].boldSuccesses++; }
   if (made) m.matchStats[nap].declarerSuccesses++;
@@ -781,7 +830,11 @@ async function finish(m, room, env) {
   if (m.contract.solo) { for (let i = 0; i < 5; i++) if (i !== nap) scores[i] = -sign * unit; }
   else { scores[m.contract.deputy] = sign * unit; for (let i = 0; i < 5; i++) if (i !== nap && i !== m.contract.deputy) scores[i] = -sign * unit; }
   const art = m.roundArt.slice();
-  if (made && points === m.contract.num) { art[nap] += 2; m.matchStats[nap].exactWins++; m.matchStats[nap].exactSuccesses++; if (!m.contract.solo) art[m.contract.deputy] += 1; if (m.contract.num >= 15) { art[nap] += 2; m.matchStats[nap].boldExactWins++; if (!m.contract.solo) art[m.contract.deputy] += 1; } }
+  if (made && points === m.contract.num) {
+    art[nap] += 2; m.matchStats[nap].exactWins++; m.matchStats[nap].exactSuccesses++;
+    if (!m.contract.solo) art[m.contract.deputy] += 1;
+    if (m.contract.num >= 15) { art[nap] += 2; m.matchStats[nap].boldExactWins++; if (!m.contract.solo) art[m.contract.deputy] += 1; }
+  }
   if (m.contract.solo) { art[nap] += made ? 4 : 2; if (made) m.matchStats[nap].soloWins++; }
   if (!made && !m.contract.solo && m.contract.num - points >= 3) { art[nap] -= 2; art[m.contract.deputy] -= 1; }
   for (let i = 0; i < 5; i++) { m.matchScores[i] += scores[i]; m.matchArt[i] += art[i]; }
@@ -848,14 +901,16 @@ async function finish(m, room, env) {
         }
         if (statements.length) await env.DB.batch(statements);
       } catch (error) { console.error("ranked match settlement failed", m.id, error); m.result.rateSaveFailed = true; }
-      if (!m.result.rateSaveFailed) for (const update of updates) {
-        if (!update.connId) continue;
-        try {
-          sendSafe(conns.get(update.connId), {
-            type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
-            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
-          });
-        } catch (error) { console.warn("rating notification failed", m.id, error); }
+      if (!m.result.rateSaveFailed) {
+        for (const update of updates) {
+          if (!update.connId) continue;
+          try {
+            sendSafe(conns.get(update.connId), {
+              type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
+              placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
+            });
+          } catch (error) { console.warn("rating notification failed", m.id, error); }
+        }
       }
     }
   }
@@ -871,6 +926,7 @@ function artfulCard(m, entry, trick) {
   const c = entry.card, led = trick[0].card.suit, black = s => s === "♣" || s === "♠";
   return c.id === "♠A" || c.id === "♥Q" && trick.some(x => x.card.id === "♠A") || c.rank === "J" && m.contract.suit !== "NT" && (c.suit === m.contract.suit || c.suit !== m.contract.suit && black(c.suit) === black(m.contract.suit)) || c.rank === "2" && c.suit === led && trick.every(x => x.card.suit === led);
 }
+
 function playCard(m, seat, id, room, env) {
   if (m.phase !== "play" || m.active !== seat) return;
   const legal = legalCards(m, seat), card = legal.find(x => x.id === id);
@@ -884,7 +940,10 @@ function playCard(m, seat, id, room, env) {
   hand.splice(hand.findIndex(x => x.id === id), 1);
   m.trick.push({ seat, card, feedOpportunity, feedCard });
   m.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat: seat });
-  if (m.trick.length > 1) { const ledSuit = m.trick[0].card.suit; if (card.suit !== ledSuit) { if (!m.voids[seat]) m.voids[seat] = {}; m.voids[seat][ledSuit] = true; } }
+  if (m.trick.length > 1) {
+    const ledSuit = m.trick[0].card.suit;
+    if (card.suit !== ledSuit) { if (!m.voids[seat]) m.voids[seat] = {}; m.voids[seat][ledSuit] = true; }
+  }
   const reveal = m.contract.call?.id === card.id && !m.contract.revealedCall;
   let raisedNotice = "";
   if (reveal) {
@@ -1091,7 +1150,6 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "next-round") return nextRound(m, room);
   if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
   if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
-
   if (a.type === "confirm-auction") {
     if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
       m.auction.needsHumanConfirm = false;
@@ -1111,7 +1169,6 @@ async function processAction(conn, msg, room, env) {
     }
     return;
   }
-
   if (a.type === "approve" || a.type === "pass") doApprove(m, seat, room);
   else if (a.type === "bid") doBid(m, seat, Number(a.num), a.suit, room, a.solo === true);
   else if (a.type === "call") callCard(m, seat, a.suit, a.rank, room);
@@ -1324,11 +1381,11 @@ export const room = {
           const ntScore = ntHandStrength(hand, params);
           let bestProper = 13, bestPlan = null;
           for (const suit of topSuits) {
-            const proper = computeProperBid(hand, suit, params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, []);
+            const proper = computeProperBid(hand, suit, params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, [], m.round);
             if (proper.properBid > bestProper) { bestProper = proper.properBid; bestPlan = proper.plan; }
           }
           if (ntScore > 6) {
-            const ntProper = computeProperBid(hand, 'NT', params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, []);
+            const ntProper = computeProperBid(hand, 'NT', params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, [], m.round);
             if (ntProper.properBid > bestProper) { bestProper = ntProper.properBid; bestPlan = ntProper.plan; }
           }
           m.properBids[seat] = bestProper;
