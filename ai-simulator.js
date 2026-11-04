@@ -185,13 +185,17 @@ function computeCardWinRates(legal, chosenCard, ctx) {
 }
 
 // ==========================================
-// 競りシミュレーション
+// 競りシミュレーション（時間制ルール維持・逐次文脈判断型）
 // ==========================================
 
-function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
+function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1) {
   const bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
   let high = { num: 12, suit: '', player: -1, solo: false, plan: null, bidPlan: null };
-  
+
+  // 席の状態: 'active'（アクティブ）, 'holding'（保留＝時間制ルールで復帰可能）
+  const seatState = ['active', 'active', 'active', 'active', 'active'];
+
+  // 各席の適正値・アーキタイプを事前計算
   const properBids = [];
   for (let seat = 0; seat < 5; seat++) {
     const p = seatParams[seat];
@@ -201,94 +205,112 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut) {
     const ntScore = ntHandStrength(hands[seat], p);
     const candidates = [];
     for (const suit of topSuits) {
-      const proper = computeProperBid(hands[seat], suit, p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], []);
-      candidates.push({ suit, properBid: proper.properBid, expected: proper.expected, plan: proper.plan });
+      const proper = computeProperBid(hands[seat], suit, p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], [], round);
+      candidates.push({ suit, properBid: proper.properBid, expected: proper.expected, plan: proper.plan, archetype: proper.archetype });
     }
     if (ntScore > 6) {
-      const ntProper = computeProperBid(hands[seat], 'NT', p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], []);
-      candidates.push({ suit: 'NT', properBid: ntProper.properBid, expected: ntProper.expected, plan: ntProper.plan });
+      const ntProper = computeProperBid(hands[seat], 'NT', p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], [], round);
+      candidates.push({ suit: 'NT', properBid: ntProper.properBid, expected: ntProper.expected, plan: ntProper.plan, archetype: ntProper.archetype });
     }
     candidates.sort((a, b) => b.expected - a.expected);
     properBids.push({ candidates, baseStr: handStrength(hands[seat]), topSuits, ntScore });
   }
 
-  for (let seat = 0; seat < 5; seat++) {
+  // 逐次ループ（時間制ルールの文脈判断をエミュレート）
+  let turnSeat = 0;
+  let actionCount = 0;
+  const MAX_ACTIONS = 50;
+
+  while (actionCount < MAX_ACTIONS) {
+    actionCount++;
+
+    // 終了条件: 最高宣言者以外にアクティブな席がいない
+    const remainingActive = seatState.filter((s, i) => s === 'active' && i !== high.player).length;
+    if (remainingActive === 0) break;
+
+    const seat = turnSeat;
+    turnSeat = (turnSeat + 1) % 5;
+
+    if (seatState[seat] !== 'active') continue;
+    if (high.player === seat) continue;
+
     const p = seatParams[seat];
-    if (properBids[seat].baseStr < (p.bidThreshold ?? 2.0)) continue;
-    const bestSuit = properBids[seat].topSuits[0];
-    if (properBids[seat].candidates.length === 0) {
-      if (13 > high.num || (13 === high.num && bestSuit && high.suit && SUITS.indexOf(bestSuit) > SUITS.indexOf(high.suit))) {
-        high = { num: 13, suit: bestSuit, player: seat, solo: false, plan: null, bidPlan: null };
-      }
+    const candidates = properBids[seat].candidates;
+    const received = bidSignals[seat].received || [];
+
+    // 立つ価値がない場合は保留
+    if (!candidates.length) {
+      seatState[seat] = 'holding';
+      bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
       continue;
     }
-    const cand = properBids[seat].candidates[0];
-    const targetNum = Math.max(13, Math.min(20, cand.properBid));
-    if (targetNum > high.num || (targetNum === high.num && high.suit && SUITS.indexOf(cand.suit) > SUITS.indexOf(high.suit))) {
-      high = { num: 13, suit: cand.suit, player: seat, solo: false, plan: cand.plan, bidPlan: cand.plan };
+
+    const best = candidates[0];
+
+    // --- 文脈判断（直近の宣言履歴と受信シグナル） ---
+    let forcePass = false;
+    if (received.some(s => s.type === 'S2') && best.properBid < high.num) forcePass = true;
+    if (received.some(s => s.type === 'S4')) forcePass = true;
+    if (high.num >= 17 && best.properBid <= high.num) forcePass = true;
+    // 相手の宣言が高すぎる場合（深追いしない）
+    if (high.num >= 15 && best.properBid <= high.num + 1) forcePass = true;
+
+    if (forcePass) {
+      seatState[seat] = 'holding';
+      bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
+      continue;
+    }
+
+    // --- シグナル送信の判定 ---
+    const signal = canSendSignal(hands[seat], high, seat, bidSignals[seat], p, null);
+    const sameColorCount = countSameColorBidders(bidSignals, bidHistoryOut, high.suit);
+    const myTwoRole = high.suit !== 'NT' && isTwoRole(hands[seat], high.suit);
+    const limit = high.suit === 'NT' ? (p.ntBidderLimit ?? 2) : (p.sameColorBidderLimit ?? 2);
+    const canTossUp = sameColorCount < limit || myTwoRole;
+
+    let action = 'approve';
+
+    if (signal.S4 && high.num === 17 && canTossUp) {
+      high = { num: 20, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+      bidSignals[seat].sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
+      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S4', suit: signal.targetSuit, num: 20 });
+      bidHistoryOut.push({ round, seat, num: 20, suit: signal.targetSuit, action: 'S4' });
+      action = 'S4';
+    } else if (signal.S2 && signal.targetSuit && canTossUp && high.num < 20) {
+      high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+      bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: high.num };
+      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: high.num });
+      bidHistoryOut.push({ round, seat, num: high.num, suit: signal.targetSuit, action: 'S2' });
+      action = 'S2';
+    } else if (signal.S1 && signal.targetSuit && canTossUp && high.num < 20) {
+      high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+      bidSignals[seat].sent = { type: 'S1', suit: signal.targetSuit, num: high.num };
+      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: high.num });
+      bidHistoryOut.push({ round, seat, num: high.num, suit: signal.targetSuit, action: 'S1' });
+      action = 'S1';
+    } else if (best.properBid > high.num) {
+      const targetNum = Math.min(20, Math.max(high.num + 1, best.properBid));
+      // 一気に上げすぎず、一旦保留することも検討（時間制の文脈判断）
+      if (targetNum > high.num + 2 && high.num >= 15) {
+        action = 'approve';
+      } else {
+        high = { num: targetNum, suit: best.suit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+        bidHistoryOut.push({ round, seat, num: targetNum, suit: best.suit, action: 'bid' });
+        action = 'bid';
+      }
+    }
+
+    if (action === 'approve') {
+      seatState[seat] = 'holding';
+      bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
+    } else {
+      // 誰かが宣言を上げたため、保留中の席をアクティブに戻す（時間制ルールの復帰）
+      for (let s = 0; s < 5; s++) {
+        if (seatState[s] === 'holding') seatState[s] = 'active';
+      }
     }
   }
 
-  for (let iter = 0; iter < 4; iter++) {
-    let acted = false;
-    for (let seat = 0; seat < 5; seat++) {
-      if (high.player === seat) continue;
-      const p = seatParams[seat];
-      const signal = canSendSignal(hands[seat], high, seat, bidSignals[seat], p, null);
-      const sameColorCount = countSameColorBidders(bidSignals, bidHistoryOut, high.suit);
-      const myTwoRole = high.suit !== 'NT' && isTwoRole(hands[seat], high.suit);
-      const limit = high.suit === 'NT' ? (p.ntBidderLimit ?? 2) : (p.sameColorBidderLimit ?? 2);
-      
-      if (signal.S4 && high.num === 17) {
-        high = { num: 20, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
-        bidSignals[seat].sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
-        bidHistoryOut.push({ round: 0, seat, num: 20, suit: signal.targetSuit });
-        acted = true;
-        continue;
-      }
-      
-      if (sameColorCount >= limit && !myTwoRole) continue;
-      
-      if (signal.S3 && high.suit === 'NT') {
-        const targetNum = high.num + 1;
-        if (targetNum <= 20) {
-          high = { num: targetNum, suit: 'NT', player: seat, solo: false, plan: null, bidPlan: null };
-          bidSignals[seat].sent = { type: 'S3', suit: 'NT', num: targetNum };
-          bidHistoryOut.push({ round: 0, seat, num: targetNum, suit: 'NT' });
-          acted = true;
-          continue;
-        }
-      }
-      
-      if (signal.S2 && signal.targetSuit && high.num < 20) {
-        high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
-        bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: high.num };
-        bidHistoryOut.push({ round: 0, seat, num: high.num, suit: signal.targetSuit });
-        acted = true;
-        continue;
-      }
-      
-      if (signal.S1 && signal.targetSuit && high.num < 20) {
-        high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: null, bidPlan: null };
-        bidSignals[seat].sent = { type: 'S1', suit: signal.targetSuit, num: high.num };
-        bidHistoryOut.push({ round: 0, seat, num: high.num, suit: signal.targetSuit });
-        acted = true;
-        continue;
-      }
-      
-      const candidates = properBids[seat].candidates;
-      if (!candidates.length) continue;
-      const best = candidates[0];
-      const targetNum = Math.min(20, Math.max(high.num + 1, best.properBid));
-      if (targetNum <= high.num) continue;
-      
-      high = { num: targetNum, suit: best.suit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidHistoryOut.push({ round: 0, seat, num: targetNum, suit: best.suit });
-      acted = true;
-    }
-    if (!acted) break;
-  }
-  
   return high;
 }
 
@@ -302,7 +324,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   const kitty = d.splice(0, 2);
   
   const bidHistoryLocal = [];
-  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal);
+  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal, round);
   
   let nap, trump, num, isSoloBid, plan;
   if (high.player < 0) {
