@@ -103,7 +103,7 @@ function simulateOneMatch(localRng, startSeat) {
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
-      const seat = (active - i + 5) % 5;
+      const seat = (active + i) % 5; // ★ 修正: 時計回り
       const hand = hands[seat];
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
@@ -130,7 +130,9 @@ function simulateOneMatch(localRng, startSeat) {
       const ctx = {
         hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy,
         discardedKitty: discarded, isRevealed: contract.revealedCall, params, call,
-        currentNapPoints: 0, experience: null,
+        points: seatPoints, // ★ 修正: 現在の得点を渡す
+        currentNapPoints: seatPoints[nap] + (solo ? 0 : seatPoints[deputy]), // ★ 修正: 正しいNAP得点
+        experience: null,
         bidHistory: matchBidHistory,
         matchScores: matchScores
       };
