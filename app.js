@@ -783,37 +783,39 @@ function comBid(i,version){
   }
   
   if(signal.S2 && signal.targetSuit && canTossUp && currentHigh.num < 20){
-    g.bidHistory.push({round:g.round,seat:i,num:currentHigh.num,suit:signal.targetSuit});
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    g.bidHistory.push({round:g.round,seat:i,num:nextNum,suit:signal.targetSuit});
     addGameLog(name(i)+'がS2（2役アピール）を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
-    g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
+    g.auction.high={num:nextNum,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
     g.auction.needsHumanConfirm = false;
     g.active=i;
-    bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
+    bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: nextNum };
     bidSignals.lastBidAt = Date.now();
-    for (let s = 0; s < 5; s++) if (s !== i) g.bidSignals[s].received.push({ from: i, type: 'S2', suit: signal.targetSuit, num: currentHigh.num });
+    for (let s = 0; s < 5; s++) if (s !== i) g.bidSignals[s].received.push({ from: i, type: 'S2', suit: signal.targetSuit, num: nextNum });
     g.auction.bidPlans[i] = g.properPlans[i];
-    message(name(i)+'が'+currentHigh.num+signal.targetSuit+'を宣言しました');
+    message(name(i)+'が'+nextNum+signal.targetSuit+'を宣言しました');
     drawAuction(); drawSeats(); scheduleComBids();
     return;
   }
   
   if(signal.S1 && signal.targetSuit && canTossUp && currentHigh.num < 20){
-    g.bidHistory.push({round:g.round,seat:i,num:currentHigh.num,suit:signal.targetSuit});
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    g.bidHistory.push({round:g.round,seat:i,num:nextNum,suit:signal.targetSuit});
     addGameLog(name(i)+'がS1（同色サポート）を宣言');
     if(g.bidHistory.length>50)g.bidHistory.shift();
-    g.auction.high={num:currentHigh.num,suit:signal.targetSuit,player:i,solo:false};
+    g.auction.high={num:nextNum,suit:signal.targetSuit,player:i,solo:false};
     g.auction.version++;
     g.auction.approved = Array(5).fill(false);
     g.auction.needsHumanConfirm = false;
     g.active=i;
-    bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
+    bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: nextNum };
     bidSignals.lastBidAt = Date.now();
-    for (let s = 0; s < 5; s++) if (s !== i) g.bidSignals[s].received.push({ from: i, type: 'S1', suit: signal.targetSuit, num: currentHigh.num });
+    for (let s = 0; s < 5; s++) if (s !== i) g.bidSignals[s].received.push({ from: i, type: 'S1', suit: signal.targetSuit, num: nextNum });
     g.auction.bidPlans[i] = g.properPlans[i];
-    message(name(i)+'が'+currentHigh.num+signal.targetSuit+'を宣言しました');
+    message(name(i)+'が'+nextNum+signal.targetSuit+'を宣言しました');
     drawAuction(); drawSeats(); scheduleComBids();
     return;
   }
@@ -990,6 +992,7 @@ function auctionEnd(w, skipProperRaise = false){
   message(name(w)+'が'+g.contract.num+g.contract.suit+'で宣言。オープンを手札に入れて2枚捨ててください');
   kittyStart();
 }
+// ===== [app.js 前半 終了] =====
 // ===== [app.js 後半 開始] =====
 // ===== [app.js 後半 開始] =====
 // ※ 前半の続きとして記述
@@ -2197,3 +2200,4 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
+
