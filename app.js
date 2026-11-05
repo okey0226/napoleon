@@ -993,6 +993,7 @@ function auctionEnd(w, skipProperRaise = false){
   kittyStart();
 }
 // ===== [app.js 前半 終了] =====
+
 // ===== [app.js 後半 開始] =====
 // ===== [app.js 後半 開始] =====
 // ※ 前半の続きとして記述
