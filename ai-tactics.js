@@ -408,7 +408,65 @@ export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
   return { canTransfer: true, targetBid: 20 };
 }
 
-// ★ ここが漏れていた関数です
+// ==========================================
+// 競りシグナル判定 (S1〜S4)
+// ==========================================
+
+export function canSendSignal(hand, currentHigh, seat, bidSignals, params, matchScores) {
+  const result = { S1: false, S2: false, S3: false, S4: false, targetSuit: null };
+  if (!currentHigh || currentHigh.num < 13) return result;
+
+  // S4: 17から20へのリスク転送
+  if (currentHigh.num === 17 && currentHigh.suit && currentHigh.suit !== 'NT') {
+    const risk = evaluateRiskTransfer(hand, currentHigh, params, matchScores);
+    if (risk.canTransfer) {
+      result.S4 = true;
+      result.targetSuit = currentHigh.suit;
+      return result; // S4は最優先
+    }
+  }
+
+  // S3: NTサポート
+  if (currentHigh.suit === 'NT') {
+    if (canSendS3(hand, params)) {
+      result.S3 = true;
+      result.targetSuit = 'NT';
+      return result;
+    }
+  }
+
+  // S2: 2役アピール（同色Jと2役）
+  if (currentHigh.suit && currentHigh.suit !== 'NT') {
+    if (isTwoRole(hand, currentHigh.suit) && canSendS1(hand, currentHigh.suit, params)) {
+      result.S2 = true;
+      result.targetSuit = sameColorSuitOf(currentHigh.suit);
+      return result;
+    }
+  }
+
+  // S1: 同色サポート
+  if (currentHigh.suit && currentHigh.suit !== 'NT') {
+    if (canSendS1(hand, currentHigh.suit, params)) {
+      result.S1 = true;
+      result.targetSuit = sameColorSuitOf(currentHigh.suit);
+    }
+  }
+
+  return result;
+}
+
+// ==========================================
+// 競りペーシング計算
+// ==========================================
+
+export function bidPacing(pacingMs, elapsed) {
+  return Math.max(0, (pacingMs || 4000) - (elapsed || 0));
+}
+
+// ==========================================
+// 競りシグナル集計・検出
+// ==========================================
+
 export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
   if (!trumpSuit || trumpSuit === 'NT') return 0;
   const sameColor = sameColorSuitOf(trumpSuit);
