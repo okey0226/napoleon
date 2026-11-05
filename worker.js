@@ -879,7 +879,7 @@ async function finish(m, room, env) {
         try {
           sendSafe(conns.get(update.connId), {
             type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
-            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: change.abandonPenalty
+            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
           });
         } catch (error) { console.warn("rating notification failed", m.id, error); }
       }
