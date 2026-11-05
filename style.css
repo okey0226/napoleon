@@ -186,11 +186,11 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .player-seat.me{border-color:rgba(143,200,160,.5)}
 
 /* ===== 座席位置（時計回り） ===== */
-.player-seat.pos-0{bottom:1%;left:50%;transform:translateX(-50%)}
-.player-seat.pos-1{bottom:23%;left:1%}
-.player-seat.pos-2{top:19%;left:2%}
-.player-seat.pos-3{top:19%;right:2%}
-.player-seat.pos-4{bottom:23%;right:1%}
+.player-seat.pos-0{bottom:1%;left:50%;transform:translateX(-50%)} /* 下 (あなた) */
+.player-seat.pos-1{bottom:23%;left:1%} /* 左下 (COM 1) */
+.player-seat.pos-2{top:19%;left:2%}    /* 左上 (COM 2) */
+.player-seat.pos-3{top:19%;right:2%}   /* 右上 (COM 3) */
+.player-seat.pos-4{bottom:23%;right:1%}/* 右下 (COM 4) */
 
 .center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
 .center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
