@@ -408,25 +408,19 @@ export function evaluateRiskTransfer(hand, currentHigh, params, matchScores) {
   return { canTransfer: true, targetBid: 20 };
 }
 
-// ==========================================
-// 競りシグナル判定 (S1〜S4)
-// ==========================================
-
 export function canSendSignal(hand, currentHigh, seat, bidSignals, params, matchScores) {
   const result = { S1: false, S2: false, S3: false, S4: false, targetSuit: null };
   if (!currentHigh || currentHigh.num < 13) return result;
 
-  // S4: 17から20へのリスク転送
   if (currentHigh.num === 17 && currentHigh.suit && currentHigh.suit !== 'NT') {
     const risk = evaluateRiskTransfer(hand, currentHigh, params, matchScores);
     if (risk.canTransfer) {
       result.S4 = true;
       result.targetSuit = currentHigh.suit;
-      return result; // S4は最優先
+      return result;
     }
   }
 
-  // S3: NTサポート
   if (currentHigh.suit === 'NT') {
     if (canSendS3(hand, params)) {
       result.S3 = true;
@@ -435,7 +429,6 @@ export function canSendSignal(hand, currentHigh, seat, bidSignals, params, match
     }
   }
 
-  // S2: 2役アピール（同色Jと2役）
   if (currentHigh.suit && currentHigh.suit !== 'NT') {
     if (isTwoRole(hand, currentHigh.suit) && canSendS1(hand, currentHigh.suit, params)) {
       result.S2 = true;
@@ -444,7 +437,6 @@ export function canSendSignal(hand, currentHigh, seat, bidSignals, params, match
     }
   }
 
-  // S1: 同色サポート
   if (currentHigh.suit && currentHigh.suit !== 'NT') {
     if (canSendS1(hand, currentHigh.suit, params)) {
       result.S1 = true;
@@ -455,17 +447,9 @@ export function canSendSignal(hand, currentHigh, seat, bidSignals, params, match
   return result;
 }
 
-// ==========================================
-// 競りペーシング計算
-// ==========================================
-
 export function bidPacing(pacingMs, elapsed) {
   return Math.max(0, (pacingMs || 4000) - (elapsed || 0));
 }
-
-// ==========================================
-// 競りシグナル集計・検出
-// ==========================================
 
 export function countSameColorBidders(bidSignals, bidHistory, trumpSuit) {
   if (!trumpSuit || trumpSuit === 'NT') return 0;
@@ -607,9 +591,15 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   }
   const signal = canSendSignal(hand, currentHigh, mySeat, bidSignals, params, matchScores);
   if (signal.S4 && currentHigh.player !== mySeat) return { num: 20, suit: signal.targetSuit, solo: false, signal: 'S4', plan: null };
-  if (signal.S2 && currentHigh.player !== mySeat) return { num: currentHigh.num, suit: signal.targetSuit, solo: false, signal: 'S2', plan: null };
+  if (signal.S2 && currentHigh.player !== mySeat) {
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    return { num: nextNum, suit: signal.targetSuit, solo: false, signal: 'S2', plan: null };
+  }
   if (signal.S3 && currentHigh.player !== mySeat) return { num: currentHigh.num + 1, suit: 'NT', solo: false, signal: 'S3', plan: null };
-  if (signal.S1 && currentHigh.player !== mySeat) return { num: currentHigh.num, suit: signal.targetSuit, solo: false, signal: 'S1', plan: null };
+  if (signal.S1 && currentHigh.player !== mySeat) {
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    return { num: nextNum, suit: signal.targetSuit, solo: false, signal: 'S1', plan: null };
+  }
   if (!candidates.length) {
     if (isFirstBid && baseStr >= bidThreshold) return { num: Math.max(minBid, 13), suit: topSuits[0], solo: false, plan: null };
     return null;
