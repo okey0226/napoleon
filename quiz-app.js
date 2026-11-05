@@ -273,12 +273,13 @@ function renderGameReplica(q, fallbackId = '') {
       const suit = safeId[0], rank = safeId.slice(1);
       const red = suit === '♦' || suit === '♥';
       
+      // ★ 修正: 時計回りの座標に変更
       const positions = {
-        0: { x: '50%', y: '70%' },
-        1: { x: '75%', y: '62%' },
-        2: { x: '75%', y: '38%' },
-        3: { x: '25%', y: '38%' },
-        4: { x: '25%', y: '62%' }
+        0: { x: '50%', y: '70%' }, // 下
+        1: { x: '75%', y: '62%' }, // 右下
+        2: { x: '75%', y: '38%' }, // 右上
+        3: { x: '25%', y: '38%' }, // 左上
+        4: { x: '25%', y: '62%' }  // 左下
       };
       const p = positions[pos] || { x: '50%', y: '50%' };
       
