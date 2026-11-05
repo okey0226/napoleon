@@ -835,6 +835,7 @@ function chooseNTNapoleonLead(ctx) {
       if (nonMightyAces.length) return nonMightyAces[0];
       if (hqPlayed || hqInDiscard) return safeAcesFirst.find(c => c.id === '♠A');
     }
+    // ★ 修正: 一巡目の2禁止
     const candidates = legal.filter(c => c.rank !== '2');
     return (candidates.length ? candidates : legal).sort((a, b) => cardPower(ctx.contract, trickNo, a, []) - cardPower(ctx.contract, trickNo, b, []) )[0];
   }
@@ -842,7 +843,8 @@ function chooseNTNapoleonLead(ctx) {
     const sureWinners = legal.filter(c => isAbsoluteWinner(c, ctx.contract, [], playedCards));
     if (sureWinners.length) return sureWinners[0];
   }
-  const finalCandidates = legal.filter(c => c.rank !== '2');
+  // ★ 修正: 一巡目の2禁止
+  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(ctx.contract, trickNo, a, []) - cardPower(ctx.contract, trickNo, b, []) )[0];
 }
 
@@ -920,6 +922,7 @@ function chooseNTAllianceLead(ctx) {
   }
   const suitLens = SUITS.map(s => ({ suit: s, cards: legal.filter(c => c.suit === s) })).filter(x => x.suit !== contract.suit && x.cards.length >= 3).sort((a, b) => b.cards.length - a.cards.length);
   for (const sl of suitLens) { const lowCard = sl.cards.filter(c => !isFace(c) && (trickNo > 0 || c.rank !== '2'))[0]; if (lowCard) return lowCard; }
+  // ★ 修正: 一巡目の2禁止
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
@@ -1026,6 +1029,7 @@ function chooseColorNapoleonLead(ctx) {
       if (nonMightyAces.length) return nonMightyAces[0];
       if (playedCards.some(c => c.id === '♥Q') || (discardedKitty || []).some(c => c.id === '♥Q')) return safeAces.find(c => c.id === '♠A');
     }
+    // ★ 修正: 一巡目の2禁止
     const candidates = legal.filter(c => c.rank !== '2');
     return (candidates.length ? candidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
   }
@@ -1050,7 +1054,8 @@ function chooseColorNapoleonLead(ctx) {
   if (safeAces.length) return safeAces.sort((a, b) => playedCards.filter(pc => pc.suit === b.suit).length - playedCards.filter(pc => pc.suit === a.suit).length)[0];
   const suitLens = SUITS.filter(s => s !== contract.suit).map(s => ({ suit: s, count: legal.filter(c => c.suit === s).length })).sort((a, b) => b.count - a.count);
   for (const sl of suitLens) { if (sl.count >= 3) { const low = legal.filter(c => c.suit === sl.suit && !isFace(c) && c.rank !== '2').sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (low) return low; } }
-  const finalCandidates = legal.filter(c => c.rank !== '2');
+  // ★ 修正: 一巡目の2禁止
+  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
@@ -1114,6 +1119,7 @@ function chooseColorAllianceLead(ctx) {
   }
   const suitLens = SUITS.map(s => ({ suit: s, cards: legal.filter(c => c.suit === s) })).filter(x => x.suit !== contract.suit && x.cards.length >= 3).sort((a, b) => b.cards.length - a.cards.length);
   for (const sl of suitLens) { const lowCard = sl.cards.filter(c => !isFace(c) && (trickNo > 0 || c.rank !== '2'))[0]; if (lowCard) return lowCard; }
+  // ★ 修正: 一巡目の2禁止
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
