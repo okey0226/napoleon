@@ -2200,4 +2200,3 @@ loadLeaderboard();
 
 screen('home-screen');
 // ===== [app.js 完全版 終わり] =====
-
