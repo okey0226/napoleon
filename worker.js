@@ -120,7 +120,7 @@ async function forceInitDB(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (!globalThis.__dbInitialized) { try { await forceInitDB(env); globalThis.__dbInitialized = true; } catch (e) { console.error("DB init failed on cron", e); } }
-    ctx.waitUntil(runSelfPlayBatch(env, 5).catch(e => console.error("scheduled self-play failed", e)));
+    ctx.waitUntil(runSelfPlayBatch(env, 10).catch(e => console.error("scheduled self-play failed", e)));
     ctx.waitUntil(env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()).run().catch(e => console.error("session cleanup failed", e)));
   },
   async fetch(request, env) {
@@ -340,7 +340,7 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-// ===== [worker.js 前半 終了] =====
+// ===== [worker.js 前半 終了] ===
 // ===== [worker.js 後半 開始] =====
 // ※ 前半の続きとして記述
 
@@ -1386,8 +1386,10 @@ export const room = {
         for (const seat of m.auction.active.slice()) {
           if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) {
             if (m.auction.needsHumanConfirm && seat === m.auction.high.player) {
-              m.auction.lastAction[seat] = now;
-              continue;
+              // ★ 修正: 確定待ちフリーズ防止。一定時間（30秒）経過で強制確定
+              m.auction.needsHumanConfirm = false;
+              auctionDone(m, seat, room, true);
+              break;
             }
             doApprove(m, seat, room, true);
           }
@@ -1481,3 +1483,4 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
+
