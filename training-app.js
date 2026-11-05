@@ -152,9 +152,9 @@ function humanSkip() {
     return;
   }
   
-  let nextSeat = (g.active + 4) % 5;
+  let nextSeat = (g.active + 1) % 5;
   while (!g.auction.active.includes(nextSeat)) {
-    nextSeat = (nextSeat + 4) % 5;
+    nextSeat = (nextSeat + 1) % 5;
   }
   g.active = nextSeat;
   enterAuction();
@@ -198,9 +198,9 @@ function nextAuctionTurn() {
   if (g.auction.active.length === 1) {
     g.active = g.auction.active[0];
   } else {
-    let nextSeat = (g.active + 4) % 5;
+    let nextSeat = (g.active + 1) % 5;
     while (!g.auction.active.includes(nextSeat)) {
-      nextSeat = (nextSeat + 4) % 5;
+      nextSeat = (nextSeat + 1) % 5;
     }
     g.active = nextSeat;
   }
@@ -316,7 +316,7 @@ function playCard(cardId) {
   g.roundLog.playDecisions.push({ trickNo: g.trickNo, role, phase, pointsTier, rankTier, won: null });
   
   if (g.trick.length < 5) {
-    g.active = (seat + 4) % 5;
+    g.active = (seat + 1) % 5; // ★ 修正: 時計回り
     nextPlayTurn();
     return;
   }
