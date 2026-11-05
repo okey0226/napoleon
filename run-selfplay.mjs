@@ -91,7 +91,7 @@ const mockDB = {
 
 async function main() {
   const args = process.argv.slice(2);
-  const matchCount = parseInt(args[0], 10) || 100; 
+  const matchCount = parseInt(args[0], 10) || 5; 
   
   console.log(`自己対戦バッチを開始します... (${matchCount}マッチ)`);
   
