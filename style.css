@@ -169,8 +169,6 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .table-area{position:relative;flex:1;min-height:400px;display:grid;place-items:center}
 .table-area:before{content:'';position:absolute;inset:9% 15% 10%;border:1px solid rgba(211,235,215,.17);border-radius:50%;background:radial-gradient(ellipse,#126046 0%,#0b4a37 53%,#083b2f 100%)}
 .players-ring{position:absolute;inset:4% 9%;pointer-events:none}
-
-/* ===== 座席位置（時計回り） ===== */
 .player-seat{position:absolute;z-index:3;min-width:108px;padding:9px 12px;text-align:center;border:1px solid rgba(225,239,229,.16);border-radius:11px;background:rgba(7,26,21,.82)}
 .player-seat .seat-name{font-size:12px;font-weight:700}
 .player-seat .seat-role{font-size:9px;color:var(--gold);margin-top:4px}
@@ -187,22 +185,24 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .lead-badge i{width:8px;height:8px;border-radius:50%;background:#62e29a}
 .player-seat.me{border-color:rgba(143,200,160,.5)}
 
+/* ===== 座席位置（時計回り） ===== */
 .player-seat.pos-0{bottom:1%;left:50%;transform:translateX(-50%)}
-.player-seat.pos-1{bottom:23%;right:1%} /* 右下 */
-.player-seat.pos-2{top:19%;right:2%}    /* 右上 */
-.player-seat.pos-3{top:19%;left:2%}     /* 左上 */
-.player-seat.pos-4{bottom:23%;left:1%}  /* 左下 */
+.player-seat.pos-1{bottom:23%;left:1%}
+.player-seat.pos-2{top:19%;left:2%}
+.player-seat.pos-3{top:19%;right:2%}
+.player-seat.pos-4{bottom:23%;right:1%}
 
 .center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
 .center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
 .trick-cards{position:absolute;inset:0;z-index:2;display:block;min-height:0;pointer-events:none}
 .trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px;z-index:20}
 
+/* ===== 場札の出る位置（時計回り） ===== */
 .trick-card.played-seat-0{left:50%;top:70%}
-.trick-card.played-seat-1{left:76%;top:62%} /* 右下 */
-.trick-card.played-seat-2{left:76%;top:39%} /* 右上 */
-.trick-card.played-seat-3{left:24%;top:39%} /* 左上 */
-.trick-card.played-seat-4{left:24%;top:62%} /* 左下 */
+.trick-card.played-seat-1{left:24%;top:62%}
+.trick-card.played-seat-2{left:24%;top:39%}
+.trick-card.played-seat-3{left:76%;top:39%}
+.trick-card.played-seat-4{left:76%;top:62%}
 
 .table-message{position:relative;z-index:12;flex:none;width:min(760px,100%);min-height:28px;margin:3px auto 5px;padding:5px 14px;border:1px solid rgba(225,188,112,.18);border-radius:999px;background:rgba(5,22,18,.76);color:#e8d7a9;font-size:12px;line-height:1.35;text-align:center;overflow-wrap:anywhere;display:flex;align-items:center;justify-content:center}
 .kitty-view{order:-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:80px;margin-top:20px;margin-bottom:10px;z-index:20;position:relative}
@@ -550,10 +550,10 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 
   /* スマホ用座席位置（時計回り） */
   .player-seat.pos-0{bottom:3% !important;left:50% !important;top:auto !important;right:auto !important;transform:translateX(-50%) !important}
-  .player-seat.pos-1{bottom:22% !important;right:1% !important;top:auto !important;left:auto !important;transform:none !important}
-  .player-seat.pos-2{top:2% !important;right:1% !important;bottom:auto !important;left:auto !important;transform:none !important}
-  .player-seat.pos-3{top:2% !important;left:1% !important;bottom:auto !important;right:auto !important;transform:none !important}
-  .player-seat.pos-4{bottom:22% !important;left:1% !important;top:auto !important;right:auto !important;transform:none !important}
+  .player-seat.pos-1{bottom:22% !important;left:1% !important;top:auto !important;right:auto !important;transform:none !important} /* 左下 */
+  .player-seat.pos-2{top:2% !important;left:1% !important;bottom:auto !important;right:auto !important;transform:none !important} /* 左上 */
+  .player-seat.pos-3{top:2% !important;right:1% !important;bottom:auto !important;left:auto !important;transform:none !important} /* 右上 */
+  .player-seat.pos-4{bottom:22% !important;right:1% !important;top:auto !important;left:auto !important;transform:none !important} /* 右下 */
 
   .taken-cards{display:flex !important;justify-content:center !important;align-items:center !important;flex-wrap:wrap !important;gap:2px !important;max-width:74px !important;margin:3px auto 0 !important}
   .taken-label{flex-basis:100% !important;font-size:7px !important;line-height:1 !important;color:#c8d4cd !important;font-weight:700 !important}
@@ -570,10 +570,10 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 
   /* スマホ用場札位置（時計回り） */
   .trick-card.played-seat-0{left:50% !important;top:88% !important}
-  .trick-card.played-seat-1{left:80% !important;top:55% !important}
-  .trick-card.played-seat-2{left:72% !important;top:22% !important}
-  .trick-card.played-seat-3{left:28% !important;top:22% !important}
-  .trick-card.played-seat-4{left:20% !important;top:55% !important}
+  .trick-card.played-seat-1{left:20% !important;top:55% !important} /* 左下 */
+  .trick-card.played-seat-2{left:28% !important;top:22% !important} /* 左上 */
+  .trick-card.played-seat-3{left:72% !important;top:22% !important} /* 右上 */
+  .trick-card.played-seat-4{left:80% !important;top:55% !important} /* 右下 */
 
   .kitty-view{min-height:84px !important;gap:10px !important;margin-bottom:16px !important;display:flex !important;justify-content:center !important;align-items:center !important}
   .kitty-view .card{width:72px !important;height:100px !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
@@ -1258,18 +1258,18 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 .quiz-game .trick-card .suit { font-size: 15px !important; left: 6px !important; top: 22px !important; }
 
 /* 
- * 各座席から中央に向かってカードを配置する 
+ * 各座席から中央に向かってカードを配置する（時計回り）
  * 自分(0) = 下
- * COM1(1) = 右下
- * COM2(2) = 右上
- * COM3(3) = 左上
- * COM4(4) = 左下
+ * COM1(1) = 左下
+ * COM2(2) = 左上
+ * COM3(3) = 右上
+ * COM4(4) = 右下
  */
 .quiz-game .trick-card.played-seat-0 { left: 50% !important; top: 70% !important; }
-.quiz-game .trick-card.played-seat-1 { left: 75% !important; top: 62% !important; }
-.quiz-game .trick-card.played-seat-2 { left: 75% !important; top: 38% !important; }
-.quiz-game .trick-card.played-seat-3 { left: 25% !important; top: 38% !important; }
-.quiz-game .trick-card.played-seat-4 { left: 25% !important; top: 62% !important; }
+.quiz-game .trick-card.played-seat-1 { left: 25% !important; top: 62% !important; }
+.quiz-game .trick-card.played-seat-2 { left: 25% !important; top: 38% !important; }
+.quiz-game .trick-card.played-seat-3 { left: 75% !important; top: 38% !important; }
+.quiz-game .trick-card.played-seat-4 { left: 75% !important; top: 62% !important; }
 
 /* モバイル用の微調整 */
 @media (max-width: 760px) {
@@ -1282,10 +1282,10 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 
   /* 位置も少し内側に寄せる */
   .quiz-game .trick-card.played-seat-0 { left: 50% !important; top: 65% !important; }
-  .quiz-game .trick-card.played-seat-1 { left: 70% !important; top: 60% !important; }
-  .quiz-game .trick-card.played-seat-2 { left: 70% !important; top: 35% !important; }
-  .quiz-game .trick-card.played-seat-3 { left: 30% !important; top: 35% !important; }
-  .quiz-game .trick-card.played-seat-4 { left: 30% !important; top: 60% !important; }
+  .quiz-game .trick-card.played-seat-1 { left: 30% !important; top: 60% !important; }
+  .quiz-game .trick-card.played-seat-2 { left: 30% !important; top: 35% !important; }
+  .quiz-game .trick-card.played-seat-3 { left: 70% !important; top: 35% !important; }
+  .quiz-game .trick-card.played-seat-4 { left: 70% !important; top: 60% !important; }
 }
 /* ===== 何切る：切り札カウンター ===== */
 .trump-counter {
