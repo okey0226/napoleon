@@ -1351,7 +1351,7 @@ function simulateWithPolicy(state, mySeat, contract, params) {
         if (napPoints >= contract.num && (contract.num === 20 || allyPoints >= 1)) break;
         if (allyPoints > 20 - contract.num) break;
         if (napPoints + remaining * 5 < contract.num) break;
-      } else { active = (active + 4) % 5; }
+      } else { active = (active + 1) % 5; }
     }
   }
   const nap = contract.nap, deputy = contract.deputy, isSolo = contract.solo, num = contract.num;
@@ -1413,7 +1413,7 @@ export function getMCTSStats(ctx) {
     let trick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
     hands[ctx.seat] = hands[ctx.seat].filter(c => c.id !== bestCard.id);
     trick.push({ seat: ctx.seat, card: bestCard });
-    let active = (ctx.seat + 4) % 5;
+    let active = (ctx.seat + 1) % 5;
     let trickNo = ctx.trickNo;
     const points = ctx.points ? ctx.points.slice() : [0, 0, 0, 0, 0];
     const win = simulateWithPolicy({ hands, trick, trickNo, active, points, voids: ctx.voids, playedCards: ctx.playedCards }, ctx.seat, ctx.contract, params);
@@ -1541,7 +1541,7 @@ function simulateWithPolicyCompleteInfo(state, mySeat, contract, params, rng) {
         if (allyPoints > 20 - contract.num) break;
         if (napPoints + remaining * 5 < contract.num) break;
       } else {
-        active = (active + 4) % 5;
+        active = (active + 1) % 5;
       }
     }
   }
@@ -1607,7 +1607,7 @@ function oracleMCTS(ctx, hands, timeMs, rng, params) {
     simHands[ctx.seat] = simHands[ctx.seat].filter(c => c.id !== bestCard.id);
     const simTrick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
     simTrick.push({ seat: ctx.seat, card: bestCard });
-    const simActive = (ctx.seat + 4) % 5;
+    const simActive = (ctx.seat + 1) % 5;
 
     const win = simulateWithPolicyCompleteInfo(
       { hands: simHands, trick: simTrick, trickNo: ctx.trickNo, active: simActive, points: ctx.points ? ctx.points.slice() : [0,0,0,0,0], voids: ctx.voids, playedCards: ctx.playedCards },
