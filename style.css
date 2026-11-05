@@ -169,6 +169,8 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .table-area{position:relative;flex:1;min-height:400px;display:grid;place-items:center}
 .table-area:before{content:'';position:absolute;inset:9% 15% 10%;border:1px solid rgba(211,235,215,.17);border-radius:50%;background:radial-gradient(ellipse,#126046 0%,#0b4a37 53%,#083b2f 100%)}
 .players-ring{position:absolute;inset:4% 9%;pointer-events:none}
+
+/* ===== 座席位置（時計回り） ===== */
 .player-seat{position:absolute;z-index:3;min-width:108px;padding:9px 12px;text-align:center;border:1px solid rgba(225,239,229,.16);border-radius:11px;background:rgba(7,26,21,.82)}
 .player-seat .seat-name{font-size:12px;font-weight:700}
 .player-seat .seat-role{font-size:9px;color:var(--gold);margin-top:4px}
@@ -184,20 +186,24 @@ button,.card.playable,.suit-choice,.small-action,.call-rank-choice,
 .lead-badge{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:4px;color:#9ee6b6;font-size:9px;font-weight:700}
 .lead-badge i{width:8px;height:8px;border-radius:50%;background:#62e29a}
 .player-seat.me{border-color:rgba(143,200,160,.5)}
+
 .player-seat.pos-0{bottom:1%;left:50%;transform:translateX(-50%)}
-.player-seat.pos-1{bottom:23%;right:1%}
-.player-seat.pos-2{top:19%;right:2%}
-.player-seat.pos-3{top:19%;left:2%}
-.player-seat.pos-4{bottom:23%;left:1%}
+.player-seat.pos-1{bottom:23%;right:1%} /* 右下 */
+.player-seat.pos-2{top:19%;right:2%}    /* 右上 */
+.player-seat.pos-3{top:19%;left:2%}     /* 左上 */
+.player-seat.pos-4{bottom:23%;left:1%}  /* 左下 */
+
 .center-table{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:min(450px,68vw);min-height:175px;text-align:center}
 .center-caption{font-size:10px;letter-spacing:.16em;color:#9bb5a3}
 .trick-cards{position:absolute;inset:0;z-index:2;display:block;min-height:0;pointer-events:none}
 .trick-card{position:absolute;transform:translate(-50%,-50%);width:48px;height:68px;z-index:20}
+
 .trick-card.played-seat-0{left:50%;top:70%}
-.trick-card.played-seat-1{left:76%;top:62%}
-.trick-card.played-seat-2{left:76%;top:39%}
-.trick-card.played-seat-3{left:24%;top:39%}
-.trick-card.played-seat-4{left:24%;top:62%}
+.trick-card.played-seat-1{left:76%;top:62%} /* 右下 */
+.trick-card.played-seat-2{left:76%;top:39%} /* 右上 */
+.trick-card.played-seat-3{left:24%;top:39%} /* 左上 */
+.trick-card.played-seat-4{left:24%;top:62%} /* 左下 */
+
 .table-message{position:relative;z-index:12;flex:none;width:min(760px,100%);min-height:28px;margin:3px auto 5px;padding:5px 14px;border:1px solid rgba(225,188,112,.18);border-radius:999px;background:rgba(5,22,18,.76);color:#e8d7a9;font-size:12px;line-height:1.35;text-align:center;overflow-wrap:anywhere;display:flex;align-items:center;justify-content:center}
 .kitty-view{order:-1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:80px;margin-top:20px;margin-bottom:10px;z-index:20;position:relative}
 .kitty-view .card{width:48px;height:68px}
@@ -542,6 +548,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .seat-role.deputy-status{padding:2px 6px !important;font-size:7.5px !important}
   .lead-badge{font-size:8px !important;margin-top:2px !important}
 
+  /* スマホ用座席位置（時計回り） */
   .player-seat.pos-0{bottom:3% !important;left:50% !important;top:auto !important;right:auto !important;transform:translateX(-50%) !important}
   .player-seat.pos-1{bottom:22% !important;right:1% !important;top:auto !important;left:auto !important;transform:none !important}
   .player-seat.pos-2{top:2% !important;right:1% !important;bottom:auto !important;left:auto !important;transform:none !important}
@@ -561,11 +568,12 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .trick-card .rank{font-size:16px !important;left:5px !important;top:4px !important}
   .trick-card .suit{font-size:15px !important;left:5px !important;top:22px !important}
 
-  .trick-card.played-seat-3{left:28% !important;top:22% !important}
-  .trick-card.played-seat-2{left:72% !important;top:22% !important}
-  .trick-card.played-seat-4{left:20% !important;top:55% !important}
-  .trick-card.played-seat-1{left:80% !important;top:55% !important}
+  /* スマホ用場札位置（時計回り） */
   .trick-card.played-seat-0{left:50% !important;top:88% !important}
+  .trick-card.played-seat-1{left:80% !important;top:55% !important}
+  .trick-card.played-seat-2{left:72% !important;top:22% !important}
+  .trick-card.played-seat-3{left:28% !important;top:22% !important}
+  .trick-card.played-seat-4{left:20% !important;top:55% !important}
 
   .kitty-view{min-height:84px !important;gap:10px !important;margin-bottom:16px !important;display:flex !important;justify-content:center !important;align-items:center !important}
   .kitty-view .card{width:72px !important;height:100px !important;box-shadow:0 4px 12px rgba(0,0,0,.4) !important}
