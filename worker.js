@@ -879,7 +879,7 @@ async function finish(m, room, env) {
         try {
           sendSafe(conns.get(update.connId), {
             type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
-            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
+            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: change.abandonPenalty
           });
         } catch (error) { console.warn("rating notification failed", m.id, error); }
       }
@@ -1022,15 +1022,17 @@ function botAuctionBid(m, seat, room) {
     }
   }
   if (signal.S2 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
-    doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
-    m.seats[seat].bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: currentHigh.num };
-    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: currentHigh.num });
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    doBid(m, seat, nextNum, signal.targetSuit, room, false);
+    m.seats[seat].bidSignals.sent = { type: 'S2', suit: signal.targetSuit, num: nextNum };
+    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: nextNum });
     return;
   }
   if (signal.S1 && signal.targetSuit && canTossUp && currentHigh.num < 20) {
-    doBid(m, seat, currentHigh.num, signal.targetSuit, room, false);
-    m.seats[seat].bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: currentHigh.num };
-    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: currentHigh.num });
+    const nextNum = SV[signal.targetSuit] <= SV[currentHigh.suit] ? Math.min(20, currentHigh.num + 1) : currentHigh.num;
+    doBid(m, seat, nextNum, signal.targetSuit, room, false);
+    m.seats[seat].bidSignals.sent = { type: 'S1', suit: signal.targetSuit, num: nextNum };
+    for (let s = 0; s < 5; s++) if (s !== seat && m.seats[s].bidSignals?.received) m.seats[s].bidSignals.received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: nextNum });
     return;
   }
 
