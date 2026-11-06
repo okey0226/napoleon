@@ -6,7 +6,7 @@ import {
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer, analyzeDiscardOptions,
   canDeclareWin,
-  // ★ 新規: 競りシグナルロジック
+  // ★ 新規: 競りシグナルロジック（修正版）
   determineRole, decideNextBid, inferIntentFromBid, estimateDeputyDPoints,
   computeNScore, computeDScore, computeDPoints, computeSupportLimit
 } from './ai-tactics.js';
@@ -523,13 +523,14 @@ function auctionStart(){
   g.properBids = [13, 13, 13, 13, 13];
   g.properPlans = [null, null, null, null, null];
 
-  // ★ 各プレイヤーの役割を事前判定
   for (let seat = 0; seat < 5; seat++) {
     try {
       const role = determineRole(g.players[seat].hand, g.aiWeights);
       if (role.role === 'NAP') {
-        g.properBids[seat] = Math.min(20, Math.floor(role.nScore / 2));
-        g.properPlans[seat] = role.plan || null;
+        // ★ 修正: nScore/2 ではなく computeProperBid を使用
+        const proper = computeProperBid(g.players[seat].hand, role.bestSuit || '♠', g.aiWeights, seat, g.bidSignals[seat], g.matchScores, g.kitty, g.playedCards, g.voids, [], g.round);
+        g.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
+        g.properPlans[seat] = proper.plan || null;
       }
     } catch (e) { console.warn('determineRole failed for seat', seat, e?.message); }
   }
@@ -622,16 +623,11 @@ function drawAuction(){
 function beatsBid(n,s){const h=g.auction.high;return n>=g.auction.minBid&&n>h.num||(n===h.num&&n>=13&&SV[s]>SV[h.suit])}
 function removeBid(i){g.auction.active=g.auction.active.filter(x=>x!==i)}
 
-// ==========================================
-// ★ 観察期間の設定
-// ==========================================
-
 function scheduleObservationPeriod(excludeSeat = -1) {
   const obsBase = g.aiWeights?.auctionObservationMs ?? 2000;
   const jitter = 1000 + Math.random() * 2000;
   const delay = obsBase + jitter;
   const now = Date.now();
-  // 他のプレイヤーの botAt を遅延させる（内部的な待機）
   for (let i = 0; i < 5; i++) {
     if (i === excludeSeat) continue;
     if (i === g.mySeat) continue;
@@ -748,7 +744,6 @@ function humanBid(){
   g.active=g.mySeat;
   g.bidSignals[g.mySeat].lastBidAt = Date.now();
 
-  // シグナル推論
   if (prevBid.num >= 13 && prevBid.player >= 0 && prevBid.player !== g.mySeat) {
     try {
       const intent = inferIntentFromBid(prevBid, { num: g.bid, suit: g.suit, player: g.mySeat }, g.aiWeights);
@@ -760,7 +755,6 @@ function humanBid(){
     } catch (e) { console.warn('inferIntentFromBid failed', e?.message); }
   }
 
-  // 観察期間
   scheduleObservationPeriod(g.mySeat);
 
   message('あなたが'+g.bid+g.suit+'を宣言しました');
@@ -787,7 +781,6 @@ function comBid(i,version){
   const hand = g.players[i].hand;
   const params = g.aiWeights;
 
-  // 役割判定
   let role;
   try {
     role = determineRole(hand, params);
@@ -796,7 +789,6 @@ function comBid(i,version){
     role = { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' };
   }
 
-  // 段階上げ判断
   let decision;
   try {
     decision = decideNextBid(hand, g.auction.high, role, params, g.bidSignals[i].received || []);
@@ -806,7 +798,6 @@ function comBid(i,version){
   }
 
   if (decision.type === 'BID' && beatsBid(decision.num, decision.suit)) {
-    // シグナル推論
     const prevBid = { ...g.auction.high };
     g.bidHistory.push({ round: g.round, seat: i, num: decision.num, suit: decision.suit });
     if (g.bidHistory.length > 50) g.bidHistory.shift();
@@ -817,7 +808,6 @@ function comBid(i,version){
     g.active = i;
     g.bidSignals[i].lastBidAt = Date.now();
 
-    // シグナル推論
     if (prevBid.num >= 13 && prevBid.player >= 0 && prevBid.player !== i) {
       try {
         const intent = inferIntentFromBid(prevBid, { num: decision.num, suit: decision.suit, player: i }, params);
@@ -829,7 +819,6 @@ function comBid(i,version){
       } catch (e) { console.warn('inferIntentFromBid failed', e?.message); }
     }
 
-    // 観察期間
     scheduleObservationPeriod(i);
 
     addGameLog(name(i) + 'が' + decision.num + decision.suit + 'を宣言（' + decision.reason + '）');
@@ -840,7 +829,6 @@ function comBid(i,version){
     return;
   }
 
-  // 保留（降りる）
   g.auction.approved[i] = true;
   addGameLog(name(i) + 'が保留');
   message(name(i) + 'は保留しました');
@@ -868,9 +856,10 @@ function auctionEnd(w, skipProperRaise = false){
   stopTurnTimer();
   
   if (w >= 0 && g.auction && !g.auction.properRecomputed) {
-    const role = determineRole(g.players[w].hand, g.aiWeights);
-    g.properBids[w] = role.role === 'NAP' ? Math.min(20, Math.floor(role.nScore / 2)) : g.auction.high.num;
-    g.properPlans[w] = role.plan || null;
+    // ★ 修正: nScore/2 ではなく computeProperBid を使用
+    const proper = computeProperBid(g.players[w].hand, g.auction.high.suit, g.aiWeights, w, g.bidSignals[w], g.matchScores, g.kitty, g.playedCards, g.voids, g.bidHistory);
+    g.properBids[w] = proper.properBid > 0 ? proper.properBid : 13;
+    g.properPlans[w] = proper.plan || null;
     g.auction.properRecomputed = true;
   }
   
@@ -1060,7 +1049,6 @@ function kittyStart(){
   if(forceSolo){ const chosen=chooseSoloCall(g.players[n].hand, g.contract.suit); g.contract.call={suit:chosen.suit,rank:chosen.rank,id:chosen.id}; g.contract.solo=true; addGameLog(name(n)+'が副官指名 '+g.contract.call.id); }
   else if(g.contract.solo){ const chosen=chooseSoloCall(g.players[n].hand, g.contract.suit); g.contract.call={suit:chosen.suit,rank:chosen.rank,id:chosen.id}; addGameLog(name(n)+'が副官指名 '+g.contract.call.id); }
   else{
-    // 受信シグナルを副官指名に渡す
     const receivedSignals = (g.bidSignals[n]?.received || []).filter(s => ['S1', 'S2', 'S3', 'S4'].includes(s.intent));
     const call=chooseDeputyCall(g.players[n].hand,g.kitty,g.contract.suit,g.botLevel,g.contract.num,g.aiWeights,g.aiExperience, receivedSignals);
     g.contract.call={suit:call.suit,rank:call.rank,id:call.id};
@@ -1374,7 +1362,6 @@ function playTurn(){
       const legalCardsList=legal(seat);
       if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+1)%5;playTurn();return}
       
-      // 上がり宣言判定
       if (g.trick.length === 0) {
         const canWin = canDeclareWin({
           hand: g.players[seat].hand, trick: g.trick, trickNo: g.trickNo, contract: g.contract,
