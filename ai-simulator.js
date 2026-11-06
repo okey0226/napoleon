@@ -108,6 +108,7 @@ function detectQuizCandidate(ctx) {
   };
 }
 
+// ★ 修正: EPIPE対策としてチャンク分割で送信
 export async function flushQuizCandidates(env) {
   if (quizCandidateQueue.length === 0) return;
   const statements = quizCandidateQueue.map(q =>
@@ -115,7 +116,13 @@ export async function flushQuizCandidates(env) {
       `INSERT OR IGNORE INTO quiz_candidates(id, category, scenario_json, options_json, ai_answer_index, reason, explanation, generation) VALUES(?,?,?,?,?,?,?,?)`
     ).bind(q.id, q.category, q.scenario_json, q.options_json, q.ai_answer_index, q.reason, q.explanation, q.generation)
   );
-  try { await env.DB.batch(statements); } catch (e) { console.warn('quiz candidate flush failed', e); }
+  
+  const CHUNK_SIZE = 50;
+  try {
+    for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
+      await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
+    }
+  } catch (e) { console.warn('quiz candidate flush failed', e); }
   quizCandidateQueue = [];
 }
 
@@ -133,6 +140,7 @@ export async function loadHallOfFame(env) {
   } catch (e) { console.warn("hall of fame load failed", e); hallOfFame = []; }
 }
 
+// ★ 修正: EPIPE対策としてチャンク分割で送信
 export async function flushExperience(env) {
   if (experienceQueue.length === 0) return;
   const statements = [];
@@ -149,7 +157,13 @@ export async function flushExperience(env) {
       ).bind(q.hash, q.rates, q.samples, q.gen)
     );
   }
-  try { await env.DB.batch(statements); } catch (e) { console.warn("exp flush failed", e); }
+  
+  const CHUNK_SIZE = 50;
+  try {
+    for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
+      await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
+    }
+  } catch (e) { console.warn("exp flush failed", e); }
   experienceQueue = [];
 }
 
@@ -272,16 +286,20 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, ro
       bidHistoryOut.push({ round, seat, num: 20, suit: signal.targetSuit, action: 'S4' });
       action = 'S4';
     } else if (signal.S2 && signal.targetSuit && canTossUp && high.num < 20) {
-      high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: high.num };
-      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: high.num });
-      bidHistoryOut.push({ round, seat, num: high.num, suit: signal.targetSuit, action: 'S2' });
+      // ★ 修正: S2のスート強弱対応
+      const nextNum = SV[signal.targetSuit] <= SV[high.suit] ? Math.min(20, high.num + 1) : high.num;
+      high = { num: nextNum, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+      bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: nextNum };
+      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: nextNum });
+      bidHistoryOut.push({ round, seat, num: nextNum, suit: signal.targetSuit, action: 'S2' });
       action = 'S2';
     } else if (signal.S1 && signal.targetSuit && canTossUp && high.num < 20) {
-      high = { num: high.num, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidSignals[seat].sent = { type: 'S1', suit: signal.targetSuit, num: high.num };
-      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: high.num });
-      bidHistoryOut.push({ round, seat, num: high.num, suit: signal.targetSuit, action: 'S1' });
+      // ★ 修正: S1のスート強弱対応
+      const nextNum = SV[signal.targetSuit] <= SV[high.suit] ? Math.min(20, high.num + 1) : high.num;
+      high = { num: nextNum, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
+      bidSignals[seat].sent = { type: 'S1', suit: signal.targetSuit, num: nextNum };
+      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: nextNum });
+      bidHistoryOut.push({ round, seat, num: nextNum, suit: signal.targetSuit, action: 'S1' });
       action = 'S1';
     } else if (best.properBid > high.num) {
       const targetNum = Math.min(20, Math.max(high.num + 1, best.properBid));
@@ -359,7 +377,8 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     const trick = [];
     let pointsInTrick = 0;
     for (let i = 0; i < 5; i++) {
-      const seat = (active + i) % 5, hand = hands[seat];
+      const seat = (active + i) % 5;
+      const hand = hands[seat];
       if (!hand.length) break;
       const legal = trick.length === 0 ? hand : (hand.filter(c => c.suit === trick[0].card.suit).length ? hand.filter(c => c.suit === trick[0].card.suit) : hand);
       const currentWinner = trick.length ? winningEntry(contractBase, trickNo, trick) : null;
@@ -475,6 +494,9 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
+// ==========================================
+// 自己対戦バッチ実行
+// ==========================================
 
 export async function runSelfPlayBatch(env, matchCount = 5) {
   let existing = [];
