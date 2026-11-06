@@ -1,4 +1,4 @@
-// ai-tactics.js (完全版)
+// ai-tactics.js (完全版 + 上がり宣言機能)
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 // ==========================================
@@ -1858,4 +1858,87 @@ export function oracleB(ctx, matchId, round, trickNo, decisionIndex, params = {}
   }
 
   return { bestCard, evMap: EV, votes };
+}
+
+// ==========================================
+// 上がり宣言（手札公開勝利宣言）の判定
+// ==========================================
+
+export function canDeclareWin(ctx) {
+  const { hand, contract, playedCards, discardedKitty, voids, trick, seat, players, points, allianceKittyPoints } = ctx;
+  if (!hand || hand.length === 0) return false;
+  if (trick && trick.length > 0) return false; // リード時のみ
+
+  const seen = new Set();
+  hand.forEach(c => seen.add(c.id));
+  (playedCards || []).forEach(c => seen.add(c.id));
+  (discardedKitty || []).forEach(c => seen.add(c.id));
+  (trick || []).forEach(t => seen.add(t.card.id));
+
+  const unseen = [];
+  for (const s of SUITS) for (const r of RANKS) {
+    const id = s + r;
+    if (!seen.has(id)) unseen.push({ suit: s, rank: r, id });
+  }
+
+  const otherSeats = [0, 1, 2, 3, 4].filter(s => s !== seat);
+  const oppHandCounts = otherSeats.map(s => {
+    if (players && players[s] && players[s].handCount !== undefined) return players[s].handCount;
+    const played = (playedCards || []).filter(c => c.seat === s).length;
+    const inTrick = (trick || []).some(t => t.seat === s) ? 1 : 0;
+    return Math.max(0, 10 - played - inTrick);
+  });
+
+  // 1. 手札の絶対勝利チェック
+  for (const c of hand) {
+    if (c.id === '♠A' && unseen.some(u => u.id === '♥Q')) return false;
+    if (c.id === '♥Q' && unseen.some(u => u.id === '♠A')) return false;
+
+    if (contract.suit !== 'NT') {
+      if (c.rank === 'J' && c.suit === contract.suit) {
+        if (unseen.some(u => u.id === '♠A')) return false;
+      }
+      if (c.rank === 'J' && isSameColorSuit(c.suit, contract.suit)) {
+        if (unseen.some(u => u.id === '♠A')) return false;
+        if (unseen.some(u => u.rank === 'J' && u.suit === contract.suit)) return false;
+      }
+    }
+
+    if (c.rank !== '2') {
+      const suit2 = c.suit + '2';
+      if (unseen.some(u => u.id === suit2)) {
+        let canSameTwo = true;
+        for (let i = 0; i < otherSeats.length; i++) {
+          const s = otherSeats[i];
+          if (oppHandCounts[i] === 0) continue;
+          if (voids && voids[s] && voids[s][c.suit]) { canSameTwo = false; break; }
+        }
+        if (canSameTwo) return false;
+      }
+    }
+
+    for (const u of unseen) {
+      if (u.rank === '2' && u.suit === c.suit && c.rank !== '2') continue;
+      const powerC = cardPower(contract, 1, c, [{ seat: 0, card: c }]);
+      const powerU = cardPower(contract, 1, u, [{ seat: 1, card: u }]);
+      if (powerU > powerC) return false;
+    }
+  }
+
+  // 2. 全取り負けの回避と勝利条件
+  const isNapSide = seat === contract.nap || (!contract.solo && seat === contract.deputy);
+  const currentNapPts = points ? (points[contract.nap] || 0) + (contract.solo ? 0 : (points[contract.deputy] || 0)) : 0;
+  const currentAlliancePts = points ? points.reduce((sum, p, i) => sum + (i !== contract.nap && (contract.solo || i !== contract.deputy) ? p : 0), 0) + (allianceKittyPoints || 0) : 0;
+  const remainingPoints = unseen.filter(c => ['10','J','Q','K','A'].includes(c.rank)).length;
+
+  if (isNapSide) {
+    const finalNapPts = currentNapPts + remainingPoints;
+    if (finalNapPts === 20 && contract.num < 20) return false;
+    if (!(finalNapPts >= contract.num && (contract.num === 20 || finalNapPts < 20))) return false;
+  } else {
+    const finalAlliancePts = currentAlliancePts + remainingPoints;
+    if (!(finalAlliancePts > 20 - contract.num)) return false;
+  }
+
+  return true;
 }
