@@ -5,7 +5,7 @@ import {
   isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer,
-  getStateHash, getSimilarityDistance
+  getStateHash, getSimilarityDistance, analyzeDiscardOptions
 } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 import { handleQuizRequest, quizSchema } from './quiz-api.js';
@@ -148,7 +148,8 @@ export default {
             env.DB.prepare("DELETE FROM ai_play_experience"),
             env.DB.prepare("DELETE FROM ai_state_experience"),
             env.DB.prepare("DELETE FROM ai_hall_of_fame"),
-            env.DB.prepare("DELETE FROM quiz_candidates")
+            env.DB.prepare("DELETE FROM quiz_candidates"),
+            env.DB.prepare("DELETE FROM ai_discard_metrics")
           ]);
           __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
           __cachedExperience = null; __cachedExperienceTime = 0;
@@ -230,7 +231,7 @@ export default {
         let userId = null;
         if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
-        
+
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         const newComRating = Number(body.comRating);
         if (Number.isFinite(newComRating)) {
@@ -336,11 +337,18 @@ export default {
         return response(results || []);
       }
 
+      // ★ 新規: 捨て札戦略評価指標の取得API
+      if (request.method === "GET" && url.pathname === "/api/ai/discard-metrics") {
+        const limit = parseInt(url.searchParams.get("limit")) || 20;
+        const { results } = await env.DB.prepare("SELECT * FROM ai_discard_metrics ORDER BY generation DESC, avg_ev_loss ASC LIMIT ?").bind(limit).all();
+        return response(results || []);
+      }
+
       return new Response("Not found", { status: 404 });
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-// ===== [worker.js 前半 終了] ===
+// ===== [worker.js 前半 終了] ====
 // ===== [worker.js 後半 開始] =====
 // ※ 前半の続きとして記述
 
@@ -937,7 +945,7 @@ function playCard(m, seat, id, room, env) {
   m.humanAutoPlayAt = null;
   m.botThinkAt = null;
   if (m.trick.length < 5) {
-    m.active = (seat + 1) % 5; // ★ 修正: 時計回りに進行
+    m.active = (seat + 1) % 5; // ★ 時計回りに進行
     m.deadline = Date.now() + 30000;
     m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。");
     publish(m, room);
@@ -1077,7 +1085,19 @@ function botAction(m, room) {
     else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); }
     return;
   }
-  if (m.phase === "discard") { const drop = chooseDiscard(p.hand, m.contract.suit).map(x => x.id); discardCards(m, i, drop, room); return; }
+  if (m.phase === "discard") {
+    // ★ 修正: コンテキストを渡す
+    const discardContext = {
+      num: m.contract.num,
+      hasMighty: p.hand.some(c => c.id === '♠A'),
+      deputyHasMighty: true,
+      protectedCallId: (m.contract.solo && m.contract.call) ? m.contract.call.id : null,
+      params
+    };
+    const drop = chooseDiscard(p.hand, m.contract.suit, discardContext).map(x => x.id);
+    discardCards(m, i, drop, room);
+    return;
+  }
   if (m.phase === "play") {
     const legal = legalCards(m, i);
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
@@ -1160,7 +1180,15 @@ function timeoutAction(m, room) {
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
     else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); }
   } else if (m.phase === "discard") {
-    const ids = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank)).slice(0, 2).map(x => x.id);
+    // ★ 修正: コンテキストを渡す
+    const discardContext = {
+      num: m.contract.num,
+      hasMighty: p.hand.some(c => c.id === '♠A'),
+      deputyHasMighty: true,
+      protectedCallId: (m.contract.solo && m.contract.call) ? m.contract.call.id : null,
+      params
+    };
+    const ids = chooseDiscard(p.hand, m.contract.suit, discardContext).map(x => x.id);
     discardCards(m, i, ids, room);
   } else if (m.phase === "play") {
     const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
@@ -1386,7 +1414,7 @@ export const room = {
         for (const seat of m.auction.active.slice()) {
           if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) {
             if (m.auction.needsHumanConfirm && seat === m.auction.high.player) {
-              // ★ 修正: 確定待ちフリーズ防止。一定時間（30秒）経過で強制確定
+              // 確定待ちフリーズ防止
               m.auction.needsHumanConfirm = false;
               auctionDone(m, seat, room, true);
               break;
