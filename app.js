@@ -4,7 +4,7 @@ import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard,
   winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay, handStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
-  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer
+  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer, analyzeDiscardOptions
 } from './ai-tactics.js';
 
 const numWorkers = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
@@ -40,7 +40,11 @@ const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights
   tossUpSafetyMargin:0.5, tossUpSafetyMarginBottom:0.0,
   signalS1Bonus:1, signalS2Bonus:2, signalThreeRoleBonus:4, signalS3Bonus:2,
   s1RequiredMinorCards:2, s3RequiredAces:2,
-  sameColorBidderLimit:2, ntBidderLimit:2, s2ThreeRoleExtra:1
+  sameColorBidderLimit:2, ntBidderLimit:2, s2ThreeRoleExtra:1,
+  voidStrategyWeight:1.0, isolatedFaceDiscardBonus:0.6, trumpCountForVoid:5,
+  lowBidVoidPenalty:1.5, midBidVoidPenalty:0.5, highBidVoidBonus:0.8,
+  voidLeadProbability:0.55, cutTrickValue:2.0, isolatedFaceThreshold:2,
+  ntVoidPenalty:3.0, ntHighBidVoidBonus:1.5
 },players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[],
   bidSignals: Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 })),
   properBids: [13, 13, 13, 13, 13],
@@ -654,6 +658,8 @@ function humanApprove(forced=false){
         message(`${name(g.mySeat)}が適正値（${properBid}）まで段階上げ中…`);
         setTimeout(() => {
           if (g.phase !== 'auction') return;
+          // ★ 修正: 自分がまだ最高宣言者でなければ何もしない
+          if (g.auction.high.player !== g.mySeat) return;
           const nextNum = Math.min(properBid, g.auction.high.num + 1);
           const suit = g.auction.high.suit;
           g.bidHistory.push({ round: g.round, seat: g.mySeat, num: nextNum, suit });
@@ -963,6 +969,8 @@ function auctionEnd(w, skipProperRaise = false){
     drawAuction(); drawSeats();
     setTimeout(() => {
       if (g.phase !== 'auction') return;
+      // ★ 修正: 自分がまだ最高宣言者でなければ何もしない
+      if (g.auction.high.player !== w) return;
       const nextNum = Math.min(properBid, g.auction.high.num + 1);
       const suit = g.auction.high.suit;
       g.bidHistory.push({ round: g.round, seat: w, num: nextNum, suit });
@@ -993,7 +1001,6 @@ function auctionEnd(w, skipProperRaise = false){
   kittyStart();
 }
 // ===== [app.js 前半 終了] =====
-
 // ===== [app.js 後半 開始] =====
 // ===== [app.js 後半 開始] =====
 // ※ 前半の続きとして記述
@@ -1069,8 +1076,30 @@ function kittyStart(){
   phase('浮き札の交換');
   if(n===g.mySeat){
     const cp=$('call-panel');if(!cp)return;
+    // ★ 修正: 捨て札の期待値分析を事前に計算して表示
+    const discardAnalysis = analyzeDiscardOptions(g.players[n].hand, g.contract.suit, {
+      num: g.contract.num,
+      hasMighty: g.players[n].hand.some(c => c.id === '♠A'),
+      deputyHasMighty: true,
+      protectedCallId: null,
+      params: g.aiWeights
+    }, g.aiWeights);
+    let analysisHint = '';
+    if (discardAnalysis && discardAnalysis.options && discardAnalysis.options.length >= 2) {
+      const sorted = discardAnalysis.options.slice().sort((a, b) => b.ev - a.ev);
+      const evDiff = Math.abs(sorted[0].ev - sorted[1].ev);
+      if (evDiff < 0.5) {
+        const topType = sorted[0].type === 'void' ? 'ボイド作成' : '全スート維持';
+        const secType = sorted[1].type === 'void' ? 'ボイド作成' : '全スート維持';
+        analysisHint = `<div class="micro-copy" style="margin-top:8px;color:#e6be72;font-size:11px;">⚖️ 期待値拮抗（差 ${evDiff.toFixed(2)}）<br>${topType} vs ${secType} で迷う局面です</div>`;
+      } else if (sorted[0].type === 'void') {
+        analysisHint = `<div class="micro-copy" style="margin-top:8px;color:#a9d2ae;font-size:11px;">💡 期待値: ボイド作成が有利（EV ${sorted[0].ev.toFixed(2)}）</div>`;
+      } else {
+        analysisHint = `<div class="micro-copy" style="margin-top:8px;color:#a9d2ae;font-size:11px;">💡 期待値: 全スート維持が有利（EV ${sorted[0].ev.toFixed(2)}）</div>`;
+      }
+    }
     cp.classList.remove('hidden');
-    cp.innerHTML='<div class="panel-title">手札から2枚を選んで捨ててください</div><div class="panel-row"><span class="micro-copy" id="discard-count">0 / 2 SELECTED</span><button class="small-action" id="discard-ok" disabled>決定</button></div>';
+    cp.innerHTML='<div class="panel-title">手札から2枚を選んで捨ててください</div>'+analysisHint+'<div class="panel-row"><span class="micro-copy" id="discard-count">0 / 2 SELECTED</span><button class="small-action" id="discard-ok" disabled>決定</button></div>';
     renderHand(true);
     const dc=$('discard-count'), dok=$('discard-ok');
     if(dc)dc.textContent=g.discard.size+' / 2枚選択';
@@ -1093,7 +1122,15 @@ function kittyStart(){
     return
   }
   if(g.onlineState && g.room) return;
-  const drop=chooseDiscard(g.players[n].hand,g.contract.suit);
+  // ★ 修正: COMの捨て札選択にコンテキストを渡す
+  const comDiscardContext = {
+    num: g.contract.num,
+    hasMighty: g.players[n].hand.some(c => c.id === '♠A'),
+    deputyHasMighty: true,
+    protectedCallId: null,
+    params: g.aiWeights
+  };
+  const drop=chooseDiscard(g.players[n].hand, g.contract.suit, comDiscardContext);
   g.players[n].hand=g.players[n].hand.filter(c=>!drop.some(x=>x.id===c.id));
   g.kitty=drop;
   g.discardedKitty=drop.slice();
@@ -1425,7 +1462,7 @@ function play(i,c){
   $('trick-cards')?.append(cardEl(c,'trick-card played-seat-'+i));
   
   if(g.trick.length<5){
-    g.active=(i+1)%5; // ★ 修正: 時計回り
+    g.active=(i+1)%5;
     playTurn();
     return
   }
@@ -2178,7 +2215,7 @@ $('show-record')?.addEventListener('click', records);
 $('show-ranking')?.addEventListener('click', () => { g.leaderboardExpanded = !g.leaderboardExpanded; loadLeaderboard(); });
 
 $('open-quiz')?.addEventListener('click', async () => {
-  try { const mod = await import('./quiz-app.js?v=45'); mod.openQuizScreen(); }
+  try { const mod = await import('./quiz-app.js?v=46'); mod.openQuizScreen(); }
   catch (err) { console.error(err); alert('何切る問題集の読み込みに失敗しました: ' + err.message); }
 });
 
