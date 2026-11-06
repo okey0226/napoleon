@@ -7,7 +7,10 @@ export const quizSchema = [
   "CREATE INDEX IF NOT EXISTS quiz_answers_u ON quiz_answers(user_id)",
   "CREATE TABLE IF NOT EXISTS quiz_insights (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL UNIQUE, human_majority INTEGER NOT NULL, ai_answer INTEGER NOT NULL, agreement_rate REAL NOT NULL, total_answers INTEGER NOT NULL, synced_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
-  "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)"
+  "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)",
+  // ★ 新規: 捨て札戦略評価指標テーブル
+  "CREATE TABLE IF NOT EXISTS ai_discard_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, strategy_index INTEGER NOT NULL, avg_ev_loss REAL NOT NULL DEFAULT 0, optimal_rate REAL NOT NULL DEFAULT 0, void_choice_rate REAL NOT NULL DEFAULT 0, close_call_rate REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS ai_discard_metrics_gen ON ai_discard_metrics(generation DESC)"
 ];
 
 async function getSessionUser(request, env) {
@@ -35,7 +38,6 @@ async function resolveQuestion(id, env) {
       const row = await env.DB.prepare("SELECT * FROM quiz_candidates WHERE id=?").bind(id).first();
       if (!row) return null;
       const scenario = JSON.parse(row.scenario_json);
-      // ★ 修正: contract.num がない古いデータはスキップ
       if (!scenario.contract || scenario.contract.num === undefined) {
         return null;
       }
@@ -70,22 +72,28 @@ export async function handleQuizRequest(request, env, url) {
       const { results } = await env.DB.prepare("SELECT question_id FROM quiz_answers WHERE user_id=?").bind(userId).all();
       const answeredIds = new Set((results || []).map(r => r.question_id));
       const perCategory = {};
-
-      // ★ 修正: 未回答IDをためていくバッファ
       const unanswered = [];
+      let grandTotal = 0;
+      let grandAnswered = 0;
 
       // 静的クイズの集計
       for (const c of QUIZ_CATEGORIES) {
         let answered = 0;
+        let validTotal = 0;
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
           const id = makeQuestionId(c, i);
+          // ★ 修正: discard カテゴリは生成失敗する可能性があるため、存在チェック
+          if (c === 'discard' && !getQuestion(id)) continue;
+          validTotal++;
           if (answeredIds.has(id)) answered++;
           else unanswered.push(id);
         }
-        perCategory[c] = { answered, total: QUIZ_COUNTS[c] };
+        perCategory[c] = { answered, total: validTotal };
+        grandTotal += validTotal;
+        grandAnswered += answered;
       }
 
-      // 候補問題の集計
+      // 動的候補問題の集計（playカテゴリに加算）
       let candidateTotal = 0;
       let candidateAnswered = 0;
       try {
@@ -101,21 +109,20 @@ export async function handleQuizRequest(request, env, url) {
         console.warn('quiz_candidates query failed', e);
       }
 
-      // 合計に候補問題数を加算
       if (perCategory['play']) {
         perCategory['play'].total += candidateTotal;
         perCategory['play'].answered += candidateAnswered;
       }
+      grandTotal += candidateTotal;
+      grandAnswered += candidateAnswered;
 
-      // ★ 修正: 未回答プールからランダムに1問選ぶ
       const nextId = unanswered.length > 0
         ? unanswered[Math.floor(Math.random() * unanswered.length)]
         : null;
 
-      const total = totalQuestionCount() + candidateTotal;
       return noCacheJson({
-        total,
-        answered: answeredIds.size,
+        total: grandTotal,
+        answered: grandAnswered,
         perCategory,
         nextQuestionId: nextId,
         candidateTotal,
@@ -128,7 +135,7 @@ export async function handleQuizRequest(request, env, url) {
   const mQ = /^\/api\/quiz\/q\/([a-zA-Z0-9\-]+)$/.exec(url.pathname);
   if (mQ && request.method === 'GET') {
     const userId = await getSessionUser(request, env);
-    
+
     let question = null;
     try {
       question = await resolveQuestion(mQ[1], env);
@@ -137,8 +144,6 @@ export async function handleQuizRequest(request, env, url) {
     }
 
     if (!question) {
-      // ★ 修正: 古い候補データなどで問題が見つからない場合、次の問題を探すか404を返す
-      // ここではシンプルに404を返し、フロントエンドの loadNext でリカバリーさせる
       return noCacheJson({ error: 'not found' }, { status: 404 });
     }
 
@@ -162,10 +167,10 @@ export async function handleQuizRequest(request, env, url) {
       } catch {}
     }
     return noCacheJson({
-      id: question.id, 
+      id: question.id,
       category: category,
       title: question.title || '',
-      scenario: question.scenario || {}, 
+      scenario: question.scenario || {},
       options: question.options || [],
       myAnswer, reveal,
       stats: reveal ? stats : null,
@@ -184,7 +189,7 @@ export async function handleQuizRequest(request, env, url) {
     try { body = await request.json(); } catch { return noCacheJson({ error: 'invalid' }, { status: 400 }); }
     const questionId = String(body.questionId || '');
     const choice = Number(body.choiceIndex);
-    
+
     const question = await resolveQuestion(questionId, env);
     if (!question) return noCacheJson({ error: 'question not found' }, { status: 404 });
     if (!Number.isInteger(choice) || choice < 0 || choice >= (question.options?.length || 0)) {
