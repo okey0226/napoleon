@@ -1888,7 +1888,6 @@ export function estimateDeputyDPoints(receivedSignals) {
 }
 
 export function computeSupportLimit(hand, napSuit, params = defaultStrategy(), currentNapBid = 13) {
-  // ★ 修正: 相手のbidに依存せず、副官自身の期待獲得枚数から算出する
   let expectedWins = 0;
   try {
     expectedWins = evaluateBidPlan(hand, napSuit, params, [], 0, [], [], [{},{},{},{},{}]).expectedWins;
@@ -1907,7 +1906,6 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
     return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '初期宣言なし' };
   }
 
-  // ★ 修正: nScore/2 の計算を廃止し、computeProperBid を基準にする
   let proper = { properBid: 13, suit: currentHigh.suit };
   try {
     proper = computeProperBid(hand, currentHigh.suit, params, 0, null, null, null, null, null, [], 1);
@@ -1941,46 +1939,82 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
   return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '連合軍（降り）' };
 }
 
-/**
- * 副官指名（受信シグナルを考慮）
- */
+// ============================================================
+// ★★ 修正箇所: chooseDeputyCall ★★
+// 原則: 役札（♠A / 正J / 裏J）を網羅的に指名対象として検討
+// 例外: ナポレオンが役札をすべて保持している場合のみ非役札を検討
+// ============================================================
 export function chooseDeputyCall(hand, kitty, trump, level, num, params, experience, receivedSignals = []) {
   const isTrumpSuit = trump !== 'NT';
   const sameColor = isTrumpSuit ? sameColorSuitOf(trump) : '♠';
   const isIn = id => hand.some(c => c.id === id);
   const inKitty = id => (kitty || []).some(c => c.id === id);
-  const deputyAppeals = (receivedSignals || []).filter(s => ['S1', 'S2', 'S3', 'S4'].includes(s.intent));
+
+  // ============================================================
+  // 原則: 役札（♠A / 正J / 裏J）を網羅的に検討
+  // 「ナポレオン未所持」かつ「捨て札にない」役札を強い順に指名する。
+  // シグナルより役札を優先する。
+  // ============================================================
+  const roleCards = [];
+  // ① マイティ（♠A）
+  if (!isIn('♠A') && !inKitty('♠A')) roleCards.push({ suit: '♠', rank: 'A', id: '♠A' });
+  // ② 正J（切札スートのJ）— NT時は役札として存在しない
+  if (isTrumpSuit && !isIn(trump + 'J') && !inKitty(trump + 'J')) {
+    roleCards.push({ suit: trump, rank: 'J', id: trump + 'J' });
+  }
+  // ③ 裏J（同色スートのJ）— NT時は役札として存在しない
+  if (isTrumpSuit && !isIn(sameColor + 'J') && !inKitty(sameColor + 'J')) {
+    roleCards.push({ suit: sameColor, rank: 'J', id: sameColor + 'J' });
+  }
+
+  // 役札が存在する（＝ナポレオン未所持）なら必ずその中から指名
+  if (roleCards.length > 0) {
+    const best = roleCards[0];
+    return { suit: best.suit, rank: best.rank, id: best.id };
+  }
+
+  // ============================================================
+  // ここに到達 = 役札をナポレオンがすべて保持（or 捨て札格納）
+  // → この場合のみ非役札（A / 2）を検討する
+  // ============================================================
+  const deputyAppeals = (receivedSignals || [])
+    .filter(s => ['S1', 'S2', 'S3', 'S4'].includes(s.intent));
+
+  // ④ シグナル対応スートのA（強カードでスートを決定）
   for (const appeal of deputyAppeals) {
-    if (appeal.intent === 'S2' || appeal.intent === 'S3') {
-      const targetSuit = appeal.suit || sameColor;
-      if (!isIn(targetSuit + 'J') && !inKitty(targetSuit + 'J')) {
-        return { suit: targetSuit, rank: 'J', id: targetSuit + 'J' };
-      }
+    const targetSuit = appeal.suit || (appeal.intent === 'S1' ? trump : sameColor);
+    if (targetSuit === 'NT') continue;
+    if (!isIn(targetSuit + 'A') && !inKitty(targetSuit + 'A')) {
+      return { suit: targetSuit, rank: 'A', id: targetSuit + 'A' };
     }
   }
-  for (const appeal of deputyAppeals) {
-    if (appeal.intent === 'S1') {
-      if (!isIn(trump + '2') && !inKitty(trump + '2')) {
-        return { suit: trump, rank: '2', id: trump + '2' };
-      }
+
+  // ⑤ 弱スートのA（シグナル無効時）
+  const weakSuits = SUITS
+    .filter(s => s !== trump)
+    .sort((a, b) =>
+      hand.filter(c => c.suit === a).length - hand.filter(c => c.suit === b).length
+    );
+  for (const s of weakSuits) {
+    if (!isIn(s + 'A') && !inKitty(s + 'A')) {
+      return { suit: s, rank: 'A', id: s + 'A' };
     }
   }
-  for (const appeal of deputyAppeals) {
-    if (appeal.intent === 'S4') {
-      if (!isIn('♠A') && !inKitty('♠A')) {
-        return { suit: '♠', rank: 'A', id: '♠A' };
-      }
+
+  // ⑥ 最終手段：弱スートの2
+  for (const s of weakSuits) {
+    if (!isIn(s + '2') && !inKitty(s + '2')) {
+      return { suit: s, rank: '2', id: s + '2' };
     }
   }
-  if (!isIn('♠A') && !inKitty('♠A')) return { suit: '♠', rank: 'A', id: '♠A' };
-  if (isTrumpSuit && !isIn(trump + 'J') && !inKitty(trump + 'J')) return { suit: trump, rank: 'J', id: trump + 'J' };
-  if (isTrumpSuit && !isIn(sameColor + 'J') && !inKitty(sameColor + 'J')) return { suit: sameColor, rank: 'J', id: sameColor + 'J' };
-  const weakSuits = SUITS.filter(s => s !== trump).sort((a, b) => hand.filter(c => c.suit === a).length - hand.filter(c => c.suit === b).length);
-  for (const s of weakSuits) if (!isIn(s + 'A') && !inKitty(s + 'A')) return { suit: s, rank: 'A', id: s + 'A' };
-  for (const s of weakSuits) if (!isIn(s + '2') && !inKitty(s + '2')) return { suit: s, rank: '2', id: s + '2' };
+
+  // フォールバック（実質到達しない）
   for (const s of SUITS) {
     if (s === trump) continue;
-    for (const r of RANKS) { const id = s + r; if (!isIn(id) && !inKitty(id)) return { suit: s, rank: r, id }; }
+    for (const r of RANKS) {
+      const id = s + r;
+      if (!isIn(id) && !inKitty(id)) return { suit: s, rank: r, id };
+    }
   }
   return { suit: '♠', rank: '2', id: '♠2' };
 }
