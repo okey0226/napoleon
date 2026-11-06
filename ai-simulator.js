@@ -1,4 +1,4 @@
-// ai-simulator.js (自己対戦ロジック・オラクルB統合・プレイ品質計測・クイズ抽出・上がり宣言)
+// ai-simulator.js (自己対戦ロジック・オラクルB統合・プレイ品質計測・クイズ抽出・上がり宣言・競りシグナル)
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
@@ -6,7 +6,11 @@ import {
   computeProperBid, canSendSignal, isTwoRole, isThreeRole, countSameColorBidders,
   getStateHash, getSimilarityDistance, oracleB,
   analyzeDiscardOptions, evaluateVoidStrategy,
-  canDeclareWin
+  canDeclareWin,
+  // ★ 新規: 競りシグナルロジック
+  determineRole, decideNextBid, inferIntentFromBid, estimateDeputyDPoints,
+  computeNScore, computeDScore, computeDPoints, computeSupportLimit,
+  evaluateBidPlan
 } from './ai-tactics.js';
 
 function safeJsonParse(str, fallback = null) {
@@ -50,7 +54,7 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
 }
 
 // ==========================================
-// ★ 新規: 捨て札選択の品質評価
+// 捨て札選択の品質評価
 // ==========================================
 
 function evaluateDiscardQuality(hand, trump, chosenCards, context, params) {
@@ -190,8 +194,6 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
 
   if (choiceOptions.length < 2) return null;
 
-  const bestIdx = 0;
-
   return {
     id: `gen-discard-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     category: 'discard',
@@ -204,7 +206,7 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
       taken: []
     }),
     options_json: JSON.stringify(choiceOptions.map((o, i) => ({ index: i, value: o.value, label: o.label }))),
-    ai_answer_index: bestIdx,
+    ai_answer_index: 0,
     reason: reasons.join(','),
     explanation: `自己対戦から抽出（${reasons.join(', ')}）。期待値が拮抗する捨て札選択です。`,
     generation: contract.round || null
@@ -218,7 +220,6 @@ export async function flushQuizCandidates(env) {
       `INSERT OR IGNORE INTO quiz_candidates(id, category, scenario_json, options_json, ai_answer_index, reason, explanation, generation) VALUES(?,?,?,?,?,?,?,?)`
     ).bind(q.id, q.category, q.scenario_json, q.options_json, q.ai_answer_index, q.reason, q.explanation, q.generation)
   );
-
   const CHUNK_SIZE = 50;
   try {
     for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
@@ -248,9 +249,9 @@ export async function flushExperience(env) {
   for (const q of experienceQueue) {
     statements.push(
       env.DB.prepare(
-        `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at)
-         VALUES(?,?,?,?,CURRENT_TIMESTAMP)
-         ON CONFLICT(state_hash) DO UPDATE SET
+        `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
+         VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
+         ON CONFLICT(state_hash) DO UPDATE SET 
            card_win_rates = excluded.card_win_rates,
            samples = samples + excluded.samples,
            generation = MAX(generation, excluded.generation),
@@ -258,7 +259,6 @@ export async function flushExperience(env) {
       ).bind(q.hash, q.rates, q.samples, q.gen)
     );
   }
-
   const CHUNK_SIZE = 50;
   try {
     for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
@@ -309,116 +309,90 @@ function categorizeDecision(ctx) {
 }
 
 // ==========================================
-// 競りシミュレーション（時間制ルール維持・逐次文脈判断型）
+// 競りシミュレーション（段階上げ＋暗黙シグナル）
 // ==========================================
 
 function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1) {
+  // ★ 各席の役割を判定
+  const roles = seatParams.map((p, i) => {
+    try { return determineRole(hands[i], p); }
+    catch (e) { return { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' }; }
+  });
+
   const bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
   let high = { num: 12, suit: '', player: -1, solo: false, plan: null, bidPlan: null };
   const seatState = ['active', 'active', 'active', 'active', 'active'];
 
-  const properBids = [];
-  for (let seat = 0; seat < 5; seat++) {
-    const p = seatParams[seat];
-    const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hands[seat], suit, p) }));
-    suitScores.sort((a, b) => b.score - a.score);
-    const topSuits = suitScores.slice(0, 2).map(x => x.suit);
-    const ntScore = ntHandStrength(hands[seat], p);
-    const candidates = [];
-    for (const suit of topSuits) {
-      const proper = computeProperBid(hands[seat], suit, p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], [], round);
-      candidates.push({ suit, properBid: proper.properBid, expected: proper.expected, plan: proper.plan, archetype: proper.archetype });
-    }
-    if (ntScore > 6) {
-      const ntProper = computeProperBid(hands[seat], 'NT', p, seat, bidSignals[seat], null, openKitty, [], [{},{},{},{},{}], [], round);
-      candidates.push({ suit: 'NT', properBid: ntProper.properBid, expected: ntProper.expected, plan: ntProper.plan, archetype: ntProper.archetype });
-    }
-    candidates.sort((a, b) => b.expected - a.expected);
-    properBids.push({ candidates, baseStr: handStrength(hands[seat]), topSuits, ntScore });
-  }
-
   let turnSeat = 0;
   let actionCount = 0;
-  const MAX_ACTIONS = 50;
+  const MAX_ACTIONS = 60;
+  let stageCount = 0;
+  let roleAccuracyHits = 0; // ナポレオン志望者がナポレオンになったか
 
   while (actionCount < MAX_ACTIONS) {
     actionCount++;
     const remainingActive = seatState.filter((s, i) => s === 'active' && i !== high.player).length;
     if (remainingActive === 0) break;
+
     const seat = turnSeat;
     turnSeat = (turnSeat + 1) % 5;
     if (seatState[seat] !== 'active') continue;
     if (high.player === seat) continue;
 
     const p = seatParams[seat];
-    const candidates = properBids[seat].candidates;
-    const received = bidSignals[seat].received || [];
+    const role = roles[seat];
 
-    if (!candidates.length) {
-      seatState[seat] = 'holding';
-      bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
-      continue;
-    }
-    const best = candidates[0];
+    try {
+      const decision = decideNextBid(hands[seat], high, role, p, bidSignals[seat].received || []);
 
-    let forcePass = false;
-    if (received.some(s => s.type === 'S2') && best.properBid < high.num) forcePass = true;
-    if (received.some(s => s.type === 'S4')) forcePass = true;
-    if (high.num >= 17 && best.properBid <= high.num) forcePass = true;
-    if (high.num >= 15 && best.properBid <= high.num + 1) forcePass = true;
-
-    if (forcePass) {
-      seatState[seat] = 'holding';
-      bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
-      continue;
-    }
-
-    const signal = canSendSignal(hands[seat], high, seat, bidSignals[seat], p, null);
-    const sameColorCount = countSameColorBidders(bidSignals, bidHistoryOut, high.suit);
-    const myTwoRole = high.suit !== 'NT' && isTwoRole(hands[seat], high.suit);
-    const limit = high.suit === 'NT' ? (p.ntBidderLimit ?? 2) : (p.sameColorBidderLimit ?? 2);
-    const canTossUp = sameColorCount < limit || myTwoRole;
-
-    let action = 'approve';
-    if (signal.S4 && high.num === 17 && canTossUp) {
-      high = { num: 20, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidSignals[seat].sent = { type: 'S4', suit: signal.targetSuit, num: 20 };
-      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S4', suit: signal.targetSuit, num: 20 });
-      bidHistoryOut.push({ round, seat, num: 20, suit: signal.targetSuit, action: 'S4' });
-      action = 'S4';
-    } else if (signal.S2 && signal.targetSuit && canTossUp && high.num < 20) {
-      const nextNum = SV[signal.targetSuit] <= SV[high.suit] ? Math.min(20, high.num + 1) : high.num;
-      high = { num: nextNum, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidSignals[seat].sent = { type: 'S2', suit: signal.targetSuit, num: nextNum };
-      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S2', suit: signal.targetSuit, num: nextNum });
-      bidHistoryOut.push({ round, seat, num: nextNum, suit: signal.targetSuit, action: 'S2' });
-      action = 'S2';
-    } else if (signal.S1 && signal.targetSuit && canTossUp && high.num < 20) {
-      const nextNum = SV[signal.targetSuit] <= SV[high.suit] ? Math.min(20, high.num + 1) : high.num;
-      high = { num: nextNum, suit: signal.targetSuit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-      bidSignals[seat].sent = { type: 'S1', suit: signal.targetSuit, num: nextNum };
-      for (let s = 0; s < 5; s++) if (s !== seat) bidSignals[s].received.push({ from: seat, type: 'S1', suit: signal.targetSuit, num: nextNum });
-      bidHistoryOut.push({ round, seat, num: nextNum, suit: signal.targetSuit, action: 'S1' });
-      action = 'S1';
-    } else if (best.properBid > high.num) {
-      const targetNum = Math.min(20, Math.max(high.num + 1, best.properBid));
-      if (targetNum > high.num + 2 && high.num >= 15) {
-        action = 'approve';
-      } else {
-        high = { num: targetNum, suit: best.suit, player: seat, solo: false, plan: best.plan, bidPlan: best.plan };
-        bidHistoryOut.push({ round, seat, num: targetNum, suit: best.suit, action: 'bid' });
-        action = 'bid';
+      if (decision.type === 'PASS') {
+        seatState[seat] = 'holding';
+        bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
+        continue;
       }
-    }
 
-    if (action === 'approve') {
+      // 有効な宣言かチェック
+      if (decision.num >= 13 && decision.num <= 20 && (SUITS.includes(decision.suit) || decision.suit === 'NT')) {
+        const isValid = (decision.num > high.num) || (decision.num === high.num && SV[decision.suit] > SV[high.suit]);
+        if (!isValid) {
+          seatState[seat] = 'holding';
+          bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
+          continue;
+        }
+
+        const prevBid = { ...high };
+        high = { num: decision.num, suit: decision.suit, player: seat, solo: false, plan: role.plan, bidPlan: role.plan };
+        stageCount++;
+        bidHistoryOut.push({ round, seat, num: decision.num, suit: decision.suit, action: decision.intent });
+
+        // ★ シグナル推論（他のプレイヤーが受信）
+        if (prevBid.player >= 0) {
+          const intent = inferIntentFromBid(prevBid, { num: high.num, suit: high.suit, player: seat }, p);
+          for (let s = 0; s < 5; s++) {
+            if (s === seat) continue;
+            if (!bidSignals[s].received) bidSignals[s].received = [];
+            bidSignals[s].received.push({ from: seat, intent: intent.intent, strength: intent.strength, num: high.num, suit: high.suit });
+          }
+        }
+
+        // 上がったので、保留中のプレイヤーを復帰させる
+        for (let s = 0; s < 5; s++) {
+          if (seatState[s] === 'holding' && s !== seat) seatState[s] = 'active';
+        }
+      } else {
+        seatState[seat] = 'holding';
+        bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
+      }
+    } catch (e) {
       seatState[seat] = 'holding';
       bidHistoryOut.push({ round, seat, num: 0, suit: 'PASS', action: 'approve' });
-    } else {
-      for (let s = 0; s < 5; s++) if (seatState[s] === 'holding') seatState[s] = 'active';
     }
   }
-  return high;
+
+  // ナポレオン志望者がナポレオンになったか
+  if (high.player >= 0 && roles[high.player].role === 'NAP') roleAccuracyHits = 1;
+
+  return { ...high, stageCount, roleAccuracyHits, roles };
 }
 
 // ==========================================
@@ -444,6 +418,15 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
   matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
   if (matchBidHistory.length > 50) matchBidHistory.shift();
+
+  // ★ 競り品質指標の計算
+  let optimalBid = 13;
+  let pMakeAtFinal = 0;
+  try {
+    const planForNap = evaluateBidPlan(hands[nap], trump, params[nap] || defaultStrategy(), matchBidHistory, nap, kitty, [], [{},{},{},{},{}]);
+    optimalBid = planForNap.bestBidByExpectation || 13;
+    pMakeAtFinal = planForNap.pMake?.[num] ?? 0;
+  } catch (e) { /* フォールバック */ }
 
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
   hands[nap].push(...kitty); sortHand(hands[nap]);
@@ -473,7 +456,19 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     call = chooseSoloCall(hands[nap]);
     deputy = nap; contractBase.deputy = nap;
   } else {
-    call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap] || defaultStrategy());
+    // ★ 競り履歴からシグナルを抽出し、副官指名に渡す
+    const napSeatSignals = bidHistoryLocal
+      .filter(b => b.seat !== nap && b.action !== 'approve' && b.num > 0)
+      .map(b => {
+        const prev = bidHistoryLocal[bidHistoryLocal.indexOf(b) - 1];
+        if (prev && prev.action !== 'approve') {
+          return inferIntentFromBid({ num: prev.num, suit: prev.suit }, { num: b.num, suit: b.suit }, params[nap] || defaultStrategy());
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap] || defaultStrategy(), null, napSeatSignals);
     for (let i = 0; i < 5; i++) { if (i !== nap && hands[i].some(c => c.id === call.id)) { deputy = i; break; } }
     if (deputy < 0) { contractBase.solo = true; deputy = nap; call = chooseSoloCall(hands[nap]); }
     contractBase.deputy = deputy;
@@ -492,21 +487,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     const trick = [];
     let pointsInTrick = 0;
 
-    // ★ 上がり宣言判定（リード時のみ）
+    // 上がり宣言判定（リード時のみ）
     if (trick.length === 0) {
       const seat = active;
       const ctx = {
-        hand: hands[seat],
-        trick: [],
-        trickNo,
-        contract: contractBase,
-        playedCards: played,
-        voids,
-        seat,
-        discardedKitty: discard,
+        hand: hands[seat], trick: [], trickNo, contract: contractBase, playedCards: played,
+        voids, seat, discardedKitty: discard,
         players: hands.map(h => ({ handCount: h.length })),
-        points: roundPts,
-        allianceKittyPoints: allianceKittyPts,
+        points: roundPts, allianceKittyPoints: allianceKittyPts,
       };
       if (canDeclareWin(ctx)) {
         let allTaken = [];
@@ -554,13 +542,10 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
           const vl = computeValueLossRate(ctx, chosen, matchId, round, trickNo, decisionIndex, params[seat] || defaultStrategy());
           valueLossRate = vl.rate;
           playDecisions.push({
-            seat, trickNo, decisionIndex, valueLossRate,
-            category: cat, chosen: chosen.id, bestCard: vl.bestCard,
+            seat, trickNo, decisionIndex, valueLossRate, category: cat, chosen: chosen.id, bestCard: vl.bestCard,
             bestEv: vl.bestEv, actualEv: vl.actualEv
           });
-        } catch (e) {
-          console.warn('oracleB error:', e.message);
-        }
+        } catch (e) { console.warn('oracleB error:', e.message); }
         decisionIndex++;
       }
 
@@ -586,9 +571,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         if (winnerMyTeam(currentWinner.seat) && isMyTeam && powerAfter > powerBefore) {
           if (chosen.rank === 'A' || ['K', 'Q'].includes(chosen.rank)) overkillCount++;
         }
-        if (winnerMyTeam(currentWinner.seat) && isMyTeam && ['10', 'J', 'Q'].includes(chosen.rank)) {
-          feedSuccessCount++;
-        }
+        if (winnerMyTeam(currentWinner.seat) && isMyTeam && ['10', 'J', 'Q'].includes(chosen.rank)) feedSuccessCount++;
       }
 
       if (trick.length && chosen.suit !== trick[0].card.suit) { if (!voids[seat]) voids[seat] = {}; voids[seat][trick[0].card.suit] = true; }
@@ -623,6 +606,19 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   for (let i = 0; i < 5; i++) matchScores[i] += sc[i];
 
   const actualWins = napTricks + deputyTricks;
+
+  // ★ 競り品質指標
+  const bidGap = Math.abs(num - optimalBid);
+  const bidAccuracy = Math.abs(pMakeAtFinal - (made ? 1 : 0));
+  let deputySignalEffectiveness = 0;
+  if (!contractBase.solo && deputy !== nap) {
+    // 副官が実際に指名されて勝ったか
+    deputySignalEffectiveness = made ? 1 : 0;
+  } else if (contractBase.solo) {
+    deputySignalEffectiveness = 0.5; // ソロは中間
+  }
+  const roleAccuracy = high.roleAccuracyHits || 0;
+
   return {
     nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1,
@@ -630,9 +626,19 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     bidHistory: bidHistoryLocal,
     playDecisions,
     discardQuality,
+    auctionQuality: {
+      finalBid: num,
+      optimalBid,
+      bidGap,
+      bidAccuracy,
+      stageCount: high.stageCount || 0,
+      deputySignalEffectiveness,
+      roleAccuracy
+    },
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
+
 // ==========================================
 // 自己対戦バッチ実行
 // ==========================================
@@ -697,10 +703,17 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     valueLossNT: 0, valueLossNTN: 0,
     valueLossColor: 0, valueLossColorN: 0,
     smartPasses: 0, overcalls: 0, signalSuccesses: 0, opportunityLosses: 0,
+    // 捨て札品質指標
     discardEvLossSum: 0, discardTotalCount: 0,
     discardOptimalCount: 0, discardCloseCallCount: 0,
     discardVoidChoiceCount: 0, discardSafeChoiceCount: 0,
-    discardVoidWins: 0, discardSafeWins: 0
+    discardVoidWins: 0, discardSafeWins: 0,
+    // ★ 新規: 競り品質指標
+    bidGapSum: 0, bidGapN: 0,
+    bidAccuracySum: 0, bidAccuracyN: 0,
+    stageCountSum: 0, stageCountN: 0,
+    deputySignalSum: 0, deputySignalN: 0,
+    roleAccuracySum: 0, roleAccuracyN: 0
   }));
 
   experienceQueue = [];
@@ -741,6 +754,7 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
         totalFeeds += c.feedSuccessCount || 0;
         totalGolden += c.goldenFormationCount || 0;
 
+        // 捨て札品質
         if (c.nap === seat && c.discardQuality) {
           const dq = c.discardQuality;
           st.discardEvLossSum += dq.evLoss || 0;
@@ -751,6 +765,21 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
           if (dq.type === 'safe') st.discardSafeChoiceCount++;
           if (dq.isVoidChoice && c.made) st.discardVoidWins++;
           if (dq.type === 'safe' && c.made) st.discardSafeWins++;
+        }
+
+        // ★ 競り品質（ナポレオン時のみ）
+        if (c.nap === seat && c.auctionQuality) {
+          const aq = c.auctionQuality;
+          st.bidGapSum += aq.bidGap;
+          st.bidGapN++;
+          st.bidAccuracySum += aq.bidAccuracy;
+          st.bidAccuracyN++;
+          st.stageCountSum += aq.stageCount;
+          st.stageCountN++;
+          st.deputySignalSum += aq.deputySignalEffectiveness;
+          st.deputySignalN++;
+          st.roleAccuracySum += aq.roleAccuracy;
+          st.roleAccuracyN++;
         }
 
         for (const d of (c.playDecisions || [])) {
@@ -848,6 +877,28 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
         matchRating += optimalRate * 1.5;
       }
 
+      // ★ 新規: 競り品質のボーナス
+      if (st.bidGapN > 0) {
+        const avgBidGap = st.bidGapSum / st.bidGapN;
+        matchRating += (1 - Math.min(1, avgBidGap / 3)) * (p.weightBidGap ?? 3.0) * 10;
+      }
+      if (st.bidAccuracyN > 0) {
+        const avgBidAccuracy = st.bidAccuracySum / st.bidAccuracyN;
+        matchRating += (1 - Math.min(1, avgBidAccuracy / 0.2)) * (p.weightBidAccuracy ?? 2.0) * 5;
+      }
+      if (st.deputySignalN > 0) {
+        const avgDeputySignal = st.deputySignalSum / st.deputySignalN;
+        matchRating += avgDeputySignal * (p.weightDeputySignal ?? 3.0) * 5;
+      }
+      if (st.stageCountN > 0) {
+        const avgStage = st.stageCountSum / st.stageCountN;
+        matchRating += (1 - Math.abs(avgStage - 3) / 3) * (p.weightStageCount ?? 1.0) * 3;
+      }
+      if (st.roleAccuracyN > 0) {
+        const avgRoleAcc = st.roleAccuracySum / st.roleAccuracyN;
+        matchRating += avgRoleAcc * (p.weightRoleAccuracy ?? 2.0) * 5;
+      }
+
       st.totalOverkills += totalOverkills;
       st.totalFeeds += totalFeeds;
       st.goldenFormations += totalGolden;
@@ -891,23 +942,32 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     const discardOptimalRate = st.discardTotalCount > 0 ? st.discardOptimalCount / st.discardTotalCount : 0;
     const discardVoidRate = st.discardTotalCount > 0 ? st.discardVoidChoiceCount / st.discardTotalCount : 0;
 
+    // ★ 競り品質の集計値
+    const avgBidGap = st.bidGapN > 0 ? st.bidGapSum / st.bidGapN : 0;
+    const avgBidAccuracy = st.bidAccuracyN > 0 ? st.bidAccuracySum / st.bidAccuracyN : 0;
+    const avgDeputySignal = st.deputySignalN > 0 ? st.deputySignalSum / st.deputySignalN : 0;
+    const avgStageCount = st.stageCountN > 0 ? st.stageCountSum / st.stageCountN : 0;
+    const avgRoleAccuracy = st.roleAccuracyN > 0 ? st.roleAccuracySum / st.roleAccuracyN : 0;
+
     statements.push(
       env.DB.prepare(
         `INSERT INTO ai_strategy_log(
           generation, params, nap_win_rate, deputy_win_rate, alliance_win_rate, overall_win_rate,
           avg_rating_delta, matches, avg_bid, parent_id, avg_plan_accuracy,
-          avg_value_loss, value_loss_early, value_loss_mid, value_loss_late, value_loss_nt, value_loss_color
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          avg_value_loss, value_loss_early, value_loss_mid, value_loss_late, value_loss_nt, value_loss_color,
+          avg_bid_gap, bid_accuracy, deputy_signal_success_rate, avg_stage_count, role_accuracy
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(
         generation, JSON.stringify(nextPool[i]), napRate, depRate, alRate, napRate,
         avgRating, st.n, avgBid, parentIds[i] || null, avgPlanAcc,
-        avgVL, avgVLEarly, avgVLMid, avgVLLate, avgVLNT, avgVLColor
+        avgVL, avgVLEarly, avgVLMid, avgVLLate, avgVLNT, avgVLColor,
+        avgBidGap, avgBidAccuracy, avgDeputySignal, avgStageCount, avgRoleAccuracy
       )
     );
 
     statements.push(
       env.DB.prepare(
-        `INSERT INTO ai_discard_metrics(generation, strategy_index, avg_ev_loss, optimal_rate, void_choice_rate, close_call_rate)
+        `INSERT INTO ai_discard_metrics(generation, strategy_index, avg_ev_loss, optimal_rate, void_choice_rate, close_call_rate) 
          VALUES(?,?,?,?,?,?)`
       ).bind(
         generation, i, avgDiscardEvLoss, discardOptimalRate, discardVoidRate,
@@ -996,7 +1056,18 @@ export function generateInsights(strategies) {
     cutTrickValue: 'カット1回の価値',
     isolatedFaceThreshold: '孤立絵札閾値',
     ntVoidPenalty: 'NTボイドペナルティ',
-    ntHighBidVoidBonus: 'NT高宣言ボイドボーナス'
+    ntHighBidVoidBonus: 'NT高宣言ボイドボーナス',
+    // ★ 新規: 競りロジックパラメータ
+    napRoleThreshold1: 'NAP閾値（3役）', napRoleThreshold2: 'NAP閾値（2役）', napRoleThreshold3: 'NAP閾値（1役）',
+    deputyRoleThreshold1: 'DEP閾値（指名必須）', deputyRoleThreshold2: 'DEP閾値（十分）', deputyRoleThreshold3: 'DEP閾値（候補）',
+    supportLimitWeight: 'サポート上限重み', supportLimitDivisor: 'サポート上限除数',
+    sameSuitRaiseBonus: '同スート上げ信頼度', sameColorSupportBonus: '同色サポート信頼度',
+    sameColorSameBidBonus: '同色同枚数信頼度', crossColorCompeteBonus: '非同色競合度',
+    auctionObservationMs: '観察時間（ms）', auctionRiskTolerance: '競りリスク許容',
+    bidStepwiseAggression: '段階上げ積極性',
+    weightBidGap: 'bid乖離重み', weightBidAccuracy: 'P推定精度重み',
+    weightDeputySignal: '副官シグナル重み', weightStageCount: '段階数重み',
+    weightRoleAccuracy: '役割判定精度重み'
   };
 
   const deltas = [];
@@ -1037,6 +1108,38 @@ export function generateInsights(strategies) {
     title: '捨て札戦略（期待値ベース）',
     detail: `最上位戦略は「ボイド作成」と「全スート維持」を期待値で比較し、宣言枚数・切札枚数・孤立絵札の3変数で判断しています。低宣言時は全スート維持を優先し、高宣言＋孤立絵札持ちの場合はボイド作成を選択する傾向があります。`
   });
+
+  // ★ 競り品質のインサイト
+  if (strategies[0].avg_bid_gap != null) {
+    insights.push({
+      title: '競り精度（bid乖離）',
+      detail: `最適bidとの平均乖離: ${Number(strategies[0].avg_bid_gap || 0).toFixed(2)}枚（小さいほど正確）`
+    });
+  }
+  if (strategies[0].bid_accuracy != null) {
+    insights.push({
+      title: 'P推定精度',
+      detail: `P(成功)推定誤差: ${Number(strategies[0].bid_accuracy || 0).toFixed(3)}（小さいほど正確）`
+    });
+  }
+  if (strategies[0].deputy_signal_success_rate != null) {
+    insights.push({
+      title: '副官シグナル成功率',
+      detail: `副官指名→NAP勝利の成功率: ${(Number(strategies[0].deputy_signal_success_rate || 0) * 100).toFixed(1)}%`
+    });
+  }
+  if (strategies[0].avg_stage_count != null) {
+    insights.push({
+      title: '段階上げ回数',
+      detail: `1局あたりの平均段階上げ回数: ${Number(strategies[0].avg_stage_count || 0).toFixed(1)}回（3回前後が理想）`
+    });
+  }
+  if (strategies[0].role_accuracy != null) {
+    insights.push({
+      title: '役割判定精度',
+      detail: `NAP志望者がナポレオンになれた確率: ${(Number(strategies[0].role_accuracy || 0) * 100).toFixed(1)}%`
+    });
+  }
 
   const delta = Number(strategies[0].avg_rating_delta || 0);
   insights.push({
