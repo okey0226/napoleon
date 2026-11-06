@@ -70,6 +70,18 @@ export const defaultStrategy = () => ({
   weightGoldenFormation: 1.0, weightPlanAccuracy: 3.0, weightBiddingQuality: 2.0,
   weightNapAttempts: 4.0, weightMatchQuality: 2.0, weightRoleWinRate: 2.0,
   weightOverkill: 2.0, weightDeputyOvertrump: 3.0, weightOpportunityLoss: 3.0, weightWastedAce: 1.0,
+  // ★ 新規: 捨て札戦略（ボイド作成 vs 全スート維持）の評価パラメータ
+  voidStrategyWeight: 1.0,           // ボイド作成便益の全体重み
+  isolatedFaceDiscardBonus: 0.6,     // 孤立絵札を捨てる際のボーナス
+  trumpCountForVoid: 5,              // ボイド作成を許容する切札枚数の閾値
+  lowBidVoidPenalty: 1.5,            // 低宣言時（13-14）のボイド作成ペナルティ
+  midBidVoidPenalty: 0.5,            // 中宣言時（15-16）のボイド作成ペナルティ
+  highBidVoidBonus: 0.8,             // 高宣言時（17+）のボイド作成ボーナス
+  voidLeadProbability: 0.55,         // ボイドスートがリードされる確率
+  cutTrickValue: 2.0,                // カット1回の総価値（得点+手番）
+  isolatedFaceThreshold: 2,          // 孤立絵札と見なすスート長の上限
+  ntVoidPenalty: 3.0,                // NT時のボイド作成ペナルティ
+  ntHighBidVoidBonus: 1.5,           // NT高宣言時のボイド許容ボーナス
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
@@ -220,7 +232,12 @@ export const PARAM_BOUNDS = {
   weightGoldenFormation: [0.0, 5.0], weightPlanAccuracy: [0.0, 5.0], weightBiddingQuality: [0.0, 5.0],
   weightNapAttempts: [0.0, 8.0], weightMatchQuality: [0.0, 5.0], weightRoleWinRate: [0.0, 5.0],
   weightOverkill: [0.0, 5.0], weightDeputyOvertrump: [0.0, 5.0], weightOpportunityLoss: [0.0, 5.0],
-  weightWastedAce: [0.0, 3.0]
+  weightWastedAce: [0.0, 3.0],
+  // ★ 新規: 捨て札戦略パラメータの境界
+  voidStrategyWeight: [0.0, 2.0], isolatedFaceDiscardBonus: [0.0, 1.5], trumpCountForVoid: [3, 8],
+  lowBidVoidPenalty: [0.5, 3.0], midBidVoidPenalty: [0.0, 1.5], highBidVoidBonus: [0.0, 2.0],
+  voidLeadProbability: [0.3, 0.8], cutTrickValue: [1.0, 3.5], isolatedFaceThreshold: [1, 3],
+  ntVoidPenalty: [1.0, 5.0], ntHighBidVoidBonus: [0.0, 3.0]
 };
 
 export const mutateStrategy = (base, rate) => {
