@@ -616,20 +616,217 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   return { num: targetNum, suit: best.suit, solo: false, plan: best.plan };
 }
 
-export function chooseDiscard(hand, trump) {
-  if (!Array.isArray(hand) || hand.length <= 2) return hand.slice();
-  const isTrumpCard = c => trump !== 'NT' && c.suit === trump;
-  const score = c => {
-    if (c.id === '♠A') return 10000;
-    if (trump !== 'NT' && c.rank === 'J' && c.suit === trump) return 9500;
-    if (trump !== 'NT' && c.rank === 'J' && c.suit !== trump && isSameColorSuit(c.suit, trump)) return 9000;
-    if (c.id === '♥Q') return 8500;
-    if (c.rank === 'A' && !isTrumpCard(c)) return 8000;
-    if (c.rank === 'K' && !isTrumpCard(c)) return 7000;
-    if (isTrumpCard(c)) return 6000 + RANKS.indexOf(c.rank);
-    return RANKS.indexOf(c.rank);
+// ==========================================
+// ★ 新規: 捨て札戦略（期待値ベース）
+// ==========================================
+
+const FACE_RANKS = ['10', 'J', 'Q', 'K', 'A'];
+
+function isIsolatedFaceCard(card, hand, trump) {
+  if (!FACE_RANKS.includes(card.rank)) return false;
+  if (trump !== 'NT' && card.suit === trump) return false;
+  if (card.id === '♠A') return false;
+  if (trump !== 'NT' && card.rank === 'J' && (card.suit === trump || isSameColorSuit(card.suit, trump))) return false;
+  if (card.id === '♥Q' && hand.some(hc => hc.id === '♠A')) return false;
+  const sameSuit = hand.filter(hc => hc.suit === card.suit);
+  const hasAce = sameSuit.some(hc => hc.rank === 'A');
+  const hasTwo = sameSuit.some(hc => hc.rank === '2');
+  return !hasAce && !hasTwo && sameSuit.length <= 2;
+}
+
+/**
+ * ボイド作成戦略の期待値を評価
+ * @param {Object} voidSuitInfo - ボイドにするスートの情報 { suit, cards, faceCount }
+ * @param {Object} context - { trump, num, hasMighty, isDeputyMighty, hand, handCounts }
+ * @param {Object} params - AI重み
+ * @returns {Object} { ev, benefit, cost, probability, details }
+ */
+export function evaluateVoidStrategy(voidSuitInfo, context, params = defaultStrategy()) {
+  const { trump, num, hasMighty, isDeputyMighty } = context;
+  const isNT = trump === 'NT';
+  const p = params;
+
+  // コスト：絵札捨てによる連合軍への確実な献上
+  const faceCount = voidSuitInfo.faceCount;
+  const cost = faceCount * 1.0;
+
+  // 便益：ボイドカットによる手番獲得
+  // 切札枚数に依存（NTはカットできない）
+  let cutProb = 0;
+  if (!isNT) {
+    const myTrumps = context.hand.filter(c => c.suit === trump).length;
+    cutProb = myTrumps >= 7 ? 0.98 : myTrumps >= 5 ? 0.95 : myTrumps >= 4 ? 0.9 : myTrumps >= 3 ? 0.8 : myTrumps >= 2 ? 0.6 : myTrumps >= 1 ? 0.3 : 0;
+  }
+
+  // ボイドスートがリードされる確率（経験則）
+  const leadProb = p.voidLeadProbability ?? 0.55;
+
+  // カット1回あたりの総価値（得点+手番）
+  const cutValue = p.cutTrickValue ?? 2.0;
+
+  // 宣言枚数による補正
+  let bidModifier = 0;
+  if (num <= 14) bidModifier = -(p.lowBidVoidPenalty ?? 1.5);
+  else if (num <= 16) bidModifier = -(p.midBidVoidPenalty ?? 0.5);
+  else bidModifier = (p.highBidVoidBonus ?? 0.8);
+
+  // マイティ保有状況による補正
+  let mightyModifier = 0;
+  if (isNT) {
+    // NTはボイドが致命的になりうる
+    if (hasMighty && num >= 17) mightyModifier = (p.ntHighBidVoidBonus ?? 1.5);
+    else if (hasMighty) mightyModifier = 0;
+    else if (isDeputyMighty) mightyModifier = -(p.ntVoidPenalty ?? 3.0);
+    else mightyModifier = -(p.ntVoidPenalty ?? 3.0) * 0.7;
+  } else {
+    // 色スートではマイティ保有でカット返しが可能
+    if (hasMighty) mightyModifier = 0.3;
+    else if (isDeputyMighty) mightyModifier = -0.5;
+  }
+
+  // 孤立絵札のボーナス（捨てても損が少ない）
+  const isolatedBonus = (p.isolatedFaceDiscardBonus ?? 0.6) * (voidSuitInfo.isolatedFaces || 0);
+
+  // 切札が少ない場合の深刻なペナルティ（色スート）
+  const trumpCount = isNT ? 0 : context.hand.filter(c => c.suit === trump).length;
+  const trumpThreshold = p.trumpCountForVoid ?? 5;
+  const trumpShortPenalty = (!isNT && trumpCount < trumpThreshold) ? (trumpThreshold - trumpCount) * 0.4 : 0;
+
+  // 便益計算
+  const benefit = leadProb * cutProb * cutValue;
+  const ev = benefit + bidModifier + mightyModifier + isolatedBonus + trumpShortPenalty - cost;
+
+  return {
+    ev,
+    benefit,
+    cost,
+    leadProb,
+    cutProb,
+    cutValue,
+    bidModifier,
+    mightyModifier,
+    isolatedBonus,
+    trumpShortPenalty,
+    details: {
+      suit: voidSuitInfo.suit,
+      faceCount,
+      isolatedFaces: voidSuitInfo.isolatedFaces || 0,
+      trumpCount,
+      num,
+      hasMighty,
+      isDeputyMighty,
+      isNT
+    }
   };
-  return hand.slice().sort((a, b) => score(a) - score(b)).slice(0, 2);
+}
+
+/**
+ * 捨て札の2つの戦略（ボイド作成 vs 全スート維持）の期待値を比較分析
+ * @returns {Object} { bestOption, voidOption, safeOption, options }
+ */
+export function analyzeDiscardOptions(hand, trump, context = {}, params = defaultStrategy()) {
+  if (!Array.isArray(hand) || hand.length <= 2) {
+    return { bestOption: { type: 'all', cards: hand.slice(), ev: 0 }, options: [] };
+  }
+
+  const num = context.num ?? 14;
+  const hasMighty = hand.some(c => c.id === '♠A');
+  const isDeputyMighty = !hasMighty && context.deputyHasMighty !== false;
+  const protectedCallId = context.protectedCallId || null;
+
+  // スート情報を集計
+  const suitInfo = {};
+  for (const s of SUITS) {
+    const cards = hand.filter(c => c.suit === s);
+    const faces = cards.filter(c => FACE_RANKS.includes(c.rank));
+    const isolatedFaces = faces.filter(c => isIsolatedFaceCard(c, hand, trump)).length;
+    suitInfo[s] = { suit: s, cards, count: cards.length, faces, faceCount: faces.length, isolatedFaces };
+  }
+
+  // 保護カード（捨てられないカード）
+  const isProtected = (c) => {
+    if (c.id === '♠A') return true;
+    if (trump !== 'NT' && c.rank === 'J' && c.suit === trump) return true;
+    if (trump !== 'NT' && c.rank === 'J' && isSameColorSuit(c.suit, trump)) return true;
+    if (c.id === '♥Q' && hasMighty) return true;
+    if (protectedCallId && c.id === protectedCallId) return true;
+    return false;
+  };
+
+  const options = [];
+
+  // ===== Option 1: ボイド作成オプション（短いスートを2枚とも捨てる） =====
+  for (const s of SUITS) {
+    const info = suitInfo[s];
+    if (info.count !== 2) continue; // 2枚ちょうどのスートのみボイド化可能
+    if (info.cards.some(isProtected)) continue;
+    if (trump !== 'NT' && s === trump) continue; // 切札はボイドにしない
+    if (info.faceCount === 0 && info.cards.every(c => RANKS.indexOf(c.rank) <= 3)) continue; // 2-5の弱い札2枚は除外（ボイド価値低）
+
+    const voidEval = evaluateVoidStrategy(info, { trump, num, hasMighty, isDeputyMighty, hand }, params);
+    options.push({
+      type: 'void',
+      cards: info.cards.slice(),
+      suit: s,
+      ev: voidEval.ev,
+      analysis: voidEval
+    });
+  }
+
+  // ===== Option 2: 全スート維持オプション（最も弱い2枚を捨てる） =====
+  const safeCandidates = hand.filter(c => !isProtected(c));
+  if (safeCandidates.length >= 2) {
+    const scoreCard = (c) => {
+      let score = 0;
+      if (trump !== 'NT' && c.suit === trump) score += 6000 + RANKS.indexOf(c.rank);
+      else if (c.rank === 'A') score += 4000;
+      else if (c.rank === 'K') score += 3500;
+      else if (c.rank === 'Q') score += 3000;
+      else if (c.rank === 'J') score += 2500;
+      else if (c.rank === '2') score += 500;
+      else score += RANKS.indexOf(c.rank) * 100;
+
+      // 孤立絵札は捨てやすい
+      if (isIsolatedFaceCard(c, hand, trump)) score -= 1500;
+      // 短スートの札は捨てやすい
+      if (suitInfo[c.suit].count <= 2 && c.suit !== trump) score -= 500;
+      return score;
+    };
+    const sorted = safeCandidates.slice().sort((a, b) => scoreCard(a) - scoreCard(b));
+    const twoCards = sorted.slice(0, 2);
+
+    // 全スート維持のEV（捨てたカードの「失う価値」のマイナス＋安全性ボーナス）
+    const lostValue = twoCards.reduce((sum, c) => {
+      const score = scoreCard(c);
+      return sum + score / 3000; // 正規化
+    }, 0);
+    const safetyBonus = 0.5; // ボイド回避による安定性ボーナス
+    const safeEv = safetyBonus - lostValue * 0.3;
+
+    options.push({
+      type: 'safe',
+      cards: twoCards,
+      ev: safeEv,
+      analysis: { lostValue, safetyBonus, reason: '全スート維持（安定性重視）' }
+    });
+  }
+
+  // 期待値が最も高いオプションを選択
+  options.sort((a, b) => b.ev - a.ev);
+  const bestOption = options[0] || { type: 'all', cards: hand.slice(0, 2), ev: 0 };
+
+  return { bestOption, options, suitInfo };
+}
+
+/**
+ * ★ 全面改修: 期待値ベースの捨て札選択
+ */
+export function chooseDiscard(hand, trump, context = {}) {
+  if (!Array.isArray(hand) || hand.length <= 2) return hand.slice();
+  const params = context.params || defaultStrategy();
+
+  const { bestOption } = analyzeDiscardOptions(hand, trump, context, params);
+  return bestOption.cards;
 }
 
 export function chooseDeputyCall(hand, kitty, trump, level, num, params, experience) {
@@ -659,7 +856,6 @@ export function chooseSoloCall(hand, trump) {
   });
   return { suit: sorted[0].suit, rank: sorted[0].rank, id: sorted[0].id };
 }
-
 // ==========================================
 // プレイ関数群 (MECE構造 / NT・色分離)
 // ==========================================
@@ -835,7 +1031,6 @@ function chooseNTNapoleonLead(ctx) {
       if (nonMightyAces.length) return nonMightyAces[0];
       if (hqPlayed || hqInDiscard) return safeAcesFirst.find(c => c.id === '♠A');
     }
-    // ★ 修正: 一巡目の2禁止
     const candidates = legal.filter(c => c.rank !== '2');
     return (candidates.length ? candidates : legal).sort((a, b) => cardPower(ctx.contract, trickNo, a, []) - cardPower(ctx.contract, trickNo, b, []) )[0];
   }
@@ -843,8 +1038,7 @@ function chooseNTNapoleonLead(ctx) {
     const sureWinners = legal.filter(c => isAbsoluteWinner(c, ctx.contract, [], playedCards));
     if (sureWinners.length) return sureWinners[0];
   }
-  // ★ 修正: 一巡目の2禁止
-  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
+  const finalCandidates = legal.filter(c => c.rank !== '2');
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(ctx.contract, trickNo, a, []) - cardPower(ctx.contract, trickNo, b, []) )[0];
 }
 
@@ -922,7 +1116,6 @@ function chooseNTAllianceLead(ctx) {
   }
   const suitLens = SUITS.map(s => ({ suit: s, cards: legal.filter(c => c.suit === s) })).filter(x => x.suit !== contract.suit && x.cards.length >= 3).sort((a, b) => b.cards.length - a.cards.length);
   for (const sl of suitLens) { const lowCard = sl.cards.filter(c => !isFace(c) && (trickNo > 0 || c.rank !== '2'))[0]; if (lowCard) return lowCard; }
-  // ★ 修正: 一巡目の2禁止
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
@@ -1029,7 +1222,6 @@ function chooseColorNapoleonLead(ctx) {
       if (nonMightyAces.length) return nonMightyAces[0];
       if (playedCards.some(c => c.id === '♥Q') || (discardedKitty || []).some(c => c.id === '♥Q')) return safeAces.find(c => c.id === '♠A');
     }
-    // ★ 修正: 一巡目の2禁止
     const candidates = legal.filter(c => c.rank !== '2');
     return (candidates.length ? candidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
   }
@@ -1054,8 +1246,7 @@ function chooseColorNapoleonLead(ctx) {
   if (safeAces.length) return safeAces.sort((a, b) => playedCards.filter(pc => pc.suit === b.suit).length - playedCards.filter(pc => pc.suit === a.suit).length)[0];
   const suitLens = SUITS.filter(s => s !== contract.suit).map(s => ({ suit: s, count: legal.filter(c => c.suit === s).length })).sort((a, b) => b.count - a.count);
   for (const sl of suitLens) { if (sl.count >= 3) { const low = legal.filter(c => c.suit === sl.suit && !isFace(c) && c.rank !== '2').sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (low) return low; } }
-  // ★ 修正: 一巡目の2禁止
-  const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
+  const finalCandidates = legal.filter(c => c.rank !== '2');
   return (finalCandidates.length ? finalCandidates : legal).sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
 
@@ -1119,7 +1310,6 @@ function chooseColorAllianceLead(ctx) {
   }
   const suitLens = SUITS.map(s => ({ suit: s, cards: legal.filter(c => c.suit === s) })).filter(x => x.suit !== contract.suit && x.cards.length >= 3).sort((a, b) => b.cards.length - a.cards.length);
   for (const sl of suitLens) { const lowCard = sl.cards.filter(c => !isFace(c) && (trickNo > 0 || c.rank !== '2'))[0]; if (lowCard) return lowCard; }
-  // ★ 修正: 一巡目の2禁止
   const finalCandidates = trickNo === 0 ? legal.filter(c => c.rank !== '2') : legal;
   return (finalCandidates.length ? finalCandidates : legal).slice().sort((a, b) => cardPower(contract, trickNo, a, []) - cardPower(contract, trickNo, b, []) )[0];
 }
