@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版)
+// constants.js (経験DB・全機能統合版 + 競りパラメータ)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -71,23 +71,54 @@ export const defaultStrategy = () => ({
   weightNapAttempts: 4.0, weightMatchQuality: 2.0, weightRoleWinRate: 2.0,
   weightOverkill: 2.0, weightDeputyOvertrump: 3.0, weightOpportunityLoss: 3.0, weightWastedAce: 1.0,
   // ★ 新規: 捨て札戦略（ボイド作成 vs 全スート維持）の評価パラメータ
-  voidStrategyWeight: 1.0,           // ボイド作成便益の全体重み
-  isolatedFaceDiscardBonus: 0.6,     // 孤立絵札を捨てる際のボーナス
-  trumpCountForVoid: 5,              // ボイド作成を許容する切札枚数の閾値
-  lowBidVoidPenalty: 1.5,            // 低宣言時（13-14）のボイド作成ペナルティ
-  midBidVoidPenalty: 0.5,            // 中宣言時（15-16）のボイド作成ペナルティ
-  highBidVoidBonus: 0.8,             // 高宣言時（17+）のボイド作成ボーナス
-  voidLeadProbability: 0.55,         // ボイドスートがリードされる確率
-  cutTrickValue: 2.0,                // カット1回の総価値（得点+手番）
-  isolatedFaceThreshold: 2,          // 孤立絵札と見なすスート長の上限
-  ntVoidPenalty: 3.0,                // NT時のボイド作成ペナルティ
-  ntHighBidVoidBonus: 1.5,           // NT高宣言時のボイド許容ボーナス
+  voidStrategyWeight: 1.0,
+  isolatedFaceDiscardBonus: 0.6,
+  trumpCountForVoid: 5,
+  lowBidVoidPenalty: 1.5,
+  midBidVoidPenalty: 0.5,
+  highBidVoidBonus: 0.8,
+  voidLeadProbability: 0.55,
+  cutTrickValue: 2.0,
+  isolatedFaceThreshold: 2,
+  ntVoidPenalty: 3.0,
+  ntHighBidVoidBonus: 1.5,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
   },
   expHitWeight: 1.0,
   similarityThreshold: 5.0,
+
+  // ============================================================
+  // ★ 新規: 競りロジックパラメータ（自己対戦で最適化可能）
+  // ============================================================
+  // 役割判定閾値（N-Score）
+  napRoleThreshold1: 22,       // N-Score ≥ これで3役級NAP
+  napRoleThreshold2: 17,       // N-Score ≥ これで2役級NAP
+  napRoleThreshold3: 13,       // N-Score ≥ これで1役級NAP
+  // 役割判定閾値（D-Score）
+  deputyRoleThreshold1: 12,    // D-Score ≥ これで指名必須級DEP
+  deputyRoleThreshold2: 8,     // D-Score ≥ これで副官十分
+  deputyRoleThreshold3: 5,     // D-Score ≥ これで副官候補
+  // サポート上限計算
+  supportLimitWeight: 0.7,     // supportLimit = napBid + D_Points × weight
+  supportLimitDivisor: 2,      // または D_Points / divisor
+  // シグナル解釈の重み
+  sameSuitRaiseBonus: 1.0,     // 同スート+1の信頼度
+  sameColorSupportBonus: 0.8,  // 同色+1の信頼度
+  sameColorSameBidBonus: 0.5,  // 同色同枚数の信頼度
+  crossColorCompeteBonus: 0.3, // 非同色変更の競合度
+  // 観察期間
+  auctionObservationMs: 2000,  // 宣言直後の観察時間（ミリ秒）
+  // リスク許容度
+  auctionRiskTolerance: 0.5,   // 高bid時にどこまで攻めるか
+  bidStepwiseAggression: 0.6,  // 段階上げの積極性
+  // 競り品質のフィットネス重み
+  weightBidGap: 3.0,
+  weightBidAccuracy: 2.0,
+  weightDeputySignal: 3.0,
+  weightStageCount: 1.0,
+  weightRoleAccuracy: 2.0,
 });
 
 export const sweetSpotFactor = (p) => {
@@ -237,7 +268,17 @@ export const PARAM_BOUNDS = {
   voidStrategyWeight: [0.0, 2.0], isolatedFaceDiscardBonus: [0.0, 1.5], trumpCountForVoid: [3, 8],
   lowBidVoidPenalty: [0.5, 3.0], midBidVoidPenalty: [0.0, 1.5], highBidVoidBonus: [0.0, 2.0],
   voidLeadProbability: [0.3, 0.8], cutTrickValue: [1.0, 3.5], isolatedFaceThreshold: [1, 3],
-  ntVoidPenalty: [1.0, 5.0], ntHighBidVoidBonus: [0.0, 3.0]
+  ntVoidPenalty: [1.0, 5.0], ntHighBidVoidBonus: [0.0, 3.0],
+  // ★ 新規: 競りロジックパラメータの境界
+  napRoleThreshold1: [18, 26], napRoleThreshold2: [14, 20], napRoleThreshold3: [11, 15],
+  deputyRoleThreshold1: [8, 16], deputyRoleThreshold2: [5, 11], deputyRoleThreshold3: [3, 7],
+  supportLimitWeight: [0.4, 1.0], supportLimitDivisor: [1.5, 3.0],
+  sameSuitRaiseBonus: [0.5, 1.5], sameColorSupportBonus: [0.3, 1.2],
+  sameColorSameBidBonus: [0.2, 0.9], crossColorCompeteBonus: [0.1, 0.7],
+  auctionObservationMs: [1000, 4000], auctionRiskTolerance: [0.2, 0.9],
+  bidStepwiseAggression: [0.3, 1.0],
+  weightBidGap: [0.0, 5.0], weightBidAccuracy: [0.0, 5.0], weightDeputySignal: [0.0, 5.0],
+  weightStageCount: [0.0, 3.0], weightRoleAccuracy: [0.0, 5.0],
 };
 
 export const mutateStrategy = (base, rate) => {
