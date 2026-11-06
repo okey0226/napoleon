@@ -5,13 +5,14 @@ import {
   isTrump, strongestSuit, chooseSoloCall, handStrength, colorStrength, ntHandStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer,
-  getStateHash, getSimilarityDistance, analyzeDiscardOptions
+  getStateHash, getSimilarityDistance, analyzeDiscardOptions,
+  canDeclareWin // ★ 追加: 上がり宣言判定
 } from './ai-tactics.js';
 import { runSelfPlayBatch, generateInsights } from './ai-simulator.js';
 import { handleQuizRequest, quizSchema } from './quiz-api.js';
 
 function safeJsonParse(str, fallback = null) {
-  try { if (typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
+  try { if (!str || typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
   catch (e) { console.warn('worker JSON parse failed:', e.message); return fallback; }
 }
 
@@ -337,7 +338,6 @@ export default {
         return response(results || []);
       }
 
-      // ★ 新規: 捨て札戦略評価指標の取得API
       if (request.method === "GET" && url.pathname === "/api/ai/discard-metrics") {
         const limit = parseInt(url.searchParams.get("limit")) || 20;
         const { results } = await env.DB.prepare("SELECT * FROM ai_discard_metrics ORDER BY generation DESC, avg_ev_loss ASC LIMIT ?").bind(limit).all();
@@ -405,7 +405,8 @@ async function beginMatch(kind, roomCode, group, room, env) {
     properBids: [13, 13, 13, 13, 13],
     properPlans: [null, null, null, null, null],
     auctionStartAt: 0,
-    properRecomputed: false
+    properRecomputed: false,
+    winDeclaration: null // ★ 追加
   };
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
@@ -440,6 +441,7 @@ function deal(m) {
   m.properPlans = [null, null, null, null, null];
   m.auctionStartAt = 0;
   m.properRecomputed = false;
+  m.winDeclaration = null; // ★ 追加
   const green = m.seats.findIndex(p => !p.hand.some(c => ["10", "J", "Q", "K", "A"].includes(c.rank)));
   if (green >= 0 && m.redraws < 5) {
     m.redraws++; m.mult = m.mult + 1; m.phase = "redeal";
@@ -517,6 +519,7 @@ function publicState(m) {
     appeal: m.appeal, appealInfo: m.appealInfo || '', lastTrickWinner: m.lastTrickWinner ?? null,
     finalRoundRule: m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null,
     notice: m.notice, active: m.active, allianceKittyPoints: m.allianceKittyPoints || 0,
+    winDeclaration: m.winDeclaration || null, // ★ 追加
     players: m.seats.map((p, seat) => ({
       seat,
       name: p.bot ? (p.abandoned ? (p.originalPlayerName || p.player.username) + " (放棄)" : p.player.username) : (p.player.playerId || p.player.username),
@@ -945,7 +948,7 @@ function playCard(m, seat, id, room, env) {
   m.humanAutoPlayAt = null;
   m.botThinkAt = null;
   if (m.trick.length < 5) {
-    m.active = (seat + 1) % 5; // ★ 時計回りに進行
+    m.active = (seat + 1) % 5;
     m.deadline = Date.now() + 30000;
     m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。");
     publish(m, room);
@@ -1086,7 +1089,6 @@ function botAction(m, room) {
     return;
   }
   if (m.phase === "discard") {
-    // ★ 修正: コンテキストを渡す
     const discardContext = {
       num: m.contract.num,
       hasMighty: p.hand.some(c => c.id === '♠A'),
@@ -1116,8 +1118,25 @@ function botAction(m, room) {
       points: m.seats.map(s => s.points || 0),
       allianceKittyPoints: m.allianceKittyPoints || 0,
       bidHistory: m.bidHistory || [],
-      matchScores: m.matchScores || [0, 0, 0, 0, 0]
+      matchScores: m.matchScores || [0, 0, 0, 0, 0],
+      players: m.seats.map(s => ({ handCount: s.hand.length })) // ★ 追加
     };
+
+    // ★ 上がり宣言判定
+    if (m.trick.length === 0 && canDeclareWin(ctx)) {
+      m.winDeclaration = {
+        seat: i,
+        hand: [...m.seats[i].hand],
+        declaredAt: Date.now(),
+        expiresAt: Date.now() + 5000,
+      };
+      m.phase = "win-declaration";
+      m.deadline = Date.now() + 5000;
+      m.notice = m.seats[i].player.username + " が上がり宣言！手札を確認してください。";
+      publish(m, room);
+      return;
+    }
+
     let c;
     if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
     else c = chooseCardWithMCTS(ctx);
@@ -1137,6 +1156,43 @@ async function processAction(conn, msg, room, env) {
   const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return;
   const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
   const a = msg.action || {};
+
+  // ★ 上がり宣言アクション
+  if (a.type === "declare-win") {
+    if (m.phase !== "play" || m.active !== seat || m.trick.length > 0) return;
+    const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
+    const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
+    const ctx = {
+      hand: m.seats[seat].hand,
+      trick: [],
+      trickNo: m.trickNo,
+      contract: m.contract,
+      playedCards: m.playedCards,
+      voids: m.voids,
+      seat,
+      discardedKitty: m.discardedKitty,
+      players: m.seats.map(s => ({ handCount: s.hand.length })),
+      points: m.seats.map(s => s.points || 0),
+      allianceKittyPoints: m.allianceKittyPoints || 0,
+      currentNapPoints,
+    };
+    if (canDeclareWin(ctx)) {
+      m.winDeclaration = {
+        seat,
+        hand: [...m.seats[seat].hand],
+        declaredAt: Date.now(),
+        expiresAt: Date.now() + 5000,
+      };
+      m.phase = "win-declaration";
+      m.deadline = Date.now() + 5000;
+      m.notice = (m.seats[seat].originalPlayerName || m.seats[seat].player.username) + " が上がり宣言！手札を確認してください。";
+      publish(m, room);
+    } else {
+      sendSafe(conn, { type: "room-error", message: "上がり宣言の条件を満たしていません。" });
+    }
+    return;
+  }
+
   if (a.type === "appeal") return answerAppealOffer(m, seat, true, room);
   if (a.type === "skip-appeal") return answerAppealOffer(m, seat, false, room);
   if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room);
@@ -1180,7 +1236,6 @@ function timeoutAction(m, room) {
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
     else { const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience); if (x) callCard(m, i, x.suit, x.rank, room); }
   } else if (m.phase === "discard") {
-    // ★ 修正: コンテキストを渡す
     const discardContext = {
       num: m.contract.num,
       hasMighty: p.hand.some(c => c.id === '♠A'),
@@ -1461,6 +1516,21 @@ export const room = {
             if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
           }
         }
+      } else if (m.phase === "win-declaration" && now >= m.deadline) { // ★ 追加
+        const winSeat = m.winDeclaration.seat;
+        let allTaken = [];
+        m.seats.forEach(s => allTaken.push(...s.hand));
+        const taken = allTaken.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank));
+        m.seats[winSeat].points += taken.length;
+        m.seats[winSeat].taken.push(...taken);
+        m.seats[winSeat].roundTaken.push(...taken);
+        m.seats[winSeat].roundPoints = (m.seats[winSeat].roundPoints || 0) + taken.length;
+        m.seats.forEach(s => s.hand = []);
+        m.trickNo = 10;
+        m.phase = "trick-end";
+        m.deadline = Date.now() + 2200;
+        m.notice = "上がり宣言により、残りのトリックをすべて獲得しました。";
+        publish(m, room);
       } else if (m.phase === "round-result" && now >= m.deadline) {
         nextRound(m, room);
       } else if (m.phase === "trick-end" && now >= m.deadline) {
@@ -1511,4 +1581,3 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
-
