@@ -7,7 +7,7 @@ import {
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer,
   getStateHash, getSimilarityDistance, analyzeDiscardOptions,
   canDeclareWin,
-  // ★ 新規: 競りシグナルロジック
+  // ★ 新規: 競りシグナルロジック（修正版）
   determineRole, decideNextBid, inferIntentFromBid, estimateDeputyDPoints,
   computeNScore, computeDScore, computeDPoints, computeSupportLimit
 } from './ai-tactics.js';
@@ -590,7 +590,7 @@ function validBid(m, n, s) {
 
 function scheduleObservationPeriod(m, excludeSeat = -1) {
   const obsBase = m.botStrategy?.auctionObservationMs ?? 2000;
-  const jitter = 1000 + Math.random() * 2000; // 1〜3秒のゆらぎ
+  const jitter = 1000 + Math.random() * 2000;
   const delay = obsBase + jitter;
   const now = Date.now();
   for (let i = 0; i < 5; i++) {
@@ -622,9 +622,10 @@ function doApprove(m, seat, room, forced = false) {
     const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== seat && !m.auction.approved[s]);
     const allApproved = !humanPending && (others.length === 0 || others.every(s => m.auction.approved[s]));
     if (allApproved) {
-      const role = determineRole(m.seats[seat].hand, m.botStrategy || defaultStrategy());
-      const myMaxBid = role.role === 'NAP' ? Math.min(20, Math.floor(role.nScore / 2)) : 13;
-      if (m.auction.high.num < myMaxBid) {
+      // ★ 修正: nScore/2 ではなく computeProperBid を使用
+      const proper = computeProperBid(m.seats[seat].hand, m.auction.high.suit, m.botStrategy || defaultStrategy(), seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, m.bidHistory, m.round);
+      const properBid = proper.properBid > 0 ? proper.properBid : 13;
+      if (m.auction.high.num < properBid) {
         const pacingMs = (m.botStrategy?.bidPacingMs) ?? 4000;
         m.auction.botAt[seat] = Date.now() + pacingMs;
         m.auction.botSeen[seat] = -1;
@@ -683,7 +684,6 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.needsHumanConfirm = false;
   m.active = seat;
 
-  // ★ シグナル推論（暗黙シグナル）
   const params = m.botStrategy || defaultStrategy();
   if (prevBid.num >= 13 && prevBid.player >= 0 && prevBid.player !== seat) {
     try {
@@ -705,7 +705,6 @@ function doBid(m, seat, n, s, room, solo = false) {
   }
   if (m.seats[seat].bidSignals) m.seats[seat].bidSignals.lastBidAt = Date.now();
 
-  // ★ 観察期間：他のボットは数秒待ってから行動
   scheduleObservationPeriod(m, seat);
 
   for (const i of m.auction.active.slice()) if (i !== seat && m.auction.autoApprove[i]) doApprove(m, i, room, true);
@@ -753,11 +752,19 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
     }
   }
 
-  // ★ ナポレオンの役割判定から適正値を計算
   const params = m.botStrategy || defaultStrategy();
-  const napRole = determineRole(m.seats[seat].hand, params);
-  const properBid = napRole.role === 'NAP' ? Math.min(20, Math.floor(napRole.nScore / 2)) : m.auction.high.num;
+  if (!m.properRecomputed) {
+    // ★ 修正: nScore/2 ではなく computeProperBid を使用
+    const proper = computeProperBid(
+      m.seats[seat].hand, m.auction.high.suit, params,
+      seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory, m.round
+    );
+    m.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
+    m.properPlans[seat] = proper.plan;
+    m.properRecomputed = true;
+  }
 
+  const properBid = m.properBids[seat] || 13;
   if (!skipProperRaise && m.auction.high.num < properBid && m.auction.high.player === seat) {
     if (!m.auction.active.includes(seat)) m.auction.active.push(seat);
     const pacingMs = (params.bidPacingMs) ?? 4000;
@@ -774,7 +781,7 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
   m.contract = {
     nap: seat, num: m.auction.high.num, suit: m.auction.high.suit, deputy: -1, call: null,
     solo: isSoloBid, revealedCall: false, revealTrickNo: null, strengthAtBid,
-    bidPlan: napRole.plan || null
+    bidPlan: m.properPlans[seat] || null
   };
   beginDiscard(m, seat, room);
 }
@@ -1036,7 +1043,6 @@ function botAuctionBid(m, seat, room) {
   a.botSeen[seat] = version;
   m.botThinkAt = 0;
 
-  // 既に最高宣言者で他に誰もいなければ競り終了
   if (a.high.player === seat && a.active.length === 1) {
     auctionDone(m, seat, room);
     return;
@@ -1046,7 +1052,6 @@ function botAuctionBid(m, seat, room) {
   const params = m.botStrategy || defaultStrategy();
   const bidSignals = m.seats[seat].bidSignals || { sent: null, received: [], sameColorCount: 0, lastBidAt: 0 };
 
-  // 役割判定
   let role;
   try {
     role = determineRole(hand, params);
@@ -1056,7 +1061,6 @@ function botAuctionBid(m, seat, room) {
     role = { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' };
   }
 
-  // 次のアクションを決定（段階上げ）
   let decision;
   try {
     decision = decideNextBid(hand, a.high, role, params, bidSignals.received || []);
@@ -1087,7 +1091,6 @@ function botAction(m, room) {
     const forceSolo = isSoloForcedInMatch(m);
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
     else {
-      // ★ 受信シグナルを副官指名に渡す
       const receivedSignals = (p.bidSignals?.received || []).filter(s => ['S1', 'S2', 'S3', 'S4'].includes(s.intent));
       const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience, receivedSignals);
       if (x) callCard(m, i, x.suit, x.rank, room);
@@ -1128,7 +1131,6 @@ function botAction(m, room) {
       players: m.seats.map(s => ({ handCount: s.hand.length }))
     };
 
-    // 上がり宣言判定
     if (m.trick.length === 0 && canDeclareWin(ctx)) {
       m.winDeclaration = {
         seat: i,
@@ -1163,7 +1165,6 @@ async function processAction(conn, msg, room, env) {
   const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
   const a = msg.action || {};
 
-  // ★ 上がり宣言アクション
   if (a.type === "declare-win") {
     if (m.phase !== "play" || m.active !== seat || m.trick.length > 0) return;
     const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
@@ -1435,16 +1436,16 @@ export const room = {
         m.auctionStartAt = now;
         m.properRecomputed = false;
 
-        // ★ 各プレイヤーの役割を事前判定
         const params = m.botStrategy || defaultStrategy();
         for (let seat = 0; seat < 5; seat++) {
           try {
             const role = determineRole(m.seats[seat].hand, params);
             m.seats[seat].role = role;
-            // ナポレオン志望なら適正値をキャッシュ
+            // ★ 修正: nScore/2 ではなく computeProperBid を使用
             if (role.role === 'NAP') {
-              m.properBids[seat] = Math.min(20, Math.floor(role.nScore / 2));
-              m.properPlans[seat] = role.plan || null;
+              const proper = computeProperBid(m.seats[seat].hand, role.bestSuit || '♠', params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, [], m.round);
+              m.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
+              m.properPlans[seat] = proper.plan;
             }
           } catch (e) {
             console.warn("determineRole failed for seat", seat, e?.message);
@@ -1469,7 +1470,6 @@ export const room = {
         if (m.seats[m.active]?.bot) answerAppealResponse(m, m.active, "declare", room);
         else if (now >= m.deadline) answerAppealResponse(m, m.active, "stand", room);
       } else if (m.phase === "auction") {
-        // 人間のタイムアウトチェック
         for (const seat of m.auction.active.slice()) {
           if (!m.seats[seat].bot && !m.auction.approved[seat] && !m.auction.autoApprove[seat] && now - (m.auction.lastAction[seat] || m.auction.startedAt) >= 30000) {
             if (m.auction.needsHumanConfirm && seat === m.auction.high.player) {
@@ -1481,13 +1481,11 @@ export const room = {
           }
           if (m.phase !== "auction") break;
         }
-        // ボットのアクション（観察期間後）
         for (let seat = 0; seat < m.seats.length && m.phase === "auction"; seat++) {
           if (m.seats[seat].bot && m.auction.active.includes(seat) && !m.auction.approved[seat] && m.auction.botSeen[seat] < m.auction.version && now >= m.auction.botAt[seat]) {
             botAuctionBid(m, seat, room);
           }
         }
-        // 誰も active でなくなった場合の保険
         if (m.phase === "auction" && m.auction.active.length === 0 && m.auction.high.player >= 0) {
           auctionDone(m, m.auction.high.player, room);
         }
