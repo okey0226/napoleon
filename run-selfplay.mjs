@@ -4,7 +4,7 @@ import { runSelfPlayBatch } from './ai-simulator.js';
 import { defaultStrategy } from './constants.js';
 
 // Cloudflare D1のHTTP APIを叩いてSQLを一括実行する関数
-async function executeD1Request(queries) {
+async function executeD1Request(queries, retries = 3) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const dbId = process.env.D1_DATABASE_ID;
@@ -25,33 +25,39 @@ async function executeD1Request(queries) {
     }))
   };
 
-  // タイムアウト設定（60秒）
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    // タイムアウト設定（60秒）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Connection': 'close' // ★ 追加: Keep-AliveによるEPIPE切断を防ぐ
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error("D1 Batch Query Error: " + JSON.stringify(data.errors || data));
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error("D1 Batch Query Error: " + JSON.stringify(data.errors || data));
+      }
+      return data.result;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (attempt === retries) {
+        if (err.name === 'AbortError') throw new Error("D1 API Timeout (60s)");
+        throw err;
+      }
+      console.warn(`[D1 API] 試行 ${attempt} 失敗。リトライします... (${err.message})`);
+      await new Promise(r => setTimeout(r, 2000)); // 2秒待ってリトライ
+    } finally {
+      clearTimeout(timeoutId);
     }
-    return data.result;
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error("D1 API Timeout (60s)");
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
