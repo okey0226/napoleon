@@ -1,23 +1,24 @@
-// quiz-questions.js — 何切る問題バンク（play特化 / 自己対戦生成版 / 40問）
-import { SUITS, RANKS, defaultStrategy, sortHand } from './constants.js';
+// quiz-questions.js — 何切る問題バンク（play特化 / 自己対戦生成版 / v46）
+import { SUITS, RANKS, defaultStrategy, sortHand, shuffledDeck } from './constants.js';
 import {
   chooseDiscard, chooseDeputyCall, chooseCardToPlay,
-  winningEntry
+  winningEntry, analyzeDiscardOptions, evaluateVoidStrategy,
+  colorStrength, ntHandStrength
 } from './ai-tactics.js';
 
-export const QUIZ_CATEGORIES = ['play'];
-export const QUIZ_COUNTS = { play: 40 };
-export const QUIZ_LABELS = { play: '何を出す？' };
+export const QUIZ_CATEGORIES = ['play', 'discard'];
+export const QUIZ_COUNTS = { play: 40, discard: 10 };
+export const QUIZ_LABELS = { play: '何を出す？', discard: '何を捨てる？' };
 
 export function makeQuestionId(category, index) {
-  return `${category}-v44-${String(index + 1).padStart(4, '0')}`;
+  return `${category}-v46-${String(index + 1).padStart(4, '0')}`;
 }
 export function totalQuestionCount() {
   return QUIZ_CATEGORIES.reduce((n, c) => n + QUIZ_COUNTS[c], 0);
 }
 export function parseQuestionId(id) {
   if (typeof id !== 'string') return null;
-  const m = /^(play)-v44-(\d{1,4})$/.exec(id);
+  const m = /^(play|discard)-v46-(\d{1,4})$/.exec(id);
   if (!m) return null;
   const category = m[1], index = Number(m[2]) - 1;
   if (index < 0 || index >= QUIZ_COUNTS[category]) return null;
@@ -62,7 +63,7 @@ function cardFromId(id) {
 }
 
 // ==========================================
-// 自己対戦シミュレーション
+// play カテゴリ: 自己対戦シミュレーション
 // ==========================================
 
 function simulateOneMatch(localRng, startSeat) {
@@ -76,7 +77,7 @@ function simulateOneMatch(localRng, startSeat) {
   const num = 13 + Math.floor(localRng() * 4);
   hands[nap].push(...kitty); sortHand(hands[nap]);
 
-  const discarded = chooseDiscard(hands[nap], suit);
+  const discarded = chooseDiscard(hands[nap], suit, { num, params });
   hands[nap] = hands[nap].filter(c => !discarded.some(d => d.id === c.id)); sortHand(hands[nap]);
   const call = chooseDeputyCall(hands[nap], discarded, suit, 3, num, params, null);
   let deputy = -1;
@@ -91,7 +92,6 @@ function simulateOneMatch(localRng, startSeat) {
   const kittyPoints = discarded.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)).length;
 
   const trickHistory = [];
-
   const mySeat = 0;
   let active = startSeat;
   let trickNo = 0;
@@ -103,7 +103,7 @@ function simulateOneMatch(localRng, startSeat) {
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     for (let i = 0; i < 5; i++) {
-      const seat = (active + i) % 5; // ★ 修正: 時計回り
+      const seat = (active + i) % 5;
       const hand = hands[seat];
       const led = trick.length ? trick[0].card.suit : null;
       const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
@@ -130,8 +130,8 @@ function simulateOneMatch(localRng, startSeat) {
       const ctx = {
         hand, legal, trick, trickNo, contract, playedCards, voids, seat, deputy,
         discardedKitty: discarded, isRevealed: contract.revealedCall, params, call,
-        points: seatPoints, // ★ 修正: 現在の得点を渡す
-        currentNapPoints: seatPoints[nap] + (solo ? 0 : seatPoints[deputy]), // ★ 修正: 正しいNAP得点
+        points: seatPoints,
+        currentNapPoints: seatPoints[nap] + (solo ? 0 : seatPoints[deputy]),
         experience: null,
         bidHistory: matchBidHistory,
         matchScores: matchScores
@@ -171,17 +171,11 @@ function simulateOneMatch(localRng, startSeat) {
   return allSnaps;
 }
 
-// ==========================================
-// 問題生成
-// ==========================================
-
 function genPlayQuestion(rng, idx) {
-  const params = defaultStrategy();
   const desiredTurnIndex = idx % 5;
 
   const buildQuestion = (cap) => {
     const hand = cap.hand.map(cardFromId);
-
     const trick = (cap.trick || []).map(e => {
       let cid = '';
       if (typeof e.card === 'string') cid = e.card;
@@ -198,7 +192,7 @@ function genPlayQuestion(rng, idx) {
       hand, legal, trick, trickNo: cap.trickNo, contract: cap.contract,
       playedCards: cap.playedCards, voids: cap.voids, seat: cap.seat,
       deputy: cap.contract.deputy, discardedKitty: [], isRevealed: cap.contract.revealedCall,
-      params, call: cap.contract.call, currentNapPoints: 0, experience: null,
+      params: defaultStrategy(), call: cap.contract.call, currentNapPoints: 0, experience: null,
       bidHistory: [],
       matchScores: [0, 0, 0, 0, 0]
     };
@@ -261,6 +255,142 @@ function genPlayQuestion(rng, idx) {
 }
 
 // ==========================================
+// discard カテゴリ: 捨て札クイズ生成
+// ==========================================
+
+function genDiscardQuestion(rng, idx) {
+  const params = defaultStrategy();
+  const trumpChoices = ['♣', '♦', '♥', '♠', 'NT'];
+  const numChoices = [13, 14, 15, 16, 17, 18, 19, 20];
+
+  const buildQuestion = (hand, trump, num, analysis) => {
+    const { options } = analysis;
+    if (!options || options.length < 2) return null;
+
+    // 期待値上位2〜3パターンを選択肢に
+    const sorted = options.slice().sort((a, b) => b.ev - a.ev);
+    const topOptions = [];
+    const seenSets = new Set();
+    for (const opt of sorted) {
+      const key = opt.cards.map(c => c.id).sort().join(',');
+      if (seenSets.has(key)) continue;
+      seenSets.add(key);
+      topOptions.push(opt);
+      if (topOptions.length >= 3) break;
+    }
+    if (topOptions.length < 2) return null;
+
+    // 期待値が拮抗しているかチェック（差が0.5未満）
+    const evDiff = Math.abs(topOptions[0].ev - topOptions[1].ev);
+    if (evDiff > 0.8) return null; // 拮抗していない場合はスキップ
+
+    const quizOptions = topOptions.map((opt, i) => ({
+      index: i,
+      value: opt.cards.map(c => c.id).sort().join(','),
+      label: opt.cards.map(c => c.id).join(' ')
+    }));
+
+    // 正解 = 期待値最大の選択肢
+    const correctIdx = 0;
+
+    // シナリオに「ボイド作成 vs 全スート維持」の情報を含める
+    const handIds = hand.map(c => c.id);
+    const suitCounts = {};
+    for (const s of SUITS) suitCounts[s] = hand.filter(c => c.suit === s).length;
+
+    return {
+      id: makeQuestionId('discard', idx),
+      category: 'discard',
+      title: `宣言${num}${trump}：12枚から2枚を捨てる（${idx % 2 === 0 ? 'ボイド作成 vs 全スート維持' : '期待値拮抗'}）`,
+      scenario: {
+        contract: {
+          num,
+          suit: trump,
+          nap: 0,
+          solo: false,
+          deputy: -1,
+          revealedCall: false
+        },
+        seat: 0,
+        hand: handIds,
+        trick: [],
+        trickNo: 0,
+        playedCards: [],
+        voids: [{},{},{},{},{}],
+        call: null,
+        discarded: [],
+        points: [0,0,0,0,0],
+        taken: [[],[],[],[],[]],
+        trickHistory: [],
+        // 捨て札クイズ専用のメタ情報
+        discardMeta: {
+          options: topOptions.map(opt => ({
+            type: opt.type,
+            cards: opt.cards.map(c => c.id),
+            ev: opt.ev,
+            analysis: opt.analysis
+          })),
+          evDiff,
+          suitCounts
+        }
+      },
+      options: quizOptions,
+      aiAnswerIndex: correctIdx,
+      explanation: generateDiscardExplanation(topOptions, num, trump)
+    };
+  };
+
+  // ランダムな手札を生成し、期待値が拮抗するシチュエーションを探す
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const localRng = mulberry32(idx * 7919 + attempt * 9973 + 13);
+    const deck = shuffleWithRng(buildDeck(), localRng);
+    const hand = deck.splice(0, 12); // 12枚（オープン2枚を含む想定）
+    sortHand(hand);
+
+    const trump = trumpChoices[Math.floor(localRng() * trumpChoices.length)];
+    const num = numChoices[Math.floor(localRng() * numChoices.length)];
+
+    const context = {
+      num,
+      hasMighty: hand.some(c => c.id === '♠A'),
+      deputyHasMighty: true,
+      protectedCallId: null,
+      params
+    };
+
+    const analysis = analyzeDiscardOptions(hand, trump, context, params);
+    if (!analysis || !analysis.options || analysis.options.length < 2) continue;
+
+    // 期待値が拮抗しているかチェック
+    const sorted = analysis.options.slice().sort((a, b) => b.ev - a.ev);
+    const evDiff = Math.abs(sorted[0].ev - sorted[1].ev);
+    if (evDiff > 0.8) continue;
+
+    // 「ボイド作成 vs 全スート維持」の対立があるか優先
+    const hasConflict = sorted[0].type !== sorted[1].type;
+    if (!hasConflict && evDiff > 0.4) continue;
+
+    const q = buildQuestion(hand, trump, num, analysis);
+    if (q) return q;
+  }
+
+  return null;
+}
+
+function generateDiscardExplanation(topOptions, num, trump) {
+  const lines = [];
+  lines.push(`宣言${num}${trump}での捨て札選択。`);
+  for (let i = 0; i < Math.min(topOptions.length, 3); i++) {
+    const opt = topOptions[i];
+    const cardsStr = opt.cards.map(c => c.id).join(' ');
+    const typeStr = opt.type === 'void' ? 'ボイド作成' : '全スート維持';
+    lines.push(`${i === 0 ? '【最善】' : '【次善】'} ${cardsStr}（${typeStr} / EV ${opt.ev.toFixed(2)}）`);
+  }
+  lines.push('期待値が拮抗する場合は、切札枚数・宣言枚数・孤立絵札の3変数で判断します。');
+  return lines.join('\n');
+}
+
+// ==========================================
 // 公開 API
 // ==========================================
 
@@ -271,9 +401,11 @@ export function getQuestion(id) {
   const rng = mulberry32(seed);
   let q = null;
   if (parsed.category === 'play') q = genPlayQuestion(rng, parsed.index);
+  else if (parsed.category === 'discard') q = genDiscardQuestion(rng, parsed.index);
   if (!q) {
     const fallbackRng = mulberry32(seed ^ 0xDEADBEEF);
-    q = genPlayQuestion(fallbackRng, parsed.index);
+    if (parsed.category === 'play') q = genPlayQuestion(fallbackRng, parsed.index);
+    else if (parsed.category === 'discard') q = genDiscardQuestion(fallbackRng, parsed.index);
     if (q) q.id = id;
   }
   return q;
