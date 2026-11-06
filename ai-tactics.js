@@ -1,4 +1,4 @@
-// ai-tactics.js (完全版 + 上がり宣言機能 + 競りシグナルロジック)
+// ai-tactics.js (完全版 + 上がり宣言機能 + 競りシグナルロジック修正版)
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 // ==========================================
@@ -1781,7 +1781,6 @@ export function computeDScore(hand, declaredSuit, params = defaultStrategy()) {
   dScore += sideTwos * 1.0;
   const declaredSuitCount = hand.filter(c => c.suit === declaredSuit).length;
   if (declaredSuit === 'NT') {
-    // カット不可
   } else if (declaredSuitCount === 0) dScore += 3.0;
   else if (declaredSuitCount === 1) dScore += 2.0;
   else if (declaredSuitCount === 2) dScore += 1.0;
@@ -1813,7 +1812,7 @@ export function computeDPoints(hand, declaredSuit, params = defaultStrategy()) {
   const effectiveTrumps = trumpCards.filter(c => !['A', 'K', 'J'].includes(c.rank)).length;
   dPoints += effectiveTrumps * 0.8;
   const declaredSuitCount = hand.filter(c => c.suit === declaredSuit).length;
-  if (declaredSuit === 'NT') { /* カット不可 */ }
+  if (declaredSuit === 'NT') { }
   else if (declaredSuitCount === 0) dPoints += 1.0;
   else if (declaredSuitCount === 1) dPoints += 0.7;
   else if (declaredSuitCount === 2) dPoints += 0.4;
@@ -1888,10 +1887,16 @@ export function estimateDeputyDPoints(receivedSignals) {
   return baseDPoints[intent] || 0;
 }
 
-export function computeSupportLimit(hand, napSuit, params = defaultStrategy(), napBid = 13) {
-  const dPoints = computeDPoints(hand, napSuit, params);
-  const weight = params.supportLimitWeight ?? 0.7;
-  return Math.min(20, napBid + Math.floor(dPoints * weight));
+export function computeSupportLimit(hand, napSuit, params = defaultStrategy(), currentNapBid = 13) {
+  // ★ 修正: 相手のbidに依存せず、副官自身の期待獲得枚数から算出する
+  let expectedWins = 0;
+  try {
+    expectedWins = evaluateBidPlan(hand, napSuit, params, [], 0, [], [], [{},{},{},{},{}]).expectedWins;
+  } catch (e) {
+    expectedWins = handStrength(hand);
+  }
+  const supportPower = Math.floor(expectedWins * 0.7);
+  return Math.min(20, currentNapBid + supportPower);
 }
 
 export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(), signals = []) {
@@ -1901,37 +1906,38 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
     }
     return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '初期宣言なし' };
   }
-  if (role.role === 'NAP') {
-    if (currentHigh.suit === role.bestSuit && currentHigh.num < 20) {
-      const myMax = Math.min(20, Math.floor(role.nScore / 2));
-      if (currentHigh.num < myMax) {
-        return { type: 'BID', num: currentHigh.num + 1, suit: currentHigh.suit, intent: 'S1', reason: '同スートで段階上げ' };
-      }
-    }
-    if (currentHigh.suit !== role.bestSuit && currentHigh.num < 20) {
-      const targetSV = SV[role.bestSuit];
-      const currentSV = SV[currentHigh.suit];
-      if (targetSV > currentSV) {
-        return { type: 'BID', num: currentHigh.num, suit: role.bestSuit, intent: 'C1', reason: 'スート変更競合' };
-      }
-    }
-    return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: 'NAP不適（上限到達）' };
+
+  // ★ 修正: nScore/2 の計算を廃止し、computeProperBid を基準にする
+  let proper = { properBid: 13, suit: currentHigh.suit };
+  try {
+    proper = computeProperBid(hand, currentHigh.suit, params, 0, null, null, null, null, null, [], 1);
+  } catch (e) {
+    console.warn('computeProperBid failed in decideNextBid', e?.message);
   }
+  const myProperBid = proper.properBid > 0 ? proper.properBid : 13;
+
+  if (role.role === 'NAP') {
+    if (currentHigh.num < myProperBid) {
+      const targetSuit = (currentHigh.suit === proper.suit || SV[proper.suit] > SV[currentHigh.suit]) ? proper.suit : currentHigh.suit;
+      return { type: 'BID', num: Math.min(20, currentHigh.num + 1), suit: targetSuit, intent: 'S1', reason: `適正値(${myProperBid})まで段階上げ` };
+    }
+    return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: `適正値(${myProperBid})に到達` };
+  }
+
   if (role.role === 'DEPUTY') {
     const supportLimit = computeSupportLimit(hand, currentHigh.suit, params, currentHigh.num);
     if (currentHigh.num < supportLimit && currentHigh.num < 20) {
-      return { type: 'BID', num: currentHigh.num + 1, suit: currentHigh.suit, intent: 'S1', reason: `同スートサポート（上限${supportLimit}）` };
+      return { type: 'BID', num: currentHigh.num + 1, suit: currentHigh.suit, intent: 'S1', reason: `サポート上限(${supportLimit})まで段階上げ` };
     }
-    if (currentHigh.suit !== 'NT') {
+    if (currentHigh.suit !== 'NT' && SV[currentHigh.suit] >= 3) {
       const sameColor = sameColorSuitOf(currentHigh.suit);
-      const targetSV = SV[sameColor];
-      const currentSV = SV[currentHigh.suit];
-      if (currentSV >= 3 && targetSV < currentSV && hand.some(c => c.rank === 'J' && c.suit === sameColor)) {
-        return { type: 'BID', num: currentHigh.num, suit: sameColor, intent: 'S2', reason: '裏Jサポート' };
+      if (hand.some(c => c.rank === 'J' && c.suit === sameColor) && SV[sameColor] < SV[currentHigh.suit]) {
+        return { type: 'BID', num: currentHigh.num, suit: sameColor, intent: 'S2', reason: '裏Jサポート（同色変更）' };
       }
     }
-    return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: 'サポート上限到達' };
+    return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: `サポート上限(${supportLimit})に到達` };
   }
+
   return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '連合軍（降り）' };
 }
 
