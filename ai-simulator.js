@@ -1,5 +1,5 @@
 // ai-simulator.js (自己対戦ロジック・オラクルB統合・プレイ品質計測・クイズ抽出)
-import { SUITS, RANKS, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
+import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
   winningEntry, colorStrength, ntHandStrength, handStrength, cardPower,
