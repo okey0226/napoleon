@@ -1,11 +1,12 @@
-// ai-simulator.js (自己対戦ロジック・オラクルB統合・プレイ品質計測・クイズ抽出)
+// ai-simulator.js (自己対戦ロジック・オラクルB統合・プレイ品質計測・クイズ抽出・上がり宣言)
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
   winningEntry, colorStrength, ntHandStrength, handStrength, cardPower,
   computeProperBid, canSendSignal, isTwoRole, isThreeRole, countSameColorBidders,
   getStateHash, getSimilarityDistance, oracleB,
-  analyzeDiscardOptions, evaluateVoidStrategy
+  analyzeDiscardOptions, evaluateVoidStrategy,
+  canDeclareWin
 } from './ai-tactics.js';
 
 function safeJsonParse(str, fallback = null) {
@@ -52,11 +53,6 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
 // ★ 新規: 捨て札選択の品質評価
 // ==========================================
 
-/**
- * 捨て札選択の品質を期待値ベースで評価
- * - 期待値が最大の選択肢との差分（EV loss）を計算
- * - 選択が「最善」か「次善」か「悪手」かを分類
- */
 function evaluateDiscardQuality(hand, trump, chosenCards, context, params) {
   const analysis = analyzeDiscardOptions(hand, trump, context, params);
   const { options } = analysis;
@@ -72,7 +68,6 @@ function evaluateDiscardQuality(hand, trump, chosenCards, context, params) {
   });
 
   if (!chosenOption) {
-    // 選択が「ボイド作成」「全スート維持」のどちらにも当てはまらない（弱い選択）
     const bestEv = options[0].ev;
     return { evLoss: Math.max(0, bestEv - 0), rank: options.length + 1, isOptimal: false, type: 'weak', ev: 0 };
   }
@@ -157,10 +152,6 @@ function detectQuizCandidate(ctx) {
   };
 }
 
-/**
- * ★ 新規: 捨て札クイズ候補を抽出
- * 期待値が拮抗するシチュエーション（迷うケース）を優先的に抽出
- */
 function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, params) {
   const { options } = discardAnalysis;
   if (options.length < 2) return null;
@@ -170,7 +161,6 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
   const second = sorted[1];
   const evDiff = Math.abs(top.ev - second.ev);
 
-  // 「期待値が拮抗（迷う）」または「ボイド作成 vs 全スート維持の対立」を優先
   const isCloseCall = evDiff < 0.5;
   const isConflict = top.type !== second.type;
 
@@ -183,7 +173,6 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
   if (contract.num >= 17) reasons.push('high_bid');
   if (contract.num <= 14) reasons.push('low_bid');
 
-  // 選択肢として、上位3パターン + ランダムな代替2パターンを提示
   const choiceOptions = [];
   const seenSets = new Set();
   for (const opt of sorted.slice(0, 3)) {
@@ -201,13 +190,13 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
 
   if (choiceOptions.length < 2) return null;
 
-  const bestIdx = 0; // 期待値最大の選択肢が正解
+  const bestIdx = 0;
 
   return {
     id: `gen-discard-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     category: 'discard',
     scenario_json: JSON.stringify({
-      seat: contract.nap, // 捨て札は常にナポレオン
+      seat: contract.nap,
       hand: hand.map(c => c.id),
       contract: { nap: contract.nap, num: contract.num, suit: contract.suit, deputy: contract.deputy, solo: contract.solo },
       discarded: [],
@@ -222,7 +211,6 @@ function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, para
   };
 }
 
-// ★ EPIPE対策としてチャンク分割で送信
 export async function flushQuizCandidates(env) {
   if (quizCandidateQueue.length === 0) return;
   const statements = quizCandidateQueue.map(q =>
@@ -230,7 +218,7 @@ export async function flushQuizCandidates(env) {
       `INSERT OR IGNORE INTO quiz_candidates(id, category, scenario_json, options_json, ai_answer_index, reason, explanation, generation) VALUES(?,?,?,?,?,?,?,?)`
     ).bind(q.id, q.category, q.scenario_json, q.options_json, q.ai_answer_index, q.reason, q.explanation, q.generation)
   );
-  
+
   const CHUNK_SIZE = 50;
   try {
     for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
@@ -254,16 +242,15 @@ export async function loadHallOfFame(env) {
   } catch (e) { console.warn("hall of fame load failed", e); hallOfFame = []; }
 }
 
-// ★ EPIPE対策としてチャンク分割で送信
 export async function flushExperience(env) {
   if (experienceQueue.length === 0) return;
   const statements = [];
   for (const q of experienceQueue) {
     statements.push(
       env.DB.prepare(
-        `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
-         VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
-         ON CONFLICT(state_hash) DO UPDATE SET 
+        `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at)
+         VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+         ON CONFLICT(state_hash) DO UPDATE SET
            card_win_rates = excluded.card_win_rates,
            samples = samples + excluded.samples,
            generation = MAX(generation, excluded.generation),
@@ -271,7 +258,7 @@ export async function flushExperience(env) {
       ).bind(q.hash, q.rates, q.samples, q.gen)
     );
   }
-  
+
   const CHUNK_SIZE = 50;
   try {
     for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
@@ -461,11 +448,10 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
   hands[nap].push(...kitty); sortHand(hands[nap]);
 
-  // ★ 修正: 捨て札選択で期待値ベースの評価を実施
   const discardContext = {
     num,
     hasMighty: hands[nap].some(c => c.id === '♠A'),
-    deputyHasMighty: true, // 副官がマイティを持つ可能性を考慮
+    deputyHasMighty: true,
     protectedCallId: null,
     params: params[nap] || defaultStrategy()
   };
@@ -473,7 +459,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   const discard = chooseDiscard(hands[nap], trump, discardContext);
   const discardQuality = evaluateDiscardQuality(hands[nap], trump, discard, discardContext, params[nap] || defaultStrategy());
 
-  // ★ 捨て札クイズ候補の抽出（迷うシチュエーション）
   if (discardAnalysis.options.length >= 2) {
     const candidate = detectDiscardQuizCandidate(hands[nap], trump, { nap, num, suit: trump, solo: isSoloBid, deputy: -1, round }, discardAnalysis, params[nap] || defaultStrategy());
     if (candidate) quizCandidateQueue.push(candidate);
@@ -506,6 +491,33 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
     let pointsInTrick = 0;
+
+    // ★ 上がり宣言判定（リード時のみ）
+    if (trick.length === 0) {
+      const seat = active;
+      const ctx = {
+        hand: hands[seat],
+        trick: [],
+        trickNo,
+        contract: contractBase,
+        playedCards: played,
+        voids,
+        seat,
+        discardedKitty: discard,
+        players: hands.map(h => ({ handCount: h.length })),
+        points: roundPts,
+        allianceKittyPoints: allianceKittyPts,
+      };
+      if (canDeclareWin(ctx)) {
+        let allTaken = [];
+        hands.forEach(h => allTaken.push(...h));
+        const taken = allTaken.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
+        roundPts[seat] += taken.length;
+        for (let i = 0; i < 5; i++) hands[i] = [];
+        break;
+      }
+    }
+
     for (let i = 0; i < 5; i++) {
       const seat = (active + i) % 5;
       const hand = hands[seat];
@@ -535,7 +547,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       else chosen = chooseCardToPlay(ctx);
       if (!chosen || !legal.some(c => c.id === chosen.id)) chosen = legal[Math.floor(Math.random() * legal.length)];
 
-      // オラクルBによる価値損失計算（重要局面のみ）
       let valueLossRate = null;
       if (legal.length >= 2 && trick.length < 5 && (trickNo >= 6 || trickNo === 0)) {
         const cat = categorizeDecision(ctx);
@@ -553,13 +564,11 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         decisionIndex++;
       }
 
-      // クイズ候補抽出
       if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_QUIZ_CANDIDATES_PER_MATCH) {
         const candidate = detectQuizCandidate(ctx);
         if (candidate) { quizCandidateQueue.push(candidate); matchExpCount++; }
       }
 
-      // 経験DB保存
       if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_EXP_QUEUE_PER_MATCH && legal.length >= 2) {
         const isKoukyou = (pointsInTrick === 0 && trickNo >= 2 && trickNo <= 7);
         if (isKoukyou) {
@@ -570,7 +579,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         }
       }
 
-      // プレイ品質のカウント
       if (trick.length > 0 && currentWinner) {
         const winnerMyTeam = winnerSeat => winnerSeat === nap || (!contractBase.solo && winnerSeat === deputy);
         const powerBefore = cardPower(contractBase, trickNo, currentWinner.card, trick);
@@ -621,7 +629,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     plan, expectedWins: plan?.expectedWins ?? null, actualWins, overkillCount, feedSuccessCount, goldenFormationCount,
     bidHistory: bidHistoryLocal,
     playDecisions,
-    discardQuality, // ★ 追加: 捨て札の品質評価結果
+    discardQuality,
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
@@ -689,7 +697,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     valueLossNT: 0, valueLossNTN: 0,
     valueLossColor: 0, valueLossColorN: 0,
     smartPasses: 0, overcalls: 0, signalSuccesses: 0, opportunityLosses: 0,
-    // ★ 新規: 捨て札品質指標
     discardEvLossSum: 0, discardTotalCount: 0,
     discardOptimalCount: 0, discardCloseCallCount: 0,
     discardVoidChoiceCount: 0, discardSafeChoiceCount: 0,
@@ -734,7 +741,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
         totalFeeds += c.feedSuccessCount || 0;
         totalGolden += c.goldenFormationCount || 0;
 
-        // ★ 捨て札品質評価の統合（ナポレオン時のみ）
         if (c.nap === seat && c.discardQuality) {
           const dq = c.discardQuality;
           st.discardEvLossSum += dq.evLoss || 0;
@@ -743,7 +749,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
           if (dq.isCloseCall) st.discardCloseCallCount++;
           if (dq.isVoidChoice) st.discardVoidChoiceCount++;
           if (dq.type === 'safe') st.discardSafeChoiceCount++;
-          // ボイド作成が成功したか（NAPが勝ったか）を記録
           if (dq.isVoidChoice && c.made) st.discardVoidWins++;
           if (dq.type === 'safe' && c.made) st.discardSafeWins++;
         }
@@ -836,7 +841,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
       const napWins = contracts.filter(c => c.nap === seat && c.made).length;
       matchRating += napWins * 3.0;
 
-      // ★ 新規: 捨て札品質に基づくボーナス（ナポレオン時のみ）
       if (st.discardTotalCount > 0) {
         const avgDiscardEvLoss = st.discardEvLossSum / st.discardTotalCount;
         const optimalRate = st.discardOptimalCount / st.discardTotalCount;
@@ -883,7 +887,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     const avgVLNT = st.valueLossNTN > 0 ? st.valueLossNT / st.valueLossNTN : 0;
     const avgVLColor = st.valueLossColorN > 0 ? st.valueLossColor / st.valueLossColorN : 0;
 
-    // ★ 新規: 捨て札品質の集計値
     const avgDiscardEvLoss = st.discardTotalCount > 0 ? st.discardEvLossSum / st.discardTotalCount : 0;
     const discardOptimalRate = st.discardTotalCount > 0 ? st.discardOptimalCount / st.discardTotalCount : 0;
     const discardVoidRate = st.discardTotalCount > 0 ? st.discardVoidChoiceCount / st.discardTotalCount : 0;
@@ -902,10 +905,9 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
       )
     );
 
-    // ★ 捨て札指標を別テーブルに保存（既存スキーマを壊さないため）
     statements.push(
       env.DB.prepare(
-        `INSERT INTO ai_discard_metrics(generation, strategy_index, avg_ev_loss, optimal_rate, void_choice_rate, close_call_rate) 
+        `INSERT INTO ai_discard_metrics(generation, strategy_index, avg_ev_loss, optimal_rate, void_choice_rate, close_call_rate)
          VALUES(?,?,?,?,?,?)`
       ).bind(
         generation, i, avgDiscardEvLoss, discardOptimalRate, discardVoidRate,
@@ -984,7 +986,6 @@ export function generateInsights(strategies) {
     weightNapAttempts: 'NAP引き受け重み', weightMatchQuality: 'マッチ品質重み', weightRoleWinRate: '役割勝率重み',
     weightOverkill: 'オーバーキル重み', weightDeputyOvertrump: 'オーバートランプ重み',
     weightOpportunityLoss: '機会損失重み', weightWastedAce: 'A無駄切り重み',
-    // ★ 新規: 捨て札戦略パラメータ
     voidStrategyWeight: 'ボイド戦略重み',
     isolatedFaceDiscardBonus: '孤立絵札捨てボーナス',
     trumpCountForVoid: 'ボイド許容切札枚数',
@@ -1032,7 +1033,6 @@ export function generateInsights(strategies) {
     });
   }
 
-  // ★ 新規: 捨て札戦略のインサイト
   insights.push({
     title: '捨て札戦略（期待値ベース）',
     detail: `最上位戦略は「ボイド作成」と「全スート維持」を期待値で比較し、宣言枚数・切札枚数・孤立絵札の3変数で判断しています。低宣言時は全スート維持を優先し、高宣言＋孤立絵札持ちの場合はボイド作成を選択する傾向があります。`
