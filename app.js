@@ -4,7 +4,8 @@ import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard,
   winningEntry, strongestSuit, colorStrength, ntHandStrength, chooseCardToPlay, handStrength,
   computeProperBid, bidPacing, canSendSignal, countSameColorBidders, detectPartnerSignal,
-  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer, analyzeDiscardOptions
+  isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer, analyzeDiscardOptions,
+  canDeclareWin // ★ 追加
 } from './ai-tactics.js';
 
 const numWorkers = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
@@ -45,7 +46,7 @@ const g={round:1,rate:1000,comRate:1000,elo:ELO_INIT,mult:1,botLevel:3,aiWeights
   lowBidVoidPenalty:1.5, midBidVoidPenalty:0.5, highBidVoidBonus:0.8,
   voidLeadProbability:0.55, cutTrickValue:2.0, isolatedFaceThreshold:2,
   ntVoidPenalty:3.0, ntHighBidVoidBonus:1.5
-},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[],
+},players:[],kitty:[],discardedKitty:[],allianceKittyPoints:0,auction:null,contract:null,trick:[],trickNo:0,points:[0,0,0,0,0],matchScores:[0,0,0,0,0],matchArt:[0,0,0,0,0],matchStats:[],matchContracts:[],playoff:false,appealInfo:'',roundArt:[0,0,0,0,0],phase:'',bid:13,suit:'♠',timer:[],greenRedraws:0,selectedCard:null,onlineSelectedCard:null,user:null,account:null,sessionToken:null,room:null,presenceRoom:null,online:null,leaderboardExpanded:false,announcedCallRound:null,announcedRound:null,localLog:null,matchDebugLog:null,playedCards:[],voids:[{},{},{},{},{}],aiExperience:null,humanRoundLog:null,waitingAutoPlay:false,autoNextTimer:null,reconnecting:false,intentionalLeave:false,onlineState:null,privateHand:[],onlineLegal:[],mySeat:0,onlineBid:13,onlineSuit:'♠',onlineRank:'A',onlineDiscard:new Set(),countdownTimer:null,discard:new Set(),onlineResultTimer:null,confirmedCall:false,lastDiscardPhase:false,lastCallPhase:false,friendLobby:null,turnTimerRAF:null,turnTimerDeadline:null,bidHistory:[],winDeclaration:null,
   bidSignals: Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 })),
   properBids: [13, 13, 13, 13, 13],
   properPlans: [null, null, null, null, null],
@@ -292,6 +293,7 @@ function startLocal(){
   g.privateHand=[]; g.onlineLegal=[]; g.mySeat=0;
   g.lastRating=null; g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
   g.selectedCard=null; g.active=-1; g.bid=13; g.suit='♠'; g.discard=new Set();
+  g.winDeclaration=null; // ★ 追加
   stopTurnTimer();
 
   g.matchDebugLog=[];
@@ -345,6 +347,7 @@ function roundStart(){
   g.discard = new Set();
   g.selectedCard = null;
   g.bidHistory = [];
+  g.winDeclaration = null; // ★ 追加
   g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
   g.properBids = [13, 13, 13, 13, 13];
   g.properPlans = [null, null, null, null, null];
@@ -658,7 +661,6 @@ function humanApprove(forced=false){
         message(`${name(g.mySeat)}が適正値（${properBid}）まで段階上げ中…`);
         setTimeout(() => {
           if (g.phase !== 'auction') return;
-          // ★ 修正: 自分がまだ最高宣言者でなければ何もしない
           if (g.auction.high.player !== g.mySeat) return;
           const nextNum = Math.min(properBid, g.auction.high.num + 1);
           const suit = g.auction.high.suit;
@@ -969,7 +971,6 @@ function auctionEnd(w, skipProperRaise = false){
     drawAuction(); drawSeats();
     setTimeout(() => {
       if (g.phase !== 'auction') return;
-      // ★ 修正: 自分がまだ最高宣言者でなければ何もしない
       if (g.auction.high.player !== w) return;
       const nextNum = Math.min(properBid, g.auction.high.num + 1);
       const suit = g.auction.high.suit;
@@ -1076,7 +1077,6 @@ function kittyStart(){
   phase('浮き札の交換');
   if(n===g.mySeat){
     const cp=$('call-panel');if(!cp)return;
-    // ★ 修正: 捨て札の期待値分析を事前に計算して表示
     const discardAnalysis = analyzeDiscardOptions(g.players[n].hand, g.contract.suit, {
       num: g.contract.num,
       hasMighty: g.players[n].hand.some(c => c.id === '♠A'),
@@ -1122,7 +1122,6 @@ function kittyStart(){
     return
   }
   if(g.onlineState && g.room) return;
-  // ★ 修正: COMの捨て札選択にコンテキストを渡す
   const comDiscardContext = {
     num: g.contract.num,
     hasMighty: g.players[n].hand.some(c => c.id === '♠A'),
@@ -1185,15 +1184,81 @@ function drawLocalPlayControls(){
   const p=$('play-panel');if(!p)return;
   if(g.phase!=='play'||g.active!==g.mySeat||g.waitingAutoPlay){p.classList.add('hidden');return}
   const card=g.players[g.mySeat].hand.find(c=>c.id===g.selectedCard&&legal(g.mySeat).some(x=>x.id===c.id));
-  if(!card){g.selectedCard=null;p.classList.add('hidden');p.replaceChildren();return}
+  
+  const canWin = g.trick.length === 0 && canDeclareWin({
+    hand: g.players[g.mySeat].hand,
+    trick: g.trick,
+    trickNo: g.trickNo,
+    contract: g.contract,
+    playedCards: g.playedCards,
+    voids: g.voids,
+    seat: g.mySeat,
+    discardedKitty: g.discardedKitty,
+    players: g.players.map(pl => ({ handCount: pl.hand.length })),
+    points: g.points,
+    allianceKittyPoints: g.allianceKittyPoints,
+  });
+
+  if(!card && !canWin){g.selectedCard=null;p.classList.add('hidden');p.replaceChildren();return}
   p.classList.remove('hidden');
-  p.innerHTML='<div class="panel-title">このカードを出しますか？</div><div class="play-confirm-preview"><div id="local-play-card"></div><span class="micro-copy">選択中</span></div><div class="play-confirm-actions"><button id="cancel-local-play" class="small-action">選び直す</button><button id="confirm-local-play" class="primary-button">出す</button></div>';
-  const lpc=$('local-play-card');if(lpc)lpc.replaceChildren(cardEl(card,'play-confirm-card'));
+  
+  let html = '';
+  if (card) {
+    html += '<div class="panel-title">このカードを出しますか？</div><div class="play-confirm-preview"><div id="local-play-card"></div><span class="micro-copy">選択中</span></div><div class="play-confirm-actions"><button id="cancel-local-play" class="small-action">選び直す</button><button id="confirm-local-play" class="primary-button">出す</button></div>';
+  }
+  if (canWin) {
+    html += '<div class="panel-title" style="color:#f3d48e; margin-top:10px;">✨ 手札がすべて絶対勝ちです</div><div class="panel-row"><button id="declare-win-btn" class="primary-button" style="width:100%; background:linear-gradient(135deg,#f3d48e,#d4a850); color:#17211a; font-size:16px; padding:12px;">上がり宣言（勝利）</button></div>';
+  }
+  p.innerHTML = html;
+
+  const lpc=$('local-play-card');if(lpc&&card)lpc.replaceChildren(cardEl(card,'play-confirm-card'));
   const cancel=$('cancel-local-play');if(cancel)cancel.onclick=()=>{g.selectedCard=null;renderHand();drawLocalPlayControls()};
   const confirm=$('confirm-local-play');if(confirm)confirm.onclick=()=>{
     if(g.onlineState && g.room){ g.room?.send({type:'game', action:{type:'play', card:card.id}}); g.selectedCard=null; p.classList.add('hidden'); return; }
     const chosen=card;g.selectedCard=null;p.classList.add('hidden');play(g.mySeat,chosen)
-  }
+  };
+
+  const winBtn = $('declare-win-btn');
+  if (winBtn) winBtn.onclick = () => {
+    if (g.onlineState && g.room) {
+      g.room.send({ type: 'game', action: { type: 'declare-win' } });
+      p.classList.add('hidden');
+    } else {
+      g.winDeclaration = {
+        seat: g.mySeat,
+        hand: [...g.players[g.mySeat].hand],
+        expiresAt: Date.now() + 5000,
+      };
+      g.phase = 'win-declaration';
+      p.innerHTML = `
+        <div class="panel-title" style="color:#f3d48e;font-size:16px;">✨ あなたが上がり宣言しました</div>
+        <div class="micro-copy" style="margin-bottom:10px;">手札を確認してください（5秒後に確定）</div>
+        <div class="win-declaration-hand" style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center;">
+          ${g.players[g.mySeat].hand.map(c => cardEl(c).outerHTML).join('')}
+        </div>
+      `;
+      let remain = 5;
+      const cd = setInterval(() => {
+        remain--;
+        if (remain <= 0) {
+          clearInterval(cd);
+          let allTaken = [];
+          g.players.forEach(pl => allTaken.push(...pl.hand));
+          const taken = allTaken.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
+          g.points[g.mySeat] += taken.length;
+          g.players[g.mySeat].taken.push(...taken);
+          g.players[g.mySeat].roundTaken.push(...taken);
+          g.players[g.mySeat].roundPoints = (g.players[g.mySeat].roundPoints || 0) + taken.length;
+          g.players.forEach(pl => pl.hand = []);
+          g.trickNo = 10;
+          finishGame();
+        } else {
+          const el = p.querySelector('.micro-copy');
+          if (el) el.textContent = `手札を確認してください（${remain}秒後に確定）`;
+        }
+      }, 1000);
+    }
+  };
 }
 
 function playStart(){
@@ -1251,7 +1316,8 @@ async function computeBotPlay(seat){
     points: g.players.map(p => p.roundPoints || 0),
     allianceKittyPoints: g.allianceKittyPoints || 0,
     bidHistory: g.bidHistory || [],
-    matchScores: g.matchScores || [0,0,0,0,0]
+    matchScores: g.matchScores || [0,0,0,0,0],
+    players: g.players.map(pl => ({ handCount: pl.hand.length })) // ★ 追加
   };
   if(trick.length>0){ 
     const winner=winningEntry(contract,g.trickNo,trick); 
@@ -1390,6 +1456,64 @@ function playTurn(){
       const legalCardsList=legal(seat);
       if(!legalCardsList.length){addDebugLog('play-no-legal',{seat,context:sanitizeForLog(buildPlayContext(seat))});g.active=(seat+1)%5;playTurn();return}
       
+      // ★ 上がり宣言判定
+      if (g.trick.length === 0) {
+        const canWin = canDeclareWin({
+          hand: g.players[seat].hand,
+          trick: g.trick,
+          trickNo: g.trickNo,
+          contract: g.contract,
+          playedCards: g.playedCards,
+          voids: g.voids,
+          seat,
+          discardedKitty: g.discardedKitty,
+          players: g.players.map(pl => ({ handCount: pl.hand.length })),
+          points: g.points,
+          allianceKittyPoints: g.allianceKittyPoints,
+        });
+        if (canWin) {
+          g.winDeclaration = {
+            seat,
+            hand: [...g.players[seat].hand],
+            expiresAt: Date.now() + 5000,
+          };
+          g.phase = 'win-declaration';
+          addGameLog(name(seat) + 'が上がり宣言！');
+          const p = $('play-panel');
+          if (p) {
+            p.classList.remove('hidden');
+            p.innerHTML = `
+              <div class="panel-title" style="color:#f3d48e;font-size:16px;">✨ ${name(seat)} が上がり宣言しました</div>
+              <div class="micro-copy" style="margin-bottom:10px;">手札を確認してください（5秒後に確定）</div>
+              <div class="win-declaration-hand" style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center;">
+                ${g.players[seat].hand.map(c => cardEl(c).outerHTML).join('')}
+              </div>
+            `;
+          }
+          let remain = 5;
+          const cd = setInterval(() => {
+            remain--;
+            if (remain <= 0) {
+              clearInterval(cd);
+              let allTaken = [];
+              g.players.forEach(pl => allTaken.push(...pl.hand));
+              const taken = allTaken.filter(c => ['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
+              g.points[seat] += taken.length;
+              g.players[seat].taken.push(...taken);
+              g.players[seat].roundTaken.push(...taken);
+              g.players[seat].roundPoints = (g.players[seat].roundPoints || 0) + taken.length;
+              g.players.forEach(pl => pl.hand = []);
+              g.trickNo = 10;
+              finishGame();
+            } else {
+              const el = p?.querySelector('.micro-copy');
+              if (el) el.textContent = `手札を確認してください（${remain}秒後に確定）`;
+            }
+          }, 1000);
+          return;
+        }
+      }
+
       const result = await computeBotPlay(seat);
       
       if (g.phase !== 'play' || g.active !== seat) return;
@@ -2034,6 +2158,7 @@ function handleOnlineMessage(m){
     g.discardedKitty=[]; g.allianceKittyPoints=0; g.waitingAutoPlay=false;
     g.round=1; g.mult=1; g.playoff=false; g.announcedRound=null;
     g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
+    g.winDeclaration=null; // ★ 追加
     g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
     g.properBids = [13, 13, 13, 13, 13];
     g.properPlans = [null, null, null, null, null];
@@ -2061,6 +2186,7 @@ function handleOnlineMessage(m){
     g.kitty = m.state.kitty || [];
     g.discardedKitty = m.state.revealedKitty || [];
     g.auction = m.state.auction;
+    g.winDeclaration = m.state.winDeclaration || null; // ★ 追加
     if (g.auction) { if (!g.suit) g.suit = '♠'; if (!g.bid || g.bid < g.auction.minBid) g.bid = g.auction.minBid; }
 
     m.state.players.forEach((p, i) => {
@@ -2107,7 +2233,7 @@ function handleOnlineMessage(m){
       if (g.phase === 'prep' && g.round >= 9) announceRound(g.round, finalAuctionRule(g.matchScores, g.mult));
     }
 
-    phase({prep:'準備中',auction:'競り',call:'副官指名',discard:'浮き札の交換','call-reveal':'指名確認',play:'カードプレイ','trick-end':'トリック','round-result':'局結果',result:'結果',redeal:'配り直し','appeal-offer':'アピール','appeal-response':'アピール回答'}[g.phase] || '進行中');
+    phase({prep:'準備中',auction:'競り',call:'副官指名',discard:'浮き札の交換','call-reveal':'指名確認',play:'カードプレイ','trick-end':'トリック','round-result':'局結果',result:'結果',redeal:'配り直し','appeal-offer':'アピール','appeal-response':'アピール回答','win-declaration':'上がり宣言'}[g.phase] || '進行中');
     if(m.state.notice) message(m.state.notice);
     renderContractInfo(); drawSeats(); renderHand(g.phase === 'discard'); drawOnlineKitty(); drawOnlineControls();
     syncTurnTimer();
@@ -2139,6 +2265,31 @@ function drawOnlineControls(){
   if (g.phase === 'result' || g.phase === 'round-result') { showOnlineResult(); stopTurnTimer(); return; }
   if (g.phase === 'appeal-offer' && g.onlineState?.appeal?.bottomSeat === g.mySeat) { drawAppealOffer(); return; }
   if (g.phase === 'appeal-response' && g.onlineState?.appeal?.fourthSeat === g.mySeat) { drawAppealResponse(); return; }
+  
+  if (g.phase === 'win-declaration') {
+    const p = $('play-panel'); if (!p) return;
+    p.classList.remove('hidden');
+    const wd = g.winDeclaration;
+    if (!wd) return;
+    const remaining = Math.max(0, Math.ceil((wd.expiresAt - Date.now()) / 1000));
+    p.innerHTML = `
+      <div class="panel-title" style="color:#f3d48e;font-size:16px;">✨ ${escapeHTML(name(wd.seat))} が上がり宣言しました</div>
+      <div class="micro-copy" style="margin-bottom:10px;">手札を確認してください（${remaining}秒後に確定）</div>
+      <div class="win-declaration-hand" style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-bottom:10px;">
+        ${wd.hand.map(c => cardEl(c).outerHTML).join('')}
+      </div>
+    `;
+    clearInterval(g.countdownTimer);
+    g.countdownTimer = setInterval(() => {
+      if (g.phase !== 'win-declaration') { clearInterval(g.countdownTimer); return; }
+      const r = Math.max(0, Math.ceil((wd.expiresAt - Date.now()) / 1000));
+      const el = p.querySelector('.micro-copy');
+      if (el) el.textContent = `手札を確認してください（${r}秒後に確定）`;
+      if (r <= 0) { clearInterval(g.countdownTimer); }
+    }, 1000);
+    return;
+  }
+
   if (g.phase === 'auction' && g.onlineState?.auction?.active?.includes(g.mySeat)) { drawAuction(); return; }
   if (g.phase === 'call' && g.active === g.mySeat) { if (!g.lastCallPhase) { callUi(); g.lastCallPhase = true; } return; }
   if (g.phase === 'discard' && g.active === g.mySeat) { const cp = $('call-panel'); if (!g.lastDiscardPhase || !cp || cp.classList.contains('hidden')) kittyStart(); return; }
@@ -2174,6 +2325,7 @@ async function online(mode,roomCode,bots,botLevel=3){
     g.mySeat=-1;g.privateHand=[];g.onlineState=null;g.onlineDiscard=new Set();g.onlineSelectedCard=null;g.onlineBid=13;g.onlineSuit='♠';g.onlineRank='A';g.announcedCallRound=null;g.announcedRound=null;
     g.auction=null; g.contract=null; g.matchScores=[0,0,0,0,0];
     g.confirmedCall=false; g.lastDiscardPhase=false; g.lastCallPhase=false;
+    g.winDeclaration=null; // ★ 追加
     g.bid=13; g.suit='♠'; g.selectedCard=null; g.discard=new Set(); g.phase=''; g.active=-1; g.lastRating=null;
     g.bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
     g.properBids = [13, 13, 13, 13, 13];
