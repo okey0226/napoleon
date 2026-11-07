@@ -1,4 +1,4 @@
-// ai-tactics.js (完全版 + 上がり宣言機能 + 競りシグナルロジック修正版)
+// ai-tactics.js (完全版 + 上がり宣言機能 + 競りEV最適化)
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 
 // ==========================================
@@ -524,6 +524,10 @@ export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchS
 // 選択関数
 // ==========================================
 
+// ============================================================
+// ★★ 修正: shouldBid
+//  - 初手閾値を大幅に下げて「誰も立たない」を防ぐ
+// ============================================================
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null, playedCards = [], voids = [{},{},{},{},{}]) {
   if (!Array.isArray(hand) || !hand.length) return null;
   if (!params) params = defaultStrategy();
@@ -531,8 +535,11 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
   const isFirstBid = (!currentHigh || currentHigh.num < 13);
   const currentHighNum = currentHigh?.num ?? 12;
   const baseStr = handStrength(hand);
-  const bidThreshold = params.bidThreshold ?? 3.5;
-  if (isFirstBid && baseStr < bidThreshold) return null;
+
+  // ★ 初手は閾値を大きく下げる（仕方なく立つ状況を防ぐ）
+  const firstBidThreshold = Math.max(2.3, (params.bidThreshold ?? 3.5) - 1.2);
+  if (isFirstBid && baseStr < firstBidThreshold) return null;
+
   const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hand, suit, params) }));
   suitScores.sort((a, b) => b.score - a.score);
   const topSuits = suitScores.slice(0, 2).map(x => x.suit);
@@ -551,7 +558,8 @@ export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], my
     if (ntProper.properBid >= minViable) candidates.push({ suit: 'NT', properBid: ntProper.properBid, expected: ntProper.expected, baseExpected: ntProper.baseExpected, plan: ntProper.plan, isOverwhelming: ntProper.isOverwhelming });
   }
   if (!candidates.length) {
-    if (isFirstBid && baseStr >= bidThreshold) return { num: Math.max(minBid, 13), suit: topSuits[0], solo: false, plan: null };
+    // ★ 初手で候補なしでも、閾値さえ満たせば最強スートで立つ
+    if (isFirstBid && baseStr >= firstBidThreshold) return { num: Math.max(minBid, 13), suit: topSuits[0], solo: false, plan: null };
     return null;
   }
   const overwhelming = candidates.find(c => c.isOverwhelming);
@@ -705,9 +713,6 @@ function isFace(c) { return FACE.includes(c.rank); }
 function isOnNapSide(ctx) { return ctx.seat === ctx.contract.nap || (!ctx.contract.solo && ctx.contract.deputy === ctx.seat); }
 function countVoidSeats(voids, suit, excludeSeat) { let count = 0; for (let s = 0; s < 5; s++) if (s !== excludeSeat && voids[s]?.[suit]) count++; return count; }
 
-// ============================================================
-// ★ 新規: セイム2トラップ検知
-// ============================================================
 function isSameTwoTrap(ctx) {
   if (ctx.trickNo === 0) return false;
   if (!ctx.trick || ctx.trick.length === 0) return false;
@@ -1983,29 +1988,51 @@ export function computeSupportLimit(hand, napSuit, params = defaultStrategy()) {
 }
 
 // ============================================================
-// ★★ 修正: decideNextBid
-//  - DEPUTY分岐で min クランプ
-//  - 多重サポート状態での過剰立ち防止を追加
-//    「同スートに既に supportLimitThreshold 人以上立っている」場合、
-//    真に強い手（myProperBid >= strongHandThreshold）でない限り PASS
+// ★★ 修正: decideNextBid ★★
+//  ① 初期 bid を EV 最適化
+//  ② DEPUTY 段階上げを EV 比較（改善時のみ）
+//  ③ 多重サポート検知
+//  ④ 「仕方なく立った」検出で譲る
 // ============================================================
-export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(), signals = []) {
+export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(), signals = [], context = {}) {
+  const { bidHistory = [], mySeat = 0, openKitty = [], playedCards = [], voids = [{},{},{},{},{}], matchScores = null, round = 1 } = context;
+
+  // 初期 bid
   if (!currentHigh || currentHigh.num < 13) {
     if (role.role === 'NAP' && role.bestSuit) {
-      return { type: 'BID', num: 13, suit: role.bestSuit, intent: 'OPEN', reason: '初期宣言（NAP志望）' };
+      // ★ EV最適な bid で立つ（13固定をやめる）
+      let optimalBid = 13;
+      try {
+        const plan = evaluateBidPlan(hand, role.bestSuit, params, bidHistory, mySeat, openKitty, playedCards, voids);
+        optimalBid = plan.bestBidByExpectation || 13;
+      } catch (e) { /* fallback */ }
+      const safeBid = Math.max(13, Math.min(optimalBid, 16));
+      return { type: 'BID', num: safeBid, suit: role.bestSuit, intent: 'OPEN',
+        reason: `EV最適(${optimalBid})で初期宣言` };
     }
     return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '初期宣言なし' };
   }
 
-  let proper = { properBid: 13, suit: currentHigh.suit };
+  let proper = { properBid: 13, suit: currentHigh.suit, plan: null };
   try {
-    proper = computeProperBid(hand, currentHigh.suit, params, 0, null, null, null, null, null, [], 1);
+    proper = computeProperBid(hand, currentHigh.suit, params, mySeat, null, matchScores, openKitty, playedCards, voids, bidHistory, round);
   } catch (e) {
     console.warn('computeProperBid failed in decideNextBid', e?.message);
   }
   const myProperBid = proper.properBid > 0 ? proper.properBid : 13;
+  const plan = proper.plan || null;
 
   if (role.role === 'NAP') {
+    // ★ 「仕方なく立った」検出: 自分が最初に13で立って他が押し上げてきた場合
+    const wasMyInitialBid = bidHistory.length > 0
+      && bidHistory[0].seat === mySeat
+      && bidHistory[0].num === 13;
+    const someoneRaised = currentHigh.player !== mySeat && currentHigh.num > 13;
+    if (wasMyInitialBid && someoneRaised && currentHigh.num >= myProperBid) {
+      return { type: 'PASS', num: 0, suit: '', intent: 'PASS',
+        reason: `仕方なく立った後のサポート(${currentHigh.num})は適正値(${myProperBid})以上で譲る` };
+    }
+
     if (currentHigh.num < myProperBid) {
       const targetSuit = (currentHigh.suit === proper.suit || SV[proper.suit] > SV[currentHigh.suit]) ? proper.suit : currentHigh.suit;
       return { type: 'BID', num: Math.min(20, currentHigh.num + 1), suit: targetSuit, intent: 'S1', reason: `適正値(${myProperBid})まで段階上げ` };
@@ -2016,10 +2043,7 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
   if (role.role === 'DEPUTY') {
     const supportLimit = computeSupportLimit(hand, currentHigh.suit, params);
 
-    // ★ 多重サポート検知
-    // 同じスートに対して既に複数人がサポート宣言している状態では、
-    // 3人目のサポート宣言は切り札分散の露呈・宣言インフレ・情報漏洩の三重苦となる。
-    // 真に強い手（myProperBid >= strongHandThreshold）でない限り降りる。
+    // ① 多重サポート検知
     const sameSuitSupporters = (signals || []).filter(s =>
       ['S1', 'S2', 'S3', 'S4'].includes(s.intent) && s.suit === currentHigh.suit
     ).length;
@@ -2033,17 +2057,28 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
       };
     }
 
-    if (currentHigh.num < supportLimit && currentHigh.num < 20) {
-      const targetNum = Math.min(supportLimit, currentHigh.num + 1);
-      return { type: 'BID', num: targetNum, suit: currentHigh.suit, intent: 'S1', reason: `サポート上限(${supportLimit})まで段階上げ` };
+    // ② EV 比較: 現状維持 vs +1 段階上げ
+    let evImprovement = 0;
+    if (plan?.bidExpectations) {
+      const curEV = plan.bidExpectations[currentHigh.num]?.adjE ?? 0;
+      const raiseEV = plan.bidExpectations[currentHigh.num + 1]?.adjE ?? -Infinity;
+      evImprovement = raiseEV - curEV;
     }
-    if (currentHigh.suit !== 'NT' && SV[currentHigh.suit] >= 3 && currentHigh.num < supportLimit) {
+    const evMargin = (params.bidStepwiseAggression ?? 0.6) * 0.05;
+
+    if (currentHigh.num < supportLimit && currentHigh.num < 20 && evImprovement >= evMargin) {
+      const targetNum = Math.min(supportLimit, currentHigh.num + 1);
+      return { type: 'BID', num: targetNum, suit: currentHigh.suit, intent: 'S1',
+        reason: `サポート上限(${supportLimit})・EV改善(${evImprovement.toFixed(3)})まで段階上げ` };
+    }
+    if (currentHigh.suit !== 'NT' && SV[currentHigh.suit] >= 3 && currentHigh.num < supportLimit && evImprovement >= evMargin) {
       const sameColor = sameColorSuitOf(currentHigh.suit);
       if (hand.some(c => c.rank === 'J' && c.suit === sameColor) && SV[sameColor] < SV[currentHigh.suit]) {
         return { type: 'BID', num: currentHigh.num, suit: sameColor, intent: 'S2', reason: '裏Jサポート（同色変更）' };
       }
     }
-    return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: `サポート上限(${supportLimit})に到達` };
+    return { type: 'PASS', num: 0, suit: '', intent: 'PASS',
+      reason: `EV改善(${evImprovement.toFixed(3)})が閾値(${evMargin.toFixed(3)})未満で保留` };
   }
 
   return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '連合軍（降り）' };
