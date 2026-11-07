@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版 + 競りパラメータ)
+// constants.js (経験DB・全機能統合版 + 競りパラメータ + PIMCロールアウト強化)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -51,7 +51,7 @@ export const defaultStrategy = () => ({
   deputyBluffWeight: 0.8, ntDeputyMightyHoldThreshold: 8, ntMightyEmergencyTrick: 5,
   napEarlyTrumpLeadWeight: 1.5, napEarlyTrumpLeadMaxTrick: 3, napEarlyTrumpMinCount: 4,
   deputyOvertrumpWeight: 1.8,
-  bidTimeBudgetMs: 600, bidMaxSamples: 800, bidSafetyMargin: 0.4, bidSimCount: 30,
+  bidTimeBudgetMs: 600, bidMaxSamples: 200, bidSafetyMargin: 0.4, bidSimCount: 30,
   planAccuracyWeight: 2.0, overbidPenalty: 2.0, underbidPenalty: 1.0, planAccuracyBonus: 2.0,
   winPointMap: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
   lossPointMap: [0, 2, 4, 5, 7, 9, 11, 13, 15, 17, 20],
@@ -61,16 +61,12 @@ export const defaultStrategy = () => ({
   s1RequiredMinorCards: 2, s3RequiredAces: 2,
   sameColorBidderLimit: 2, ntBidderLimit: 2, s2ThreeRoleExtra: 1,
   goldenFormationBonus: 3.0, overkillPenalty: 3.0, deputyOvertrumpPenalty: 4.0, lastSeatDuckBonus: 2.0,
-  // determinizeState ベイズ推定のハイパーパラメータ
   det_w_bid: 1.0, det_w_void: 3.0, det_w_follow: 0.5, det_w_feed: 1.0,
-  // オラクルBのパラメータ
   oracleSamples: 200, oracleMctsTimeMs: 200,
-  // 統計的重み付けパラメータ
   weightPlayQuality: 5.0, weightFeedSuccess: 3.0, weightSignalSuccess: 2.0,
   weightGoldenFormation: 1.0, weightPlanAccuracy: 3.0, weightBiddingQuality: 2.0,
   weightNapAttempts: 4.0, weightMatchQuality: 2.0, weightRoleWinRate: 2.0,
   weightOverkill: 2.0, weightDeputyOvertrump: 3.0, weightOpportunityLoss: 3.0, weightWastedAce: 1.0,
-  // ★ 新規: 捨て札戦略（ボイド作成 vs 全スート維持）の評価パラメータ
   voidStrategyWeight: 1.0,
   isolatedFaceDiscardBonus: 0.6,
   trumpCountForVoid: 5,
@@ -88,32 +84,26 @@ export const defaultStrategy = () => ({
   },
   expHitWeight: 1.0,
   similarityThreshold: 5.0,
+  // ★ 新規: PIMCロールアウト強化（bid予測精度向上）
+  bidRolloutRealPolicyRate: 0.4,   // 序盤トリックで実際のプレイAIを使う確率
+  bidRealPolicyMaxTrick: 4,        // 実際のプレイAIを使う最大トリック番号
 
-  // ============================================================
-  // ★ 新規: 競りロジックパラメータ（自己対戦で最適化可能）
-  // ============================================================
-  // 役割判定閾値（N-Score）
-  napRoleThreshold1: 22,       // N-Score ≥ これで3役級NAP
-  napRoleThreshold2: 17,       // N-Score ≥ これで2役級NAP
-  napRoleThreshold3: 13,       // N-Score ≥ これで1役級NAP
-  // 役割判定閾値（D-Score）
-  deputyRoleThreshold1: 12,    // D-Score ≥ これで指名必須級DEP
-  deputyRoleThreshold2: 8,     // D-Score ≥ これで副官十分
-  deputyRoleThreshold3: 5,     // D-Score ≥ これで副官候補
-  // サポート上限計算
-  supportLimitWeight: 0.7,     // supportLimit = napBid + D_Points × weight
-  supportLimitDivisor: 2,      // または D_Points / divisor
-  // シグナル解釈の重み
-  sameSuitRaiseBonus: 1.0,     // 同スート+1の信頼度
-  sameColorSupportBonus: 0.8,  // 同色+1の信頼度
-  sameColorSameBidBonus: 0.5,  // 同色同枚数の信頼度
-  crossColorCompeteBonus: 0.3, // 非同色変更の競合度
-  // 観察期間
-  auctionObservationMs: 2000,  // 宣言直後の観察時間（ミリ秒）
-  // リスク許容度
-  auctionRiskTolerance: 0.5,   // 高bid時にどこまで攻めるか
-  bidStepwiseAggression: 0.6,  // 段階上げの積極性
-  // 競り品質のフィットネス重み
+  // 競りロジックパラメータ
+  napRoleThreshold1: 22,
+  napRoleThreshold2: 17,
+  napRoleThreshold3: 13,
+  deputyRoleThreshold1: 12,
+  deputyRoleThreshold2: 8,
+  deputyRoleThreshold3: 5,
+  supportLimitWeight: 0.7,
+  supportLimitDivisor: 2,
+  sameSuitRaiseBonus: 1.0,
+  sameColorSupportBonus: 0.8,
+  sameColorSameBidBonus: 0.5,
+  crossColorCompeteBonus: 0.3,
+  auctionObservationMs: 2000,
+  auctionRiskTolerance: 0.5,
+  bidStepwiseAggression: 0.6,
   weightBidGap: 3.0,
   weightBidAccuracy: 2.0,
   weightDeputySignal: 3.0,
@@ -242,7 +232,7 @@ export const PARAM_BOUNDS = {
   ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
   napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
   napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
-  bidTimeBudgetMs: [100, 1500], bidMaxSamples: [50, 2000], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
+  bidTimeBudgetMs: [100, 1500], bidMaxSamples: [50, 500], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
   planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0], underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
   winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
   winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
@@ -256,6 +246,9 @@ export const PARAM_BOUNDS = {
   s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
   sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3], s2ThreeRoleExtra: [1, 2],
   expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0],
+  // ★ 新規: PIMCロールアウト強化パラメータの境界
+  bidRolloutRealPolicyRate: [0.1, 0.9],
+  bidRealPolicyMaxTrick: [2, 8],
   goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0],
   det_w_bid: [0.0, 3.0], det_w_void: [1.0, 6.0], det_w_follow: [0.0, 2.0], det_w_feed: [0.0, 3.0],
   oracleSamples: [50, 500], oracleMctsTimeMs: [50, 500],
@@ -264,12 +257,10 @@ export const PARAM_BOUNDS = {
   weightNapAttempts: [0.0, 8.0], weightMatchQuality: [0.0, 5.0], weightRoleWinRate: [0.0, 5.0],
   weightOverkill: [0.0, 5.0], weightDeputyOvertrump: [0.0, 5.0], weightOpportunityLoss: [0.0, 5.0],
   weightWastedAce: [0.0, 3.0],
-  // ★ 新規: 捨て札戦略パラメータの境界
   voidStrategyWeight: [0.0, 2.0], isolatedFaceDiscardBonus: [0.0, 1.5], trumpCountForVoid: [3, 8],
   lowBidVoidPenalty: [0.5, 3.0], midBidVoidPenalty: [0.0, 1.5], highBidVoidBonus: [0.0, 2.0],
   voidLeadProbability: [0.3, 0.8], cutTrickValue: [1.0, 3.5], isolatedFaceThreshold: [1, 3],
   ntVoidPenalty: [1.0, 5.0], ntHighBidVoidBonus: [0.0, 3.0],
-  // ★ 新規: 競りロジックパラメータの境界
   napRoleThreshold1: [18, 26], napRoleThreshold2: [14, 20], napRoleThreshold3: [11, 15],
   deputyRoleThreshold1: [8, 16], deputyRoleThreshold2: [5, 11], deputyRoleThreshold3: [3, 7],
   supportLimitWeight: [0.4, 1.0], supportLimitDivisor: [1.5, 3.0],
