@@ -1887,17 +1887,27 @@ export function estimateDeputyDPoints(receivedSignals) {
   return baseDPoints[intent] || 0;
 }
 
-export function computeSupportLimit(hand, napSuit, params = defaultStrategy(), currentNapBid = 13) {
+// ============================================================
+// ★★ 修正: computeSupportLimit（過剰立ち対策） ★★
+// 従来: currentNapBid + supportPower（連鎖で20まで上がる）
+// 修正: 自分の手札のみで決まる固定上限
+// ============================================================
+export function computeSupportLimit(hand, napSuit, params = defaultStrategy()) {
   let expectedWins = 0;
   try {
     expectedWins = evaluateBidPlan(hand, napSuit, params, [], 0, [], [], [{},{},{},{},{}]).expectedWins;
   } catch (e) {
     expectedWins = handStrength(hand);
   }
+  // currentNapBid 依存を削除。自分の期待獲得枚数のみで上限を決める。
+  // expectedWins 3.72 → 14、4.5 → 15、5.5 → 15、6.0 → 16
   const supportPower = Math.floor(expectedWins * 0.7);
-  return Math.min(20, currentNapBid + supportPower);
+  return Math.min(20, Math.max(13, 12 + supportPower));
 }
 
+// ============================================================
+// ★★ 修正: decideNextBid（DEPUTY分岐で min クランプ） ★★
+// ============================================================
 export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(), signals = []) {
   if (!currentHigh || currentHigh.num < 13) {
     if (role.role === 'NAP' && role.bestSuit) {
@@ -1923,11 +1933,15 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
   }
 
   if (role.role === 'DEPUTY') {
-    const supportLimit = computeSupportLimit(hand, currentHigh.suit, params, currentHigh.num);
+    // ★ 自分の手札ベースの固定上限（currentNapBid 非依存）
+    const supportLimit = computeSupportLimit(hand, currentHigh.suit, params);
     if (currentHigh.num < supportLimit && currentHigh.num < 20) {
-      return { type: 'BID', num: currentHigh.num + 1, suit: currentHigh.suit, intent: 'S1', reason: `サポート上限(${supportLimit})まで段階上げ` };
+      // 上限を超えないよう min でクランプ（過剰立ち防止）
+      const targetNum = Math.min(supportLimit, currentHigh.num + 1);
+      return { type: 'BID', num: targetNum, suit: currentHigh.suit, intent: 'S1', reason: `サポート上限(${supportLimit})まで段階上げ` };
     }
-    if (currentHigh.suit !== 'NT' && SV[currentHigh.suit] >= 3) {
+    // 裏Jサポート（同色変更）— 上限内のみ
+    if (currentHigh.suit !== 'NT' && SV[currentHigh.suit] >= 3 && currentHigh.num < supportLimit) {
       const sameColor = sameColorSuitOf(currentHigh.suit);
       if (hand.some(c => c.rank === 'J' && c.suit === sameColor) && SV[sameColor] < SV[currentHigh.suit]) {
         return { type: 'BID', num: currentHigh.num, suit: sameColor, intent: 'S2', reason: '裏Jサポート（同色変更）' };
@@ -1940,7 +1954,7 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
 }
 
 // ============================================================
-// ★★ 修正箇所: chooseDeputyCall ★★
+// ★★ 修正: chooseDeputyCall（役札網羅を原則） ★★
 // 原則: 役札（♠A / 正J / 裏J）を網羅的に指名対象として検討
 // 例外: ナポレオンが役札をすべて保持している場合のみ非役札を検討
 // ============================================================
@@ -1952,7 +1966,7 @@ export function chooseDeputyCall(hand, kitty, trump, level, num, params, experie
 
   // ============================================================
   // 原則: 役札（♠A / 正J / 裏J）を網羅的に検討
-  // 「ナポレオン未所持」かつ「捨て札にない」役札を強い順に指名する。
+  // ナポレオン未所持かつ捨て札にない役札を強い順に指名する。
   // シグナルより役札を優先する。
   // ============================================================
   const roleCards = [];
