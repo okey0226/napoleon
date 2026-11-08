@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版 + 競りパラメータ + PIMCロールアウト強化)
+// constants.js (経験DB・全機能統合版 + 競りパラメータ + PIMCロールアウト強化 + 全強化項目反映)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -51,7 +51,7 @@ export const defaultStrategy = () => ({
   deputyBluffWeight: 0.8, ntDeputyMightyHoldThreshold: 8, ntMightyEmergencyTrick: 5,
   napEarlyTrumpLeadWeight: 1.5, napEarlyTrumpLeadMaxTrick: 3, napEarlyTrumpMinCount: 4,
   deputyOvertrumpWeight: 1.8,
-  bidTimeBudgetMs: 600, bidMaxSamples: 200, bidSafetyMargin: 0.4, bidSimCount: 30,
+  bidTimeBudgetMs: 400, bidMaxSamples: 50, bidSafetyMargin: 0.4, bidSimCount: 30,
   planAccuracyWeight: 2.0, overbidPenalty: 2.0, underbidPenalty: 1.0, planAccuracyBonus: 2.0,
   winPointMap: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20],
   lossPointMap: [0, 2, 4, 5, 7, 9, 11, 13, 15, 17, 20],
@@ -84,11 +84,108 @@ export const defaultStrategy = () => ({
   },
   expHitWeight: 1.0,
   similarityThreshold: 5.0,
-  // ★ 新規: PIMCロールアウト強化（bid予測精度向上）
-  bidRolloutRealPolicyRate: 0.4,   // 序盤トリックで実際のプレイAIを使う確率
-  bidRealPolicyMaxTrick: 4,        // 実際のプレイAIを使う最大トリック番号
+  // PIMCロールアウト強化
+  bidRolloutRealPolicyRate: 1.0,
+  bidRealPolicyMaxTrick: 10,
 
+  // ============================================================
+  // ★ 新規: プレイ品質補正（予測と実績の一致率向上）
+  // ============================================================
+  playQualityFactor: 1.0,
+  playQualitySamples: 0,
+  playQualityWins: 0,
+
+  // ============================================================
+  // ★ 新規: ベイズ手札推定（S1）
+  // ============================================================
+  bayesVoidWeight: 3.0,
+  bayesFollowWeight: 0.5,
+  bayesFeedWeight: 1.0,
+  bayesBidWeight: 1.0,
+  bayesDecay: 0.95,
+  bayesPrior: 0.3,
+
+  // ============================================================
+  // ★ 新規: チーム協調シグナル（S2）
+  // ============================================================
+  teamSignalStrength: 0.6,
+  teamSignalDecay: 0.9,
+  deputyInferWeight: 0.7,
+
+  // ============================================================
+  // ★ 新規: 経験DB実質化（S3）
+  // ============================================================
+  experienceBlendWeight: 0.4,
+  experienceMinSamples: 3,
+
+  // ============================================================
+  // ★ 新規: 終盤全列挙探索（A4）
+  // ============================================================
+  endgameTrickThreshold: 3,
+  endgameMaxCombinations: 100000,
+
+  // ============================================================
+  // ★ 新規: オープニングブック（A5）
+  // ============================================================
+  openingBookTricks: 3,
+  openingBookMinSamples: 20,
+  openingBookWeight: 0.5,
+
+  // ============================================================
+  // ★ 新規: 全取り負け事前予測（A6）
+  // ============================================================
+  allTakeRiskWeight: 1.5,
+  allTakeLookaheadTricks: 3,
+
+  // ============================================================
+  // ★ 新規: セイム2積極活用（A7）
+  // ============================================================
+  sameTwoAggressiveLeadChance: 0.7,
+
+  // ============================================================
+  // ★ 新規: 副官動的推定（B8）
+  // ============================================================
+  deputyCallSuitBonus: 0.5,
+  deputyBidSuitBonus: 0.3,
+
+  // ============================================================
+  // ★ 新規: 相手モデルアンサンブル（B9）
+  // ============================================================
+  opponentArchetypeMix: 0.3,
+
+  // ============================================================
+  // ★ 新規: ポジション最適化（B10）
+  // ============================================================
+  positionBonusLast: 0.3,
+  positionBonusFirst: 0.2,
+
+  // ============================================================
+  // ★ 新規: 入札速度利用（B11）
+  // ============================================================
+  bidSpeedFastThreshold: 500,
+  bidSpeedSlowThreshold: 3000,
+  bidSpeedBonusFast: 0.2,
+  bidSpeedBonusSlow: -0.1,
+
+  // ============================================================
+  // ★ 新規: 人間対戦ログ学習（B12）
+  // ============================================================
+  humanLogBlendWeight: 0.2,
+
+  // ============================================================
+  // ★ 新規: MCTS RAVE（C13）
+  // ============================================================
+  mctsRave: true,
+  mctsRaveBias: 100,
+
+  // ============================================================
+  // ★ 新規: 思考時間利用（C14）
+  // ============================================================
+  thinkTimeWeight: 0.3,
+
+  // ============================================================
   // 競りロジックパラメータ
+  // ============================================================
   napRoleThreshold1: 22,
   napRoleThreshold2: 17,
   napRoleThreshold3: 13,
@@ -232,7 +329,7 @@ export const PARAM_BOUNDS = {
   ntDeputyMightyHoldThreshold: [3, 9], ntMightyEmergencyTrick: [3, 9],
   napEarlyTrumpLeadWeight: [0.0, 3.0], napEarlyTrumpLeadMaxTrick: [0, 5],
   napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
-  bidTimeBudgetMs: [100, 1500], bidMaxSamples: [50, 500], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
+  bidTimeBudgetMs: [100, 1500], bidMaxSamples: [20, 200], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
   planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0], underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
   winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
   winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
@@ -246,9 +343,8 @@ export const PARAM_BOUNDS = {
   s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
   sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3], s2ThreeRoleExtra: [1, 2],
   expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0],
-  // ★ 新規: PIMCロールアウト強化パラメータの境界
-  bidRolloutRealPolicyRate: [0.1, 0.9],
-  bidRealPolicyMaxTrick: [2, 8],
+  bidRolloutRealPolicyRate: [0.8, 1.0],
+  bidRealPolicyMaxTrick: [8, 10],
   goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0],
   det_w_bid: [0.0, 3.0], det_w_void: [1.0, 6.0], det_w_follow: [0.0, 2.0], det_w_feed: [0.0, 3.0],
   oracleSamples: [50, 500], oracleMctsTimeMs: [50, 500],
@@ -270,6 +366,24 @@ export const PARAM_BOUNDS = {
   bidStepwiseAggression: [0.3, 1.0],
   weightBidGap: [0.0, 5.0], weightBidAccuracy: [0.0, 5.0], weightDeputySignal: [0.0, 5.0],
   weightStageCount: [0.0, 3.0], weightRoleAccuracy: [0.0, 5.0],
+  // 新規パラメータ境界
+  playQualityFactor: [0.5, 1.2], playQualitySamples: [0, 10000], playQualityWins: [0, 10000],
+  bayesVoidWeight: [1.0, 6.0], bayesFollowWeight: [0.0, 2.0], bayesFeedWeight: [0.0, 3.0],
+  bayesBidWeight: [0.0, 3.0], bayesDecay: [0.8, 1.0], bayesPrior: [0.05, 0.6],
+  teamSignalStrength: [0.1, 1.5], teamSignalDecay: [0.5, 1.0], deputyInferWeight: [0.0, 1.5],
+  experienceBlendWeight: [0.0, 1.0], experienceMinSamples: [1, 20],
+  endgameTrickThreshold: [1, 5], endgameMaxCombinations: [1000, 1000000],
+  openingBookTricks: [0, 5], openingBookMinSamples: [5, 100], openingBookWeight: [0.0, 1.0],
+  allTakeRiskWeight: [0.0, 3.0], allTakeLookaheadTricks: [1, 5],
+  sameTwoAggressiveLeadChance: [0.0, 1.0],
+  deputyCallSuitBonus: [0.0, 1.0], deputyBidSuitBonus: [0.0, 1.0],
+  opponentArchetypeMix: [0.0, 1.0],
+  positionBonusLast: [0.0, 1.0], positionBonusFirst: [0.0, 1.0],
+  bidSpeedFastThreshold: [100, 2000], bidSpeedSlowThreshold: [1000, 8000],
+  bidSpeedBonusFast: [0.0, 0.5], bidSpeedBonusSlow: [-0.5, 0.0],
+  humanLogBlendWeight: [0.0, 1.0],
+  mctsRaveBias: [10, 500],
+  thinkTimeWeight: [0.0, 1.0],
 };
 
 export const mutateStrategy = (base, rate) => {
@@ -293,6 +407,7 @@ export const mutateStrategy = (base, rate) => {
       }
       continue;
     }
+    if (typeof out[k] === 'boolean') continue;
     if (Math.random() < 0.1) {
       const delta = (Math.random() * 2 - 1) * rate;
       let val = out[k] * (1 + delta);
