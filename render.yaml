@@ -6,3 +6,6 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /healthz
+    envVars:
+      - key: WORKER_API_URL
+        value: https://napoleon.YOUR_SUBDOMAIN.workers.dev
