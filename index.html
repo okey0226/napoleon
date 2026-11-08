@@ -17,7 +17,7 @@
       document.body.appendChild(errDiv);
     });
   </script>
-  <script type="module" src="/app.js?v=46"></script>
+  <script type="module" src="/app.js?v=48"></script>
 </head>
 <body>
   <header class="topbar">
@@ -29,9 +29,7 @@
   </header>
 
   <main id="app">
-    <!-- ============================================================
-         ホーム画面
-         ============================================================ -->
+    <!-- ホーム画面 -->
     <section id="home-screen" class="screen home-screen hero-screen">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -57,14 +55,11 @@
         <button id="home-start" class="hero-start-button" type="button">START</button>
         <div class="hero-footer">
           <button id="show-record" class="text-button">PROFILE / RANKINGS</button>
-          <button id="open-strategy-lab" class="text-button">AI STRATEGY LAB</button>
         </div>
       </div>
     </section>
 
-    <!-- ============================================================
-         モード選択画面
-         ============================================================ -->
+    <!-- モード選択画面（対戦＋ロビー） -->
     <section id="mode-select-screen" class="screen mode-select-screen hidden">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -76,20 +71,71 @@
         <button class="back-button" data-go-home>← 戻る</button>
         <div class="eyebrow">SELECT MODE</div>
         <h1>挑戦するモードを選ぶ</h1>
-        <div id="my-rating" class="my-rating hidden" aria-label="自分のレート"></div>
+        
+        <div class="my-rating-container">
+          <div id="my-rating" class="my-rating hidden" aria-label="自分のレート"></div>
+        </div>
 
-        <!-- ★ 待機中UI（チャット＋ハイロー）-->
-        <section id="queue-area" class="queue-area hidden">
-          <div class="queue-header">
-            <div class="eyebrow">MATCHMAKING</div>
-            <h2>対戦相手を検索中…</h2>
-            <div id="queue-count" class="queue-count">1 / 5 人</div>
-            <div id="queue-elapsed" class="queue-elapsed">待機中 0:00</div>
-            <button id="cancel-queue-btn" class="quiet-button">キャンセル</button>
+        <!-- 待機ステータス（検索中のみ表示） -->
+        <div id="queue-status-area" class="queue-status-area hidden">
+          <div class="queue-status-text">対戦相手を検索中… <span id="queue-count">1 / 5 人</span></div>
+          <div id="queue-elapsed" class="queue-elapsed">待機中 0:00</div>
+          <button id="cancel-queue-btn" class="quiet-button">キャンセル</button>
+        </div>
+
+        <!-- メインメニュー（対戦モード） -->
+        <div class="battle-modes">
+          <article class="mode-card mode-ranked">
+            <div class="mode-mark gold">◆</div>
+            <div class="mode-info">
+              <h2>レートバトル</h2>
+              <p>ランキングに挑む10局の真剣勝負。</p>
+            </div>
+            <div class="mode-action">
+              <button id="start-ranked" class="rank-button">対戦相手を探す</button>
+            </div>
+          </article>
+
+          <article class="mode-card mode-com">
+            <div class="mode-mark green">♠</div>
+            <div class="mode-info">
+              <h2>COM戦</h2>
+              <p>COM4人とすぐに対戦。</p>
+            </div>
+            <div class="mode-action">
+              <button id="start-com" class="primary-button">対戦する</button>
+            </div>
+          </article>
+
+          <article class="mode-card mode-friend">
+            <div class="mode-mark blue">↗</div>
+            <div class="mode-info">
+              <h2>友達対戦</h2>
+              <p>合言葉で対戦。空席にはCOMが入ります。</p>
+            </div>
+            <div class="mode-action mode-friend-controls">
+              <input id="friend-code" maxlength="8" placeholder="合言葉">
+              <button id="create-friend" class="secondary-button">部屋を作る</button>
+              <button id="join-friend" class="quiet-button">参加</button>
+            </div>
+          </article>
+        </div>
+
+        <!-- その他メニューへ移動 -->
+        <button id="open-extra-menu" class="extra-menu-btn">
+          <span class="extra-menu-icon">🎮</span>
+          <span>その他の機能（AI指導・過去対局など）</span>
+          <span class="extra-menu-arrow">→</span>
+        </button>
+
+        <!-- ロビー（チャット＋ハイロー） -->
+        <section id="lobby-area" class="lobby-area">
+          <div class="lobby-header">
+            <div class="lobby-title">💬 ロビー</div>
+            <div id="concurrent-count" class="concurrent-count">同接: --人</div>
           </div>
-          <div class="queue-body">
+          <div class="lobby-body">
             <div class="chat-panel">
-              <div class="chat-header">💬 ロビーチャット</div>
               <div id="chat-log" class="chat-log"></div>
               <div class="chat-input-row">
                 <input id="chat-input" type="text" maxlength="200" placeholder="メッセージを送信..." autocomplete="off">
@@ -110,90 +156,7 @@
               <div class="hilo-stats">連勝: <b id="hilo-streak">0</b> ／ 最高: <b id="hilo-best">0</b></div>
             </div>
           </div>
-          <div id="queue-stats" class="queue-stats"></div>
-          <div id="queue-escalation" class="queue-escalation hidden">
-            <span>待ち時間が長引いています。</span>
-            <button id="queue-com-escape" class="secondary-button">COM戦で遊ぶ</button>
-          </div>
         </section>
-
-        <!-- レートバトル -->
-        <article class="mode-card mode-ranked">
-          <div class="mode-mark gold">◆</div>
-          <div class="mode-info">
-            <h2>レートバトル</h2>
-            <p>ランキングに挑む10局の真剣勝負。5人揃うまでお待ちください。</p>
-          </div>
-          <div class="mode-action">
-            <button id="start-ranked" class="rank-button">対戦相手を探す</button>
-            <span id="queue-status" class="micro-copy"></span>
-            <span id="concurrent-count" class="micro-copy">同接: --人</span>
-          </div>
-        </article>
-
-        <!-- COM戦 -->
-        <article class="mode-card mode-com">
-          <div class="mode-mark green">♠</div>
-          <div class="mode-info">
-            <h2>COM戦</h2>
-            <p>COM4人とすぐに対戦。気軽に遊ぶ。</p>
-          </div>
-          <div class="mode-action">
-            <span class="micro-copy">COM 4人</span>
-            <button id="start-com" class="primary-button">対戦する</button>
-          </div>
-        </article>
-
-        <!-- 友達対戦 -->
-        <article class="mode-card mode-friend">
-          <div class="mode-mark blue">↗</div>
-          <div class="mode-info">
-            <h2>友達対戦</h2>
-            <p>合言葉で対戦。空席にはCOMが入ります。</p>
-          </div>
-          <div class="mode-action mode-friend-controls">
-            <input id="friend-code" maxlength="8" placeholder="合言葉">
-            <button id="create-friend" class="secondary-button">部屋を作る</button>
-            <button id="join-friend" class="quiet-button">参加</button>
-          </div>
-        </article>
-
-        <!-- 何切る問題集 -->
-        <article class="mode-card mode-quiz">
-          <div class="mode-mark gold">?</div>
-          <div class="mode-info">
-            <h2>何切る問題集</h2>
-            <p>実戦シチュエーションで「何を出すか」の判断を磨く50問。</p>
-          </div>
-          <div class="mode-action">
-            <span class="micro-copy">全50問</span>
-            <button id="open-quiz" class="rank-button">挑戦する</button>
-          </div>
-        </article>
-
-        <!-- AI指導モード -->
-        <article class="mode-card mode-training">
-          <div class="mode-mark gold">👨‍🏫</div>
-          <div class="mode-info">
-            <h2>AI指導モード</h2>
-            <p>5人全員の手札をあなたが操作し、最適な立ちやカード選択をCOMに教え込みます。</p>
-          </div>
-          <div class="mode-action">
-            <button id="start-training" class="rank-button">開始する</button>
-          </div>
-        </article>
-
-        <!-- ★ 過去対局 -->
-        <article class="mode-card mode-past-games">
-          <div class="mode-mark blue">📜</div>
-          <div class="mode-info">
-            <h2>過去対局</h2>
-            <p>COM戦・レート戦・友人戦の直近10マッチを閲覧・AI分析・JSONダウンロード。</p>
-          </div>
-          <div class="mode-action">
-            <button id="open-past-games" class="secondary-button">履歴を見る</button>
-          </div>
-        </article>
 
         <!-- ランキング -->
         <section id="leaderboard" class="leaderboard mode-leaderboard" aria-labelledby="leaderboard-title">
@@ -208,9 +171,66 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         プレイヤー登録画面
-         ============================================================ -->
+    <!-- その他機能メニュー -->
+    <section id="extra-menu-screen" class="screen mode-select-screen hidden">
+      <div class="space-bg" aria-hidden="true">
+        <div class="space-nebula"></div>
+        <div class="space-stars space-stars-far"></div>
+        <div class="space-stars space-stars-mid"></div>
+        <div class="space-stars space-stars-near"></div>
+      </div>
+      <div class="mode-select-inner">
+        <button class="back-button" data-go-home>← 戻る</button>
+        <div class="eyebrow">EXTRA MENU</div>
+        <h1>その他の機能</h1>
+
+        <article class="mode-card mode-quiz">
+          <div class="mode-mark gold">?</div>
+          <div class="mode-info">
+            <h2>何切る問題集</h2>
+            <p>実戦シチュエーションで「何を出すか」の判断を磨く50問。</p>
+          </div>
+          <div class="mode-action">
+            <button id="open-quiz" class="rank-button">挑戦する</button>
+          </div>
+        </article>
+
+        <article class="mode-card mode-training">
+          <div class="mode-mark gold">👨‍🏫</div>
+          <div class="mode-info">
+            <h2>AI指導モード</h2>
+            <p>5人全員の手札を操作し、最適な立ちやカード選択をCOMに教え込みます。</p>
+          </div>
+          <div class="mode-action">
+            <button id="start-training" class="rank-button">開始する</button>
+          </div>
+        </article>
+
+        <article class="mode-card mode-past-games">
+          <div class="mode-mark blue">📜</div>
+          <div class="mode-info">
+            <h2>過去対局</h2>
+            <p>COM戦・レート戦・友人戦の直近10マッチを閲覧・AI分析。</p>
+          </div>
+          <div class="mode-action">
+            <button id="open-past-games" class="secondary-button">履歴を見る</button>
+          </div>
+        </article>
+
+        <article class="mode-card mode-strategy">
+          <div class="mode-mark green">🧠</div>
+          <div class="mode-info">
+            <h2>AI Strategy Lab</h2>
+            <p>AI同士の自己対戦で進化した戦略を確認できます。</p>
+          </div>
+          <div class="mode-action">
+            <button id="open-strategy-lab-from-menu" class="secondary-button">戦略を見る</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- プレイヤー登録画面 -->
     <section id="profile-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER CARD</div>
@@ -236,9 +256,7 @@
       <div id="profile-summary" class="profile-summary hidden"></div>
     </section>
 
-    <!-- ============================================================
-         ゲーム画面
-         ============================================================ -->
+    <!-- ゲーム画面 -->
     <section id="game-screen" class="screen game-screen hidden">
       <div class="game-head">
         <button id="leave-game" class="back-button">← メニュー</button>
@@ -277,16 +295,12 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         トレーニング画面
-         ============================================================ -->
+    <!-- トレーニング画面 -->
     <section id="training-screen" class="screen training-screen hidden">
       <div id="training-shell" class="training-shell"></div>
     </section>
 
-    <!-- ============================================================
-         マイページ（レート／COM戦タブ）
-         ============================================================ -->
+    <!-- マイページ -->
     <section id="records-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER PROFILE</div>
@@ -294,9 +308,7 @@
       <div id="records-content" class="records-content"><p class="subcopy">プレイヤー登録すると、レートと対戦履歴を確認できます。</p></div>
     </section>
 
-    <!-- ============================================================
-         過去対局画面
-         ============================================================ -->
+    <!-- 過去対局画面 -->
     <section id="past-games-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">MATCH HISTORY</div>
@@ -307,9 +319,7 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         AI戦略ラボ
-         ============================================================ -->
+    <!-- AI戦略ラボ -->
     <section id="strategy-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">AI STRATEGY LAB</div>
@@ -320,9 +330,7 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         何切る問題集
-         ============================================================ -->
+    <!-- 何切る問題集 -->
     <section id="quiz-screen" class="screen quiz-screen hidden">
       <div id="quiz-progress" class="quiz-progress"></div>
       <div id="quiz-shell" class="quiz-shell">
@@ -331,9 +339,7 @@
     </section>
   </main>
 
-  <!-- ============================================================
-       ダイアログ類
-       ============================================================ -->
+  <!-- ダイアログ類 -->
   <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title">
     <div class="game-log-head">
       <div><div class="eyebrow">GAME LOG</div><h2 id="game-log-title">局ログ</h2></div>
