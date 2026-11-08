@@ -83,8 +83,8 @@ const g = {
   greenRedraws: 0, selectedCard: null, onlineSelectedCard: null,
   user: null, account: null, sessionToken: null,
   room: null, presenceRoom: null, online: null,
-  lobbyRoom: null, // ★ ロビーチャット・ハイロー用WebSocket
-  rankedQueuing: false, // ★ レート待機中フラグ
+  lobbyRoom: null,
+  rankedQueuing: false,
   leaderboardExpanded: false,
   announcedCallRound: null, announcedRound: null,
   localLog: null, matchDebugLog: null,
@@ -107,14 +107,28 @@ const g = {
   turnStartAt: 0,
   deadline: 0,
   chatLog: [],
-  hilo: { current: null, next: null, streak: 0, best: 0, waiting: false, started: false },
   queueStartedAt: 0,
   presenceCount: 0,
   hostKeySet: false,
 };
 let toastTimer;
 let lastAuctionDrawHash = '';
-try { g.hilo.best = parseInt(localStorage.getItem('napoleon_hilo_best') || '0') || 0; } catch {}
+
+// ============================================================
+// チャットログ永続化（sessionStorage）
+// ============================================================
+function saveChatLog() {
+  try { sessionStorage.setItem('napoleon_chat_log', JSON.stringify(g.chatLog.slice(-100))); } catch {}
+}
+function loadChatLog() {
+  try {
+    const raw = sessionStorage.getItem('napoleon_chat_log');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) g.chatLog = parsed;
+    }
+  } catch {}
+}
 
 // ============================================================
 // ユーティリティ
@@ -147,15 +161,17 @@ function screen(id) {
     loadLeaderboard();
     loadAccount();
     startPresence();
-    connectLobby(); // ★ ロビー（チャット・ハイロー）接続
+    connectLobby();
+    renderChatLog();
     if (g.rankedQueuing) showQueuePanel();
     else hideQueuePanel();
   } else {
-    // モード選択・その他メニュー以外はロビーを切断（ゲーム中など）
     if (g.lobbyRoom && id !== 'extra-menu-screen') {
-      g.lobbyRoom.close?.();
+      try { g.lobbyRoom.close?.(); } catch {}
       g.lobbyRoom = null;
     }
+    // 戻ってきた時に備えて再描画
+    renderChatLog();
   }
 
   if (id === 'strategy-screen') loadStrategyLab();
@@ -163,9 +179,22 @@ function screen(id) {
   if (id !== 'game-screen') stopTurnTimer();
 }
 
-// ★ ロビー接続
+// ★ ロビー接続（死んだWS検知・自動リトライ付き）
 async function connectLobby() {
-  if (g.lobbyRoom || g.room || g.intentionalLeave) return;
+  if (g.room) {
+    const ws = g.room.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    try { g.room.close?.(); } catch {}
+    g.room = null;
+  }
+  if (g.lobbyRoom) {
+    const ws = g.lobbyRoom.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    try { g.lobbyRoom.close?.(); } catch {}
+    g.lobbyRoom = null;
+  }
+  if (g.intentionalLeave) return;
+
   try {
     const { roomInstance, send, close } = await joinGameRoom();
     if (g.lobbyRoom) { close(); return; }
@@ -182,19 +211,18 @@ async function connectLobby() {
     roomInstance.onclose = () => {
       g.lobbyRoom = null;
       if (!g.intentionalLeave && !g.room && g.phase === '') {
-        setTimeout(connectLobby, 5000);
+        setTimeout(connectLobby, 3000);
       }
     };
-    // 待機中UIの初期化
-    if (!g.hilo.started) { g.hilo.started = true; hiloStart(); }
     renderChatLog();
   } catch (e) {
     console.warn('Lobby connect failed', e);
+    setTimeout(connectLobby, 5000);
   }
 }
 
 function startPresence() {
-  // connectLobbyに統合済み。互換性のため空関数
+  // connectLobby に統合済み
 }
 
 async function stopPresence() {
@@ -216,7 +244,7 @@ function closeOnline() {
   clearTimeout(g.auction?.humanTimeout);
   clearInterval(g.autoNextTimer);
   stopTurnTimer();
-  g.room?.close?.();
+  try { g.room?.close?.(); } catch {}
   g.room = null; g.online = null; g.onlineState = null;
   g.privateHand = []; g.onlineLegal = []; g.onlineSelectedCard = null;
   g.friendLobby = null; g.mySeat = 0; g.hostKeySet = false;
@@ -606,11 +634,13 @@ function renderHomeRating(d) {
 }
 
 // ============================================================
-// チャット・ハイロー
+// チャット
 // ============================================================
 function addChatMessage(m) {
+  if (!m || !m.text) return;
   g.chatLog.push(m);
   if (g.chatLog.length > 100) g.chatLog.shift();
+  saveChatLog();
   renderChatLog();
 }
 function renderChatLog() {
@@ -629,14 +659,10 @@ function sendChat() {
   const text = inp.value.trim();
   if (!text) return;
   const name = g.account?.id || 'ゲスト';
-  
-  // 待機中/対戦中はg.room、ロビーはg.lobbyRoomを使う
   const conn = g.room || g.lobbyRoom;
   if (!conn || !conn.send) { toast('接続中です…'); return; }
-  
   try { conn.send({ type: 'chat', text, name }); }
   catch { toast('送信に失敗しました'); return; }
-  
   inp.value = '';
   inp.focus();
 }
@@ -654,54 +680,6 @@ function bindChatInputFocus() {
 }
 window.__rebindChatFocus = bindChatInputFocus;
 
-function hiloDraw() {
-  const suits = ['♣', '♦', '♥', '♠'];
-  const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-  return { suit: suits[Math.floor(Math.random() * 4)], rank: ranks[Math.floor(Math.random() * 13)] };
-}
-function hiloRankValue(c) { return ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'].indexOf(c.rank); }
-function hiloStart() { g.hilo.current = hiloDraw(); g.hilo.next = null; g.hilo.waiting = false; renderHilo(null); }
-function hiloGuess(direction) {
-  if (g.hilo.waiting || !g.hilo.current) return;
-  g.hilo.waiting = true;
-  const next = hiloDraw();
-  g.hilo.next = next;
-  const curV = hiloRankValue(g.hilo.current), nextV = hiloRankValue(next);
-  let result;
-  if (nextV === curV) result = 'tie';
-  else if (direction === 'higher' && nextV > curV) result = 'win';
-  else if (direction === 'lower' && nextV < curV) result = 'win';
-  else result = 'lose';
-  if (result === 'win') {
-    g.hilo.streak++;
-    if (g.hilo.streak > g.hilo.best) { g.hilo.best = g.hilo.streak; try { localStorage.setItem('napoleon_hilo_best', String(g.hilo.best)); } catch {} }
-  } else if (result === 'lose') g.hilo.streak = 0;
-  renderHilo(result);
-  setTimeout(() => {
-    if (!g.hilo.next) return;
-    g.hilo.current = g.hilo.next; g.hilo.next = null; g.hilo.waiting = false;
-    renderHilo(null);
-  }, 1000);
-}
-function renderHilo(result) {
-  const curEl = $('hilo-current'), nextEl = $('hilo-next');
-  const streakEl = $('hilo-streak'), bestEl = $('hilo-best'), resultEl = $('hilo-result');
-  const isRed = c => c && (c.suit === '♦' || c.suit === '♥');
-  if (curEl && g.hilo.current) { curEl.className = 'hilo-card' + (isRed(g.hilo.current) ? ' red' : ''); curEl.innerHTML = `<span class="rank">${g.hilo.current.rank}</span><span class="suit">${g.hilo.current.suit}</span>`; }
-  if (nextEl) {
-    if (g.hilo.next) { nextEl.classList.remove('hidden'); nextEl.className = 'hilo-card' + (isRed(g.hilo.next) ? ' red' : ''); nextEl.innerHTML = `<span class="rank">${g.hilo.next.rank}</span><span class="suit">${g.hilo.next.suit}</span>`; }
-    else nextEl.classList.add('hidden');
-  }
-  if (streakEl) streakEl.textContent = g.hilo.streak;
-  if (bestEl) bestEl.textContent = g.hilo.best;
-  if (resultEl) {
-    if (!result) resultEl.textContent = '';
-    else if (result === 'win') resultEl.innerHTML = '<span style="color:#a9d2ae">✓ 正解！</span>';
-    else if (result === 'lose') resultEl.innerHTML = '<span style="color:#e89685">✗ 不正解…</span>';
-    else resultEl.innerHTML = '<span style="color:#f3d48e">ー 引き分け</span>';
-  }
-}
-
 // ============================================================
 // 待機中UI
 // ============================================================
@@ -709,7 +687,6 @@ function showQueuePanel() {
   const area = $('queue-status-area');
   if (area) area.classList.remove('hidden');
   g.queueStartedAt = Date.now();
-  if (!g.hilo.started) { g.hilo.started = true; hiloStart(); }
   renderChatLog();
   const qc = $('queue-count'); if (qc) qc.textContent = '1 / 5 人';
   updateQueueElapsed();
@@ -721,7 +698,6 @@ function hideQueuePanel() {
   if (area) area.classList.add('hidden');
   const inp = $('chat-input');
   if (inp) { inp.value = ''; try { inp.blur(); } catch {} }
-  const esc = $('queue-escalation'); if (esc) esc.classList.add('hidden');
 }
 function updateQueueElapsed() {
   const el = $('queue-elapsed');
@@ -755,9 +731,6 @@ async function renderQuickStats() {
 
 // ===== [app.js Part 2/3 開始] =====
 
-// ============================================================
-// ★ COM戦開始（レート待機中でも並行可能）
-// ============================================================
 function startLocal() {
   const wasRankedQueuing = g.rankedQueuing;
 
@@ -776,18 +749,15 @@ function startLocal() {
       clearInterval(g.autoNextTimer);
     }
   } else {
-    // ★ レート待機中は g.room を維持し、COM戦だけ並行する
     clearTimers();
     clearInterval(g.countdownTimer); g.countdownTimer = null;
     clearTimeout(g.auction?.humanTimeout);
     clearInterval(g.autoNextTimer);
-    // ロビーソケットは閉じる（g.room でマッチング継続）
     if (g.lobbyRoom) { try { g.lobbyRoom.close?.(); } catch {} g.lobbyRoom = null; }
   }
 
   clearTimeout(g.auction?.humanTimeout);
   clearInterval(g.countdownTimer); g.countdownTimer = null;
-  g.chatLog = g.chatLog.slice(-30); // 直近のみ保持
 
   g.privateHand = []; g.onlineLegal = []; g.mySeat = 0;
   g.lastRating = null; g.confirmedCall = false; g.lastDiscardPhase = false; g.lastCallPhase = false;
@@ -967,7 +937,6 @@ function prepAuction() {
 function scheduleHumanAuctionTimeout() {
   const auction = g.auction; if (!auction) return;
   clearTimeout(auction.humanTimeout);
-  const timeoutMs = 30000;
   auction.humanTimeout = setTimeout(() => {
     if (g.phase === 'auction' && g.auction === auction) {
       if (g.onlineState && g.room) {
@@ -977,7 +946,7 @@ function scheduleHumanAuctionTimeout() {
         humanApprove(true);
       }
     }
-  }, timeoutMs);
+  }, 30000);
 }
 
 function auctionActivity() {
@@ -1317,21 +1286,14 @@ function humanApprove(forced = false) {
 
 function humanBid() {
   if (g.phase !== 'auction' || !g.auction) return;
-
-  if (!beatsBid(g.bid, g.suit)) {
-    toast('現在の宣言より強い宣言を選んでください');
-    return;
-  }
-
+  if (!beatsBid(g.bid, g.suit)) { toast('現在の宣言より強い宣言を選んでください'); return; }
   if (g.onlineState && g.room) {
     auctionActivity();
     g.room?.send({ type: 'game', action: { type: 'bid', num: g.bid, suit: g.suit } });
     return;
   }
-
   if (!g.auction.active.includes(g.mySeat) || (g.auction.requiredBidSeat !== null && g.auction.requiredBidSeat !== g.mySeat)) return;
   auctionActivity();
-
   g.bidHistory.push({ round: g.round, seat: g.mySeat, num: g.bid, suit: g.suit });
   addGameLog('あなたが' + g.bid + g.suit + 'を宣言');
   if (g.bidHistory.length > 50) g.bidHistory.shift();
@@ -1356,7 +1318,6 @@ function humanBid() {
   }
 
   scheduleObservationPeriod(g.mySeat);
-
   message('あなたが' + g.bid + g.suit + 'を宣言しました');
   if (g.bid === 20 && g.suit === 'NT') { auctionEnd(g.mySeat); return; }
   drawAuction(); drawSeats(); scheduleComBids();
@@ -2389,6 +2350,7 @@ function announceCall(card, onConfirm, online = false) {
 }
 
 // ===== [app.js Part 2/3 終了] =====
+
 // ===== [app.js Part 3/3 開始] =====
 
 // ============================================================
@@ -2520,7 +2482,7 @@ function buildMatchRecord(mode) {
   };
 }
 
-// finishGame と showOnlineResult をラップして自動保存
+// finishGame / showOnlineResult をラップして自動保存
 const __origFinishGame = finishGame;
 finishGame = function () {
   const before = g.phase;
@@ -3180,7 +3142,6 @@ async function online(mode, roomCode, bots, botLevel = 3) {
 // ============================================================
 function confirmLeaveGame() {
   if (g.rankedQueuing) {
-    // ★ レート待機中のCOM戦中断は、モード選択に戻る（マッチングは維持）
     g.phase = '';
     clearTimers();
     screen('mode-select-screen');
@@ -3228,11 +3189,9 @@ $('leave-game')?.addEventListener('click', confirmLeaveGame);
 $('register-account')?.addEventListener('click', () => account('/api/account/register'));
 $('login-account')?.addEventListener('click', () => account('/api/account/login'));
 
-// その他メニューから戻るときは mode-select-screen に
 $('extra-menu-screen')?.querySelector('.back-button')?.addEventListener('click', () => screen('mode-select-screen'));
 
 document.querySelectorAll('[data-go-home]').forEach(b => {
-  // extra-menu-screen だけは個別処理済みなのでスキップ
   if (b.closest('#extra-menu-screen')) return;
   b.addEventListener('click', () => screen('home-screen'));
 });
@@ -3241,8 +3200,6 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   if (!t) return;
   if (t.id === 'chat-send') { e.preventDefault(); sendChat(); }
-  else if (t.id === 'hilo-higher') hiloGuess('higher');
-  else if (t.id === 'hilo-lower') hiloGuess('lower');
   else if (t.id === 'cancel-queue-btn') {
     try { g.room?.send({ type: 'cancel-queue' }); } catch {}
     g.rankedQueuing = false;
@@ -3271,8 +3228,10 @@ if (window.visualViewport) {
 window.addEventListener('error', (e) => { try { addDebugLog('global-error', { message: e.message, stack: e.error?.stack, filename: e.filename, line: e.lineno, col: e.colno, phase: g.phase, round: g.round }); } catch {} });
 window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhandled-rejection', { message: e.reason?.message || String(e.reason), phase: g.phase, round: g.round }); } catch {} });
 
+// ★ 起動: 永続化したチャットログを復元してから画面初期化
 (async () => {
   try { await getUser(); } catch {}
+  loadChatLog();  // ★ 復元
   try { await loadAccount(); } catch {}
   try { await loadLeaderboard(); } catch {}
   bindChatInputFocus();
@@ -3280,5 +3239,4 @@ window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhand
 })();
 
 // ===== [app.js 完全版 終わり] =====
-
 
