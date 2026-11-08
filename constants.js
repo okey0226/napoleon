@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版 + 競りパラメータ + PIMCロールアウト強化 + 全強化項目反映)
+// constants.js (経験DB・全機能統合版 + プレイ精度指標 + 安全学習機構)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -11,6 +11,69 @@ export const HONEST_BID_FIXED_BONUS = 2.0;
 export const ALLY_LOSS_PENALTY = -5;
 export const ALLY_WIN_BONUS = 5;
 export const ALLY_BLOCK_BONUS = 2;
+
+// ============================================================
+// ★ 新規: プレイ精度指標の定義（学習・評価で使用）
+// ============================================================
+export const METRIC_KEYS = [
+  // プレイ精度
+  'avgValueLoss',           // Oracleとの価値差（0が最良、1が最悪）
+  'endgameAccuracy',        // 終盤3トリック一致率（1が最良）
+  'openingAccuracy',        // 序盤3トリック一致率（1が最良）
+  'sameTwoUtilization',     // セイム2活用率（0-1）
+  'trumpEfficiency',        // 切り札効率（獲得トリック/切札消費）
+  'voidExploitSuccess',     // ボイド活用成功率（0-1）
+  'allTakeAvoidance',       // 全取り負け回避率（0-1、高いほど良い）
+  'overtrickAvoidance',     // オーバーキル回避率（0-1、高いほど良い）
+  // 競り精度
+  'bidCalibration',         // 予測pMake vs 実績の差（0が最良）
+  'bidGap',                 // 宣言vs最適bidの差（0が最良）
+  'earlyBidQuality',        // 初手bidの質（高いほど良い）
+  // 役割
+  'deputyCallAccuracy',     // 副官指名の成功度（0-1）
+  'roleAwareness',          // 役割認識率（0-1）
+  // 協調
+  'feedSuccessRate',        // 餌やり成功率（0-1）
+  'signalCoherence',        // シグナル一致率（0-1）
+];
+
+// 指標の方向（true = 高いほど良い / false = 低いほど良い）
+export const METRIC_DIRECTION = {
+  avgValueLoss: false,
+  endgameAccuracy: true,
+  openingAccuracy: true,
+  sameTwoUtilization: true,
+  trumpEfficiency: true,
+  voidExploitSuccess: true,
+  allTakeAvoidance: true,
+  overtrickAvoidance: true,
+  bidCalibration: false,
+  bidGap: false,
+  earlyBidQuality: true,
+  deputyCallAccuracy: true,
+  roleAwareness: true,
+  feedSuccessRate: true,
+  signalCoherence: true,
+};
+
+// 指標の重要度（Pareto判定・合成スコアで使用）
+export const METRIC_WEIGHTS = {
+  avgValueLoss: 5.0,
+  endgameAccuracy: 2.0,
+  openingAccuracy: 1.5,
+  sameTwoUtilization: 1.5,
+  trumpEfficiency: 2.0,
+  voidExploitSuccess: 1.5,
+  allTakeAvoidance: 2.0,
+  overtrickAvoidance: 1.5,
+  bidCalibration: 3.0,
+  bidGap: 2.5,
+  earlyBidQuality: 2.0,
+  deputyCallAccuracy: 2.5,
+  roleAwareness: 1.5,
+  feedSuccessRate: 2.0,
+  signalCoherence: 1.0,
+};
 
 export const shuffledDeck = () => {
   let d = [];
@@ -89,14 +152,14 @@ export const defaultStrategy = () => ({
   bidRealPolicyMaxTrick: 10,
 
   // ============================================================
-  // ★ 新規: プレイ品質補正（予測と実績の一致率向上）
+  // プレイ品質補正（予測と実績の一致率向上）
   // ============================================================
   playQualityFactor: 1.0,
   playQualitySamples: 0,
   playQualityWins: 0,
 
   // ============================================================
-  // ★ 新規: ベイズ手札推定（S1）
+  // ベイズ手札推定（S1）
   // ============================================================
   bayesVoidWeight: 3.0,
   bayesFollowWeight: 0.5,
@@ -106,61 +169,61 @@ export const defaultStrategy = () => ({
   bayesPrior: 0.3,
 
   // ============================================================
-  // ★ 新規: チーム協調シグナル（S2）
+  // チーム協調シグナル（S2）
   // ============================================================
   teamSignalStrength: 0.6,
   teamSignalDecay: 0.9,
   deputyInferWeight: 0.7,
 
   // ============================================================
-  // ★ 新規: 経験DB実質化（S3）
+  // 経験DB実質化（S3）
   // ============================================================
   experienceBlendWeight: 0.4,
   experienceMinSamples: 3,
 
   // ============================================================
-  // ★ 新規: 終盤全列挙探索（A4）
+  // 終盤全列挙探索（A4）
   // ============================================================
   endgameTrickThreshold: 3,
   endgameMaxCombinations: 100000,
 
   // ============================================================
-  // ★ 新規: オープニングブック（A5）
+  // オープニングブック（A5）
   // ============================================================
   openingBookTricks: 3,
   openingBookMinSamples: 20,
   openingBookWeight: 0.5,
 
   // ============================================================
-  // ★ 新規: 全取り負け事前予測（A6）
+  // 全取り負け事前予測（A6）
   // ============================================================
   allTakeRiskWeight: 1.5,
   allTakeLookaheadTricks: 3,
 
   // ============================================================
-  // ★ 新規: セイム2積極活用（A7）
+  // セイム2積極活用（A7）
   // ============================================================
   sameTwoAggressiveLeadChance: 0.7,
 
   // ============================================================
-  // ★ 新規: 副官動的推定（B8）
+  // 副官動的推定（B8）
   // ============================================================
   deputyCallSuitBonus: 0.5,
   deputyBidSuitBonus: 0.3,
 
   // ============================================================
-  // ★ 新規: 相手モデルアンサンブル（B9）
+  // 相手モデルアンサンブル（B9）
   // ============================================================
   opponentArchetypeMix: 0.3,
 
   // ============================================================
-  // ★ 新規: ポジション最適化（B10）
+  // ポジション最適化（B10）
   // ============================================================
   positionBonusLast: 0.3,
   positionBonusFirst: 0.2,
 
   // ============================================================
-  // ★ 新規: 入札速度利用（B11）
+  // 入札速度利用（B11）
   // ============================================================
   bidSpeedFastThreshold: 500,
   bidSpeedSlowThreshold: 3000,
@@ -168,20 +231,86 @@ export const defaultStrategy = () => ({
   bidSpeedBonusSlow: -0.1,
 
   // ============================================================
-  // ★ 新規: 人間対戦ログ学習（B12）
+  // 人間対戦ログ学習（B12）
   // ============================================================
   humanLogBlendWeight: 0.2,
 
   // ============================================================
-  // ★ 新規: MCTS RAVE（C13）
+  // MCTS RAVE（C13）
   // ============================================================
   mctsRave: true,
   mctsRaveBias: 100,
 
   // ============================================================
-  // ★ 新規: 思考時間利用（C14）
+  // 思考時間利用（C14）
   // ============================================================
   thinkTimeWeight: 0.3,
+
+  // ============================================================
+  // ★ 新規: 安全学習機構（絶対悪化しない）
+  // ============================================================
+  // Elitism: 上位N個を無条件保持
+  elitismCount: 2,
+  // チャンピオン・チャレンジャー: 挑戦者が連勝する必要数
+  championStreak: 3,
+  // Pareto改善マージン: これ以上の劣化は許容しない（0=厳格）
+  paretoMargin: 0.0,
+  // 検証用データ割合（20%）
+  validationSplit: 0.2,
+  // 統計的有意性の閾値（p値）
+  significanceLevel: 0.05,
+  // 昇格判定に必要な最小サンプル数
+  minSamplesForPromotion: 100,
+  // 改善と見なす最小差（ノイズ除去）
+  minImprovementThreshold: 0.02,
+  // ロールバック監視期間（世代数）
+  rollbackWindow: 5,
+  // 学習率（EMA更新用）
+  learningRateEMA: 0.1,
+  // 世代あたりのマッチ数
+  matchesPerGeneration: 10,
+  // 探索用UCB定数
+  banditUCBConstant: 1.414,
+  // 進化率（突然変異）
+  mutationRate: 0.15,
+  // パラメータ変更の最大相対変化
+  maxParamChangeRate: 0.1,
+
+  // ============================================================
+  // ★ 新規: プレイ精度指標の重み（合成スコア計算用）
+  // ============================================================
+  metricWeightAvgValueLoss: 5.0,
+  metricWeightEndgameAccuracy: 2.0,
+  metricWeightOpeningAccuracy: 1.5,
+  metricWeightSameTwoUtilization: 1.5,
+  metricWeightTrumpEfficiency: 2.0,
+  metricWeightVoidExploitSuccess: 1.5,
+  metricWeightAllTakeAvoidance: 2.0,
+  metricWeightOvertrickAvoidance: 1.5,
+  metricWeightBidCalibration: 3.0,
+  metricWeightBidGap: 2.5,
+  metricWeightEarlyBidQuality: 2.0,
+  metricWeightDeputyCallAccuracy: 2.5,
+  metricWeightRoleAwareness: 1.5,
+  metricWeightFeedSuccessRate: 2.0,
+  metricWeightSignalCoherence: 1.0,
+
+  // 指標の正規化定数
+  normalizationValueLoss: 1.0,     // 価値損失の最大値
+  normalizationBidGap: 7.0,         // bid gapの最大値（20-13）
+  normalizationTrumpEfficiency: 2.0, // 切札効率の基準値
+
+  // 指標の最小サンプル数（これ未満は無効）
+  metricMinSamples: 20,
+
+  // 合成スコアの計算方法: 'weightedSum' | 'minWeighted' | 'geometricMean'
+  compositeScoreMethod: 'weightedSum',
+
+  // 学習の暴走防止: これ以上のスコア上昇は信頼しない
+  maxScoreImprovementPerGen: 0.15,
+
+  // 世代間の指標差分の安定性チェック（分散が大きすぎる場合は昇格見送り）
+  maxMetricVariance: 0.3,
 
   // ============================================================
   // 競りロジックパラメータ
@@ -300,6 +429,91 @@ export const updateStrategyFromExperience = (baseParams, stats) => {
   return p;
 };
 
+// ============================================================
+// ★ 新規: Pareto改善判定
+// 新戦略が旧戦略を「絶対悪化させずに改善」しているかチェック
+// ============================================================
+export const isParetoImprovement = (newMetrics, oldMetrics, metricKeys = METRIC_KEYS, margin = 0.0) => {
+  let hasImprovement = false;
+  for (const key of metricKeys) {
+    const newVal = Number(newMetrics[key]);
+    const oldVal = Number(oldMetrics[key]);
+    if (!Number.isFinite(newVal) || !Number.isFinite(oldVal)) continue;
+    const direction = METRIC_DIRECTION[key];
+    const improvement = direction ? (newVal - oldVal) : (oldVal - newVal);
+    if (improvement < -margin) return false;  // 一つでも劣化 → 却下
+    if (improvement > margin) hasImprovement = true;
+  }
+  return hasImprovement;
+};
+
+// ============================================================
+// ★ 新規: 合成スコア計算（重み付き）
+// ============================================================
+export const computeCompositeScore = (metrics) => {
+  let score = 0;
+  let totalWeight = 0;
+  for (const key of METRIC_KEYS) {
+    const val = Number(metrics[key]);
+    if (!Number.isFinite(val)) continue;
+    const weight = METRIC_WEIGHTS[key] || 1.0;
+    const direction = METRIC_DIRECTION[key];
+    // 方向を揃えて正規化
+    const normalized = direction ? Math.min(1, Math.max(0, val)) : Math.min(1, Math.max(0, 1 - val));
+    score += normalized * weight;
+    totalWeight += weight;
+  }
+  return totalWeight > 0 ? score / totalWeight : 0;
+};
+
+// ============================================================
+// ★ 新規: 統計的有意差検定（Welchのt検定の近似）
+// 新戦略が旧戦略より有意に優れているか
+// ============================================================
+export const isStatisticallySignificant = (newScores, oldScores, alpha = 0.05) => {
+  if (!Array.isArray(newScores) || !Array.isArray(oldScores)) return false;
+  if (newScores.length < 5 || oldScores.length < 5) return false;
+  
+  const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+  const variance = arr => {
+    const m = mean(arr);
+    return arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1);
+  };
+  
+  const n1 = newScores.length, n2 = oldScores.length;
+  const m1 = mean(newScores), m2 = mean(oldScores);
+  const v1 = variance(newScores), v2 = variance(oldScores);
+  
+  if (v1 === 0 && v2 === 0) return m1 > m2;
+  
+  const se = Math.sqrt(v1 / n1 + v2 / n2);
+  if (se === 0) return m1 > m2;
+  
+  const t = (m1 - m2) / se;
+  // t分布の片側p値の近似（自由度 = n1 + n2 - 2）
+  const df = n1 + n2 - 2;
+  // tが正の大きな値なら有意
+  // alpha=0.05, df=100付近でのt境界値は約1.66
+  const threshold = df < 30 ? 2.0 : df < 100 ? 1.70 : 1.66;
+  return t > threshold;
+};
+
+// ============================================================
+// ★ 新規: 安全学習用ヘルパー
+// ============================================================
+export const sampleMean = (arr) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+export const sampleStd = (arr) => {
+  if (arr.length < 2) return 0;
+  const m = sampleMean(arr);
+  return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1));
+};
+
+export const clampToBounds = (key, value) => {
+  const bounds = PARAM_BOUNDS[key];
+  if (!bounds) return value;
+  return Math.max(bounds[0], Math.min(bounds[1], value));
+};
+
 export const PARAM_BOUNDS = {
   bidThreshold: [2, 3.5], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
@@ -384,6 +598,26 @@ export const PARAM_BOUNDS = {
   humanLogBlendWeight: [0.0, 1.0],
   mctsRaveBias: [10, 500],
   thinkTimeWeight: [0.0, 1.0],
+  // 安全学習機構
+  elitismCount: [1, 5], championStreak: [1, 10], paretoMargin: [0.0, 0.1],
+  validationSplit: [0.1, 0.4], significanceLevel: [0.01, 0.10],
+  minSamplesForPromotion: [30, 500], minImprovementThreshold: [0.0, 0.1],
+  rollbackWindow: [2, 10], learningRateEMA: [0.05, 0.3],
+  matchesPerGeneration: [5, 50], banditUCBConstant: [0.5, 2.0],
+  mutationRate: [0.05, 0.3], maxParamChangeRate: [0.05, 0.3],
+  // 指標の重み
+  metricWeightAvgValueLoss: [0.0, 10.0], metricWeightEndgameAccuracy: [0.0, 5.0],
+  metricWeightOpeningAccuracy: [0.0, 5.0], metricWeightSameTwoUtilization: [0.0, 5.0],
+  metricWeightTrumpEfficiency: [0.0, 5.0], metricWeightVoidExploitSuccess: [0.0, 5.0],
+  metricWeightAllTakeAvoidance: [0.0, 5.0], metricWeightOvertrickAvoidance: [0.0, 5.0],
+  metricWeightBidCalibration: [0.0, 5.0], metricWeightBidGap: [0.0, 5.0],
+  metricWeightEarlyBidQuality: [0.0, 5.0], metricWeightDeputyCallAccuracy: [0.0, 5.0],
+  metricWeightRoleAwareness: [0.0, 5.0], metricWeightFeedSuccessRate: [0.0, 5.0],
+  metricWeightSignalCoherence: [0.0, 5.0],
+  normalizationValueLoss: [0.5, 2.0], normalizationBidGap: [3.0, 10.0], normalizationTrumpEfficiency: [1.0, 5.0],
+  metricMinSamples: [5, 100],
+  maxScoreImprovementPerGen: [0.05, 0.5],
+  maxMetricVariance: [0.1, 1.0],
 };
 
 export const mutateStrategy = (base, rate) => {
@@ -433,6 +667,7 @@ export const crossoverStrategy = (parentA, parentB) => {
       child[k] = parentA[k].map((v, i) => Math.random() < 0.5 ? v : parentB[k][i]);
       continue;
     }
+    if (typeof parentA[k] === 'boolean') continue;
     if (Math.random() < 0.5) child[k] = parentB[k];
   }
   return child;
