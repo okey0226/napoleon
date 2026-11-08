@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版 + プレイ精度指標 + 安全学習機構)
+// constants.js (経験DB・全機能統合版 + 同着平均配分 + 安全学習機構)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -13,66 +13,39 @@ export const ALLY_WIN_BONUS = 5;
 export const ALLY_BLOCK_BONUS = 2;
 
 // ============================================================
+// ★ 順位点テーブル（ART廃止版）
+// ============================================================
+export const RATING_BASE = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
+export const PLAYOFF_MAX_ITERATIONS = 10; // 安全弁：10回連続同着で席番号順タイブレーク
+
+// 後方互換用（既存コードが参照している可能性）
+export const RANK_1_BONUS = 25;
+export const RANK_2_BONUS = 5;
+export const RANK_4_PENALTY = -5;
+export const RANK_5_PENALTY = -25;
+
+// ============================================================
 // ★ 新規: プレイ精度指標の定義（学習・評価で使用）
 // ============================================================
 export const METRIC_KEYS = [
-  // プレイ精度
-  'avgValueLoss',           // Oracleとの価値差（0が最良、1が最悪）
-  'endgameAccuracy',        // 終盤3トリック一致率（1が最良）
-  'openingAccuracy',        // 序盤3トリック一致率（1が最良）
-  'sameTwoUtilization',     // セイム2活用率（0-1）
-  'trumpEfficiency',        // 切り札効率（獲得トリック/切札消費）
-  'voidExploitSuccess',     // ボイド活用成功率（0-1）
-  'allTakeAvoidance',       // 全取り負け回避率（0-1、高いほど良い）
-  'overtrickAvoidance',     // オーバーキル回避率（0-1、高いほど良い）
-  // 競り精度
-  'bidCalibration',         // 予測pMake vs 実績の差（0が最良）
-  'bidGap',                 // 宣言vs最適bidの差（0が最良）
-  'earlyBidQuality',        // 初手bidの質（高いほど良い）
-  // 役割
-  'deputyCallAccuracy',     // 副官指名の成功度（0-1）
-  'roleAwareness',          // 役割認識率（0-1）
-  // 協調
-  'feedSuccessRate',        // 餌やり成功率（0-1）
-  'signalCoherence',        // シグナル一致率（0-1）
+  'avgValueLoss', 'endgameAccuracy', 'openingAccuracy', 'sameTwoUtilization',
+  'trumpEfficiency', 'voidExploitSuccess', 'allTakeAvoidance', 'overtrickAvoidance',
+  'bidCalibration', 'bidGap', 'earlyBidQuality', 'deputyCallAccuracy',
+  'roleAwareness', 'feedSuccessRate', 'signalCoherence',
 ];
 
-// 指標の方向（true = 高いほど良い / false = 低いほど良い）
 export const METRIC_DIRECTION = {
-  avgValueLoss: false,
-  endgameAccuracy: true,
-  openingAccuracy: true,
-  sameTwoUtilization: true,
-  trumpEfficiency: true,
-  voidExploitSuccess: true,
-  allTakeAvoidance: true,
-  overtrickAvoidance: true,
-  bidCalibration: false,
-  bidGap: false,
-  earlyBidQuality: true,
-  deputyCallAccuracy: true,
-  roleAwareness: true,
-  feedSuccessRate: true,
-  signalCoherence: true,
+  avgValueLoss: false, endgameAccuracy: true, openingAccuracy: true, sameTwoUtilization: true,
+  trumpEfficiency: true, voidExploitSuccess: true, allTakeAvoidance: true, overtrickAvoidance: true,
+  bidCalibration: false, bidGap: false, earlyBidQuality: true, deputyCallAccuracy: true,
+  roleAwareness: true, feedSuccessRate: true, signalCoherence: true,
 };
 
-// 指標の重要度（Pareto判定・合成スコアで使用）
 export const METRIC_WEIGHTS = {
-  avgValueLoss: 5.0,
-  endgameAccuracy: 2.0,
-  openingAccuracy: 1.5,
-  sameTwoUtilization: 1.5,
-  trumpEfficiency: 2.0,
-  voidExploitSuccess: 1.5,
-  allTakeAvoidance: 2.0,
-  overtrickAvoidance: 1.5,
-  bidCalibration: 3.0,
-  bidGap: 2.5,
-  earlyBidQuality: 2.0,
-  deputyCallAccuracy: 2.5,
-  roleAwareness: 1.5,
-  feedSuccessRate: 2.0,
-  signalCoherence: 1.0,
+  avgValueLoss: 5.0, endgameAccuracy: 2.0, openingAccuracy: 1.5, sameTwoUtilization: 1.5,
+  trumpEfficiency: 2.0, voidExploitSuccess: 1.5, allTakeAvoidance: 2.0, overtrickAvoidance: 1.5,
+  bidCalibration: 3.0, bidGap: 2.5, earlyBidQuality: 2.0, deputyCallAccuracy: 2.5,
+  roleAwareness: 1.5, feedSuccessRate: 2.0, signalCoherence: 1.0,
 };
 
 export const shuffledDeck = () => {
@@ -123,218 +96,65 @@ export const defaultStrategy = () => ({
   signalS1Bonus: 1, signalS2Bonus: 2, signalThreeRoleBonus: 4, signalS3Bonus: 2,
   s1RequiredMinorCards: 2, s3RequiredAces: 2,
   sameColorBidderLimit: 2, ntBidderLimit: 2, s2ThreeRoleExtra: 1,
-  goldenFormationBonus: 3.0, overkillPenalty: 3.0, deputyOvertrumpPenalty: 4.0, lastSeatDuckBonus: 2.0,
+  goldenFormationBonus: 3.0, deputyOvertrumpPenalty: 4.0, lastSeatDuckBonus: 2.0,
   det_w_bid: 1.0, det_w_void: 3.0, det_w_follow: 0.5, det_w_feed: 1.0,
   oracleSamples: 200, oracleMctsTimeMs: 200,
   weightPlayQuality: 5.0, weightFeedSuccess: 3.0, weightSignalSuccess: 2.0,
   weightGoldenFormation: 1.0, weightPlanAccuracy: 3.0, weightBiddingQuality: 2.0,
   weightNapAttempts: 4.0, weightMatchQuality: 2.0, weightRoleWinRate: 2.0,
   weightOverkill: 2.0, weightDeputyOvertrump: 3.0, weightOpportunityLoss: 3.0, weightWastedAce: 1.0,
-  voidStrategyWeight: 1.0,
-  isolatedFaceDiscardBonus: 0.6,
-  trumpCountForVoid: 5,
-  lowBidVoidPenalty: 1.5,
-  midBidVoidPenalty: 0.5,
-  highBidVoidBonus: 0.8,
-  voidLeadProbability: 0.55,
-  cutTrickValue: 2.0,
-  isolatedFaceThreshold: 2,
-  ntVoidPenalty: 3.0,
-  ntHighBidVoidBonus: 1.5,
+  voidStrategyWeight: 1.0, isolatedFaceDiscardBonus: 0.6, trumpCountForVoid: 5,
+  lowBidVoidPenalty: 1.5, midBidVoidPenalty: 0.5, highBidVoidBonus: 0.8,
+  voidLeadProbability: 0.55, cutTrickValue: 2.0, isolatedFaceThreshold: 2,
+  ntVoidPenalty: 3.0, ntHighBidVoidBonus: 1.5,
   nnWeights: {
     bias: 0.0, handStrength: 0.5, trumpRemaining: 0.3, pointsNeeded: -0.4, trickNo: -0.2,
     isNap: 0.3, isDeputy: 0.1, isAlly: -0.1, hasMighty: 0.8
   },
-  expHitWeight: 1.0,
-  similarityThreshold: 5.0,
-  // PIMCロールアウト強化
-  bidRolloutRealPolicyRate: 1.0,
-  bidRealPolicyMaxTrick: 10,
-
-  // ============================================================
-  // プレイ品質補正（予測と実績の一致率向上）
-  // ============================================================
-  playQualityFactor: 1.0,
-  playQualitySamples: 0,
-  playQualityWins: 0,
-
-  // ============================================================
-  // ベイズ手札推定（S1）
-  // ============================================================
-  bayesVoidWeight: 3.0,
-  bayesFollowWeight: 0.5,
-  bayesFeedWeight: 1.0,
-  bayesBidWeight: 1.0,
-  bayesDecay: 0.95,
-  bayesPrior: 0.3,
-
-  // ============================================================
-  // チーム協調シグナル（S2）
-  // ============================================================
-  teamSignalStrength: 0.6,
-  teamSignalDecay: 0.9,
-  deputyInferWeight: 0.7,
-
-  // ============================================================
-  // 経験DB実質化（S3）
-  // ============================================================
-  experienceBlendWeight: 0.4,
-  experienceMinSamples: 3,
-
-  // ============================================================
-  // 終盤全列挙探索（A4）
-  // ============================================================
-  endgameTrickThreshold: 3,
-  endgameMaxCombinations: 100000,
-
-  // ============================================================
-  // オープニングブック（A5）
-  // ============================================================
-  openingBookTricks: 3,
-  openingBookMinSamples: 20,
-  openingBookWeight: 0.5,
-
-  // ============================================================
-  // 全取り負け事前予測（A6）
-  // ============================================================
-  allTakeRiskWeight: 1.5,
-  allTakeLookaheadTricks: 3,
-
-  // ============================================================
-  // セイム2積極活用（A7）
-  // ============================================================
+  expHitWeight: 1.0, similarityThreshold: 5.0,
+  bidRolloutRealPolicyRate: 1.0, bidRealPolicyMaxTrick: 10,
+  playQualityFactor: 1.0, playQualitySamples: 0, playQualityWins: 0,
+  bayesVoidWeight: 3.0, bayesFollowWeight: 0.5, bayesFeedWeight: 1.0,
+  bayesBidWeight: 1.0, bayesDecay: 0.95, bayesPrior: 0.3,
+  teamSignalStrength: 0.6, teamSignalDecay: 0.9, deputyInferWeight: 0.7,
+  experienceBlendWeight: 0.4, experienceMinSamples: 3,
+  endgameTrickThreshold: 3, endgameMaxCombinations: 100000,
+  openingBookTricks: 3, openingBookMinSamples: 20, openingBookWeight: 0.5,
+  allTakeRiskWeight: 1.5, allTakeLookaheadTricks: 3,
   sameTwoAggressiveLeadChance: 0.7,
-
-  // ============================================================
-  // 副官動的推定（B8）
-  // ============================================================
-  deputyCallSuitBonus: 0.5,
-  deputyBidSuitBonus: 0.3,
-
-  // ============================================================
-  // 相手モデルアンサンブル（B9）
-  // ============================================================
+  deputyCallSuitBonus: 0.5, deputyBidSuitBonus: 0.3,
   opponentArchetypeMix: 0.3,
-
-  // ============================================================
-  // ポジション最適化（B10）
-  // ============================================================
-  positionBonusLast: 0.3,
-  positionBonusFirst: 0.2,
-
-  // ============================================================
-  // 入札速度利用（B11）
-  // ============================================================
-  bidSpeedFastThreshold: 500,
-  bidSpeedSlowThreshold: 3000,
-  bidSpeedBonusFast: 0.2,
-  bidSpeedBonusSlow: -0.1,
-
-  // ============================================================
-  // 人間対戦ログ学習（B12）
-  // ============================================================
+  positionBonusLast: 0.3, positionBonusFirst: 0.2,
+  bidSpeedFastThreshold: 500, bidSpeedSlowThreshold: 3000,
+  bidSpeedBonusFast: 0.2, bidSpeedBonusSlow: -0.1,
   humanLogBlendWeight: 0.2,
-
-  // ============================================================
-  // MCTS RAVE（C13）
-  // ============================================================
-  mctsRave: true,
-  mctsRaveBias: 100,
-
-  // ============================================================
-  // 思考時間利用（C14）
-  // ============================================================
+  mctsRave: true, mctsRaveBias: 100,
   thinkTimeWeight: 0.3,
-
-  // ============================================================
-  // ★ 新規: 安全学習機構（絶対悪化しない）
-  // ============================================================
-  // Elitism: 上位N個を無条件保持
-  elitismCount: 2,
-  // チャンピオン・チャレンジャー: 挑戦者が連勝する必要数
-  championStreak: 3,
-  // Pareto改善マージン: これ以上の劣化は許容しない（0=厳格）
-  paretoMargin: 0.0,
-  // 検証用データ割合（20%）
-  validationSplit: 0.2,
-  // 統計的有意性の閾値（p値）
-  significanceLevel: 0.05,
-  // 昇格判定に必要な最小サンプル数
-  minSamplesForPromotion: 100,
-  // 改善と見なす最小差（ノイズ除去）
-  minImprovementThreshold: 0.02,
-  // ロールバック監視期間（世代数）
-  rollbackWindow: 5,
-  // 学習率（EMA更新用）
-  learningRateEMA: 0.1,
-  // 世代あたりのマッチ数
-  matchesPerGeneration: 10,
-  // 探索用UCB定数
-  banditUCBConstant: 1.414,
-  // 進化率（突然変異）
-  mutationRate: 0.15,
-  // パラメータ変更の最大相対変化
-  maxParamChangeRate: 0.1,
-
-  // ============================================================
-  // ★ 新規: プレイ精度指標の重み（合成スコア計算用）
-  // ============================================================
-  metricWeightAvgValueLoss: 5.0,
-  metricWeightEndgameAccuracy: 2.0,
-  metricWeightOpeningAccuracy: 1.5,
-  metricWeightSameTwoUtilization: 1.5,
-  metricWeightTrumpEfficiency: 2.0,
-  metricWeightVoidExploitSuccess: 1.5,
-  metricWeightAllTakeAvoidance: 2.0,
-  metricWeightOvertrickAvoidance: 1.5,
-  metricWeightBidCalibration: 3.0,
-  metricWeightBidGap: 2.5,
-  metricWeightEarlyBidQuality: 2.0,
-  metricWeightDeputyCallAccuracy: 2.5,
-  metricWeightRoleAwareness: 1.5,
-  metricWeightFeedSuccessRate: 2.0,
+  elitismCount: 2, championStreak: 3, paretoMargin: 0.0,
+  validationSplit: 0.2, significanceLevel: 0.05,
+  minSamplesForPromotion: 100, minImprovementThreshold: 0.02,
+  rollbackWindow: 5, learningRateEMA: 0.1, matchesPerGeneration: 10,
+  banditUCBConstant: 1.414, mutationRate: 0.15, maxParamChangeRate: 0.1,
+  metricWeightAvgValueLoss: 5.0, metricWeightEndgameAccuracy: 2.0,
+  metricWeightOpeningAccuracy: 1.5, metricWeightSameTwoUtilization: 1.5,
+  metricWeightTrumpEfficiency: 2.0, metricWeightVoidExploitSuccess: 1.5,
+  metricWeightAllTakeAvoidance: 2.0, metricWeightOvertrickAvoidance: 1.5,
+  metricWeightBidCalibration: 3.0, metricWeightBidGap: 2.5,
+  metricWeightEarlyBidQuality: 2.0, metricWeightDeputyCallAccuracy: 2.5,
+  metricWeightRoleAwareness: 1.5, metricWeightFeedSuccessRate: 2.0,
   metricWeightSignalCoherence: 1.0,
-
-  // 指標の正規化定数
-  normalizationValueLoss: 1.0,     // 価値損失の最大値
-  normalizationBidGap: 7.0,         // bid gapの最大値（20-13）
-  normalizationTrumpEfficiency: 2.0, // 切札効率の基準値
-
-  // 指標の最小サンプル数（これ未満は無効）
-  metricMinSamples: 20,
-
-  // 合成スコアの計算方法: 'weightedSum' | 'minWeighted' | 'geometricMean'
-  compositeScoreMethod: 'weightedSum',
-
-  // 学習の暴走防止: これ以上のスコア上昇は信頼しない
-  maxScoreImprovementPerGen: 0.15,
-
-  // 世代間の指標差分の安定性チェック（分散が大きすぎる場合は昇格見送り）
-  maxMetricVariance: 0.3,
-
-  // ============================================================
-  // 競りロジックパラメータ
-  // ============================================================
-  napRoleThreshold1: 22,
-  napRoleThreshold2: 17,
-  napRoleThreshold3: 13,
-  deputyRoleThreshold1: 12,
-  deputyRoleThreshold2: 8,
-  deputyRoleThreshold3: 5,
-  supportLimitWeight: 0.7,
-  supportLimitDivisor: 2,
-  sameSuitRaiseBonus: 1.0,
-  sameColorSupportBonus: 0.8,
-  sameColorSameBidBonus: 0.5,
-  crossColorCompeteBonus: 0.3,
-  auctionObservationMs: 2000,
-  auctionRiskTolerance: 0.5,
+  normalizationValueLoss: 1.0, normalizationBidGap: 7.0, normalizationTrumpEfficiency: 2.0,
+  metricMinSamples: 20, compositeScoreMethod: 'weightedSum',
+  maxScoreImprovementPerGen: 0.15, maxMetricVariance: 0.3,
+  napRoleThreshold1: 22, napRoleThreshold2: 17, napRoleThreshold3: 13,
+  deputyRoleThreshold1: 12, deputyRoleThreshold2: 8, deputyRoleThreshold3: 5,
+  supportLimitWeight: 0.7, supportLimitDivisor: 2,
+  sameSuitRaiseBonus: 1.0, sameColorSupportBonus: 0.8,
+  sameColorSameBidBonus: 0.5, crossColorCompeteBonus: 0.3,
+  auctionObservationMs: 2000, auctionRiskTolerance: 0.5,
   bidStepwiseAggression: 0.6,
-  weightBidGap: 3.0,
-  weightBidAccuracy: 2.0,
-  weightDeputySignal: 3.0,
-  weightStageCount: 1.0,
-  weightRoleAccuracy: 2.0,
+  weightBidGap: 3.0, weightBidAccuracy: 2.0, weightDeputySignal: 3.0,
+  weightStageCount: 1.0, weightRoleAccuracy: 2.0,
 });
 
 export const sweetSpotFactor = (p) => {
@@ -377,23 +197,65 @@ export const pointsTierOf = (pts) => pts === 0 ? 'zero' : pts < 3 ? 'mid' : 'hig
 export const experienceConfidence = (samples) => Math.min(1, samples / 10);
 export const blendWithExperience = (p, exp) => exp && exp.samples >= 3 ? (p * 0.7 + (exp.wins / exp.samples) * 0.3) : p;
 
-export const matchRatingChanges = (matchScores, abandonedSeats = []) => {
+// ============================================================
+// ★ 順位点計算（同着は平均配分・ART廃止版）
+// ============================================================
+export const matchRatingChanges = (matchScores, abandonedSeats = [], options = {}) => {
   const abandoned = new Set(Array.isArray(abandonedSeats) ? abandonedSeats : []);
-  const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
-  const placementBySeat = [];
-  ranked.forEach((entry, idx) => { placementBySeat[entry.i] = idx + 1; });
-  const baseDeltas = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
+  const forceBreak = options.forceBreakTie === true;
+
+  // スコア降順、同点は席番号昇順（安定）
+  const sorted = matchScores.map((s, i) => ({ score: s, seat: i }))
+    .sort((a, b) => b.score - a.score || a.seat - b.seat);
+
+  const results = Array(5).fill(null);
+  let pos = 0;
+  while (pos < 5) {
+    let end = pos;
+    while (end + 1 < 5 && sorted[end + 1].score === sorted[pos].score) end++;
+    const ranks = [];
+    for (let r = pos + 1; r <= end + 1; r++) ranks.push(r);
+    const totalPts = ranks.reduce((sum, r) => sum + RATING_BASE[r], 0);
+    const avgPts = totalPts / ranks.length;
+    const displayRank = pos + 1;
+
+    for (let i = pos; i <= end; i++) {
+      const seat = sorted[i].seat;
+      results[seat] = {
+        delta: avgPts,
+        placement: displayRank,
+        tie: ranks.length > 1 ? { group: ranks.slice(), count: ranks.length } : null
+      };
+    }
+    pos = end + 1;
+  }
+
   return matchScores.map((s, i) => {
+    const r = results[i];
     const isAbandoned = abandoned.has(i);
-    const rank = placementBySeat[i];
-    const baseDelta = baseDeltas[rank] ?? 0;
     const abandonPenalty = isAbandoned ? -30 : 0;
-    const delta = baseDelta + abandonPenalty;
+    const delta = r.delta + abandonPenalty;
     let outcome = 'loss';
-    if (rank === 1) outcome = 'win';
-    else if (rank === 2 || rank === 3) outcome = 'draw';
-    return { outcome, delta, placement: rank, abandoned: isAbandoned, abandonPenalty, baseDelta, breakdown: { rank, rounds: [] } };
+    if (r.placement === 1) outcome = 'win';
+    else if (r.placement === 2 || r.placement === 3) outcome = 'draw';
+    if (isAbandoned) outcome = 'loss';
+
+    return {
+      outcome, delta,
+      placement: r.placement,
+      tie: forceBreak && r.tie ? { ...r.tie, broken: true } : r.tie,
+      abandoned: isAbandoned,
+      abandonPenalty, baseDelta: r.delta,
+      breakdown: { rank: r.placement, rounds: [] }
+    };
   });
+};
+
+// 4位と5位が同着かどうか（プレーオフ判定）
+export const hasBottomTie = (matchScores) => {
+  const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
+  if (ranked.length < 5) return false;
+  return ranked[3].s === ranked[4].s;
 };
 
 export const computeEloDelta = (myElo, oppElos, outcome) => {
@@ -429,10 +291,6 @@ export const updateStrategyFromExperience = (baseParams, stats) => {
   return p;
 };
 
-// ============================================================
-// ★ 新規: Pareto改善判定
-// 新戦略が旧戦略を「絶対悪化させずに改善」しているかチェック
-// ============================================================
 export const isParetoImprovement = (newMetrics, oldMetrics, metricKeys = METRIC_KEYS, margin = 0.0) => {
   let hasImprovement = false;
   for (const key of metricKeys) {
@@ -441,15 +299,12 @@ export const isParetoImprovement = (newMetrics, oldMetrics, metricKeys = METRIC_
     if (!Number.isFinite(newVal) || !Number.isFinite(oldVal)) continue;
     const direction = METRIC_DIRECTION[key];
     const improvement = direction ? (newVal - oldVal) : (oldVal - newVal);
-    if (improvement < -margin) return false;  // 一つでも劣化 → 却下
+    if (improvement < -margin) return false;
     if (improvement > margin) hasImprovement = true;
   }
   return hasImprovement;
 };
 
-// ============================================================
-// ★ 新規: 合成スコア計算（重み付き）
-// ============================================================
 export const computeCompositeScore = (metrics) => {
   let score = 0;
   let totalWeight = 0;
@@ -458,7 +313,6 @@ export const computeCompositeScore = (metrics) => {
     if (!Number.isFinite(val)) continue;
     const weight = METRIC_WEIGHTS[key] || 1.0;
     const direction = METRIC_DIRECTION[key];
-    // 方向を揃えて正規化
     const normalized = direction ? Math.min(1, Math.max(0, val)) : Math.min(1, Math.max(0, 1 - val));
     score += normalized * weight;
     totalWeight += weight;
@@ -466,41 +320,26 @@ export const computeCompositeScore = (metrics) => {
   return totalWeight > 0 ? score / totalWeight : 0;
 };
 
-// ============================================================
-// ★ 新規: 統計的有意差検定（Welchのt検定の近似）
-// 新戦略が旧戦略より有意に優れているか
-// ============================================================
 export const isStatisticallySignificant = (newScores, oldScores, alpha = 0.05) => {
   if (!Array.isArray(newScores) || !Array.isArray(oldScores)) return false;
   if (newScores.length < 5 || oldScores.length < 5) return false;
-  
   const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
   const variance = arr => {
     const m = mean(arr);
     return arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1);
   };
-  
   const n1 = newScores.length, n2 = oldScores.length;
   const m1 = mean(newScores), m2 = mean(oldScores);
   const v1 = variance(newScores), v2 = variance(oldScores);
-  
   if (v1 === 0 && v2 === 0) return m1 > m2;
-  
   const se = Math.sqrt(v1 / n1 + v2 / n2);
   if (se === 0) return m1 > m2;
-  
   const t = (m1 - m2) / se;
-  // t分布の片側p値の近似（自由度 = n1 + n2 - 2）
   const df = n1 + n2 - 2;
-  // tが正の大きな値なら有意
-  // alpha=0.05, df=100付近でのt境界値は約1.66
   const threshold = df < 30 ? 2.0 : df < 100 ? 1.70 : 1.66;
   return t > threshold;
 };
 
-// ============================================================
-// ★ 新規: 安全学習用ヘルパー
-// ============================================================
 export const sampleMean = (arr) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
 export const sampleStd = (arr) => {
   if (arr.length < 2) return 0;
@@ -557,8 +396,7 @@ export const PARAM_BOUNDS = {
   s1RequiredMinorCards: [1, 4], s3RequiredAces: [1, 4],
   sameColorBidderLimit: [1, 3], ntBidderLimit: [1, 3], s2ThreeRoleExtra: [1, 2],
   expHitWeight: [0.0, 2.0], similarityThreshold: [1.0, 10.0],
-  bidRolloutRealPolicyRate: [0.8, 1.0],
-  bidRealPolicyMaxTrick: [8, 10],
+  bidRolloutRealPolicyRate: [0.8, 1.0], bidRealPolicyMaxTrick: [8, 10],
   goldenFormationBonus: [0.0, 5.0], deputyOvertrumpPenalty: [0.0, 5.0], lastSeatDuckBonus: [0.0, 5.0],
   det_w_bid: [0.0, 3.0], det_w_void: [1.0, 6.0], det_w_follow: [0.0, 2.0], det_w_feed: [0.0, 3.0],
   oracleSamples: [50, 500], oracleMctsTimeMs: [50, 500],
@@ -580,7 +418,6 @@ export const PARAM_BOUNDS = {
   bidStepwiseAggression: [0.3, 1.0],
   weightBidGap: [0.0, 5.0], weightBidAccuracy: [0.0, 5.0], weightDeputySignal: [0.0, 5.0],
   weightStageCount: [0.0, 3.0], weightRoleAccuracy: [0.0, 5.0],
-  // 新規パラメータ境界
   playQualityFactor: [0.5, 1.2], playQualitySamples: [0, 10000], playQualityWins: [0, 10000],
   bayesVoidWeight: [1.0, 6.0], bayesFollowWeight: [0.0, 2.0], bayesFeedWeight: [0.0, 3.0],
   bayesBidWeight: [0.0, 3.0], bayesDecay: [0.8, 1.0], bayesPrior: [0.05, 0.6],
@@ -598,14 +435,12 @@ export const PARAM_BOUNDS = {
   humanLogBlendWeight: [0.0, 1.0],
   mctsRaveBias: [10, 500],
   thinkTimeWeight: [0.0, 1.0],
-  // 安全学習機構
   elitismCount: [1, 5], championStreak: [1, 10], paretoMargin: [0.0, 0.1],
   validationSplit: [0.1, 0.4], significanceLevel: [0.01, 0.10],
   minSamplesForPromotion: [30, 500], minImprovementThreshold: [0.0, 0.1],
   rollbackWindow: [2, 10], learningRateEMA: [0.05, 0.3],
   matchesPerGeneration: [5, 50], banditUCBConstant: [0.5, 2.0],
   mutationRate: [0.05, 0.3], maxParamChangeRate: [0.05, 0.3],
-  // 指標の重み
   metricWeightAvgValueLoss: [0.0, 10.0], metricWeightEndgameAccuracy: [0.0, 5.0],
   metricWeightOpeningAccuracy: [0.0, 5.0], metricWeightSameTwoUtilization: [0.0, 5.0],
   metricWeightTrumpEfficiency: [0.0, 5.0], metricWeightVoidExploitSuccess: [0.0, 5.0],
@@ -673,7 +508,8 @@ export const crossoverStrategy = (parentA, parentB) => {
   return child;
 };
 
-export const RANK_1_BONUS = 25;
-export const RANK_2_BONUS = 5;
-export const RANK_4_PENALTY = -5;
-export const RANK_5_PENALTY = -25;
+// ============================================================
+// ★ プレイフェーズ時間制限（N40）
+// ============================================================
+export const PLAY_FREE_SECONDS = 5;      // 各ターンの無料枠
+export const PLAY_POOL_SECONDS = 20;      // 局共通プール
