@@ -8,4 +8,4 @@ services:
     healthCheckPath: /healthz
     envVars:
       - key: WORKER_API_URL
-        value: https://napoleon.YOUR_SUBDOMAIN.workers.dev
+        value: https://napoleon.uma2001226.workers.dev
