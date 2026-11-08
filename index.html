@@ -17,7 +17,7 @@
       document.body.appendChild(errDiv);
     });
   </script>
-  <script type="module" src="/app.js?v=48"></script>
+  <script type="module" src="/app.js?v=49"></script>
 </head>
 <body>
   <header class="topbar">
@@ -29,9 +29,6 @@
   </header>
 
   <main id="app">
-    <!-- ============================================================
-         ホーム画面
-         ============================================================ -->
     <section id="home-screen" class="screen home-screen hero-screen">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -61,9 +58,6 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         モード選択画面（対戦モード + ロビー）
-         ============================================================ -->
     <section id="mode-select-screen" class="screen mode-select-screen hidden">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -80,14 +74,12 @@
           <div id="my-rating" class="my-rating hidden" aria-label="自分のレート"></div>
         </div>
 
-        <!-- 待機ステータス（レート検索中のみ表示） -->
         <div id="queue-status-area" class="queue-status-area hidden">
           <div class="queue-status-text">対戦相手を検索中… <span id="queue-count">1 / 5 人</span></div>
           <div id="queue-elapsed" class="queue-elapsed">待機中 0:00</div>
           <button id="cancel-queue-btn" class="quiet-button">キャンセル</button>
         </div>
 
-        <!-- メインメニュー（対戦モード） -->
         <div class="battle-modes">
           <article class="mode-card mode-ranked">
             <div class="mode-mark gold">◆</div>
@@ -125,14 +117,13 @@
           </article>
         </div>
 
-        <!-- その他メニューボタン -->
         <button id="open-extra-menu" class="extra-menu-btn">
           <span class="extra-menu-icon">🎮</span>
           <span>その他の機能（AI指導・過去対局など）</span>
           <span class="extra-menu-arrow">→</span>
         </button>
 
-        <!-- ロビー（チャット＋ハイロー常設） -->
+        <!-- ★ ロビー（チャットのみ） -->
         <section id="lobby-area" class="lobby-area">
           <div class="lobby-header">
             <div class="lobby-title">💬 ロビー</div>
@@ -146,24 +137,10 @@
                 <button id="chat-send">送信</button>
               </div>
             </div>
-            <div class="minigame-panel">
-              <div class="minigame-header">🎮 ハイロー</div>
-              <div id="hilo-display">
-                <div id="hilo-current" class="hilo-card"></div>
-                <div id="hilo-next" class="hilo-card hidden"></div>
-              </div>
-              <div id="hilo-controls">
-                <button id="hilo-higher" class="minigame-btn">HIGHER ↑</button>
-                <button id="hilo-lower" class="minigame-btn">LOWER ↓</button>
-              </div>
-              <div id="hilo-result" class="hilo-result"></div>
-              <div class="hilo-stats">連勝: <b id="hilo-streak">0</b> ／ 最高: <b id="hilo-best">0</b></div>
-            </div>
           </div>
           <div id="queue-stats" class="queue-stats"></div>
         </section>
 
-        <!-- ランキング -->
         <section id="leaderboard" class="leaderboard mode-leaderboard" aria-labelledby="leaderboard-title">
           <div class="leaderboard-heading">
             <div><div class="eyebrow">RANKING</div><h2 id="leaderboard-title">TOP PLAYERS</h2></div>
@@ -176,9 +153,6 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         その他機能メニュー
-         ============================================================ -->
     <section id="extra-menu-screen" class="screen mode-select-screen hidden">
       <div class="space-bg" aria-hidden="true">
         <div class="space-nebula"></div>
@@ -237,9 +211,6 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         プレイヤー登録画面
-         ============================================================ -->
     <section id="profile-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER CARD</div>
@@ -265,9 +236,6 @@
       <div id="profile-summary" class="profile-summary hidden"></div>
     </section>
 
-    <!-- ============================================================
-         ゲーム画面
-         ============================================================ -->
     <section id="game-screen" class="screen game-screen hidden">
       <div class="game-head">
         <button id="leave-game" class="back-button">← メニュー</button>
@@ -306,16 +274,10 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         トレーニング画面
-         ============================================================ -->
     <section id="training-screen" class="screen training-screen hidden">
       <div id="training-shell" class="training-shell"></div>
     </section>
 
-    <!-- ============================================================
-         マイページ
-         ============================================================ -->
     <section id="records-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">PLAYER PROFILE</div>
@@ -323,9 +285,6 @@
       <div id="records-content" class="records-content"><p class="subcopy">プレイヤー登録すると、レートと対戦履歴を確認できます。</p></div>
     </section>
 
-    <!-- ============================================================
-         過去対局画面
-         ============================================================ -->
     <section id="past-games-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">MATCH HISTORY</div>
@@ -336,9 +295,6 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         AI戦略ラボ
-         ============================================================ -->
     <section id="strategy-screen" class="screen narrow-screen hidden">
       <button class="back-button" data-go-home>← 戻る</button>
       <div class="eyebrow">AI STRATEGY LAB</div>
@@ -349,9 +305,6 @@
       </div>
     </section>
 
-    <!-- ============================================================
-         何切る問題集
-         ============================================================ -->
     <section id="quiz-screen" class="screen quiz-screen hidden">
       <div id="quiz-progress" class="quiz-progress"></div>
       <div id="quiz-shell" class="quiz-shell">
@@ -360,9 +313,6 @@
     </section>
   </main>
 
-  <!-- ============================================================
-       ダイアログ類
-       ============================================================ -->
   <dialog id="game-log-dialog" class="game-log-dialog" aria-labelledby="game-log-title">
     <div class="game-log-head">
       <div><div class="eyebrow">GAME LOG</div><h2 id="game-log-title">局ログ</h2></div>
