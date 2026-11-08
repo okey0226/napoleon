@@ -7,7 +7,6 @@ import {
   isTwoRole, isThreeRole, getRoleCards, evaluateRiskTransfer,
   getStateHash, getSimilarityDistance, analyzeDiscardOptions,
   canDeclareWin,
-  // ★ 新規: 競りシグナルロジック（修正版）
   determineRole, decideNextBid, inferIntentFromBid, estimateDeputyDPoints,
   computeNScore, computeDScore, computeDPoints, computeSupportLimit
 } from './ai-tactics.js';
@@ -21,7 +20,7 @@ function safeJsonParse(str, fallback = null) {
 
 export const schema = [
   "CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, player_id TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
-  "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta INTEGER NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS player_stats (user_id TEXT PRIMARY KEY, exact_wins INTEGER NOT NULL DEFAULT 0, bold_exact_wins INTEGER NOT NULL DEFAULT 0, solo_wins INTEGER NOT NULL DEFAULT 0, dramatic_plays INTEGER NOT NULL DEFAULT 0)",
   "CREATE INDEX IF NOT EXISTS match_history_user ON match_history(user_id, id DESC)",
   "CREATE INDEX IF NOT EXISTS players_rating ON players(rating DESC)",
@@ -70,6 +69,16 @@ export const schema = [
   "ALTER TABLE ai_strategy_log ADD COLUMN deputy_signal_success_rate REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN avg_stage_count REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN role_accuracy REAL DEFAULT 0",
+  // ============================================================
+  // ★ COM戦専用（非公開・本人のみ閲覧）
+  // ============================================================
+  "CREATE TABLE IF NOT EXISTS player_com_match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after REAL NOT NULL, placement INTEGER NOT NULL, tie_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS player_com_match_history_user ON player_com_match_history(user_id, id DESC)",
+  "CREATE TABLE IF NOT EXISTS player_com_performance (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, declarer_successes INTEGER NOT NULL DEFAULT 0, deputy_attempts INTEGER NOT NULL DEFAULT 0, deputy_successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_com_precision (user_id TEXT PRIMARY KEY, exact_attempts INTEGER NOT NULL DEFAULT 0, exact_successes INTEGER NOT NULL DEFAULT 0, solo_attempts INTEGER NOT NULL DEFAULT 0, solo_successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_com_ally_feed (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_com_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS player_com_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0, streak_current INTEGER NOT NULL DEFAULT 0, streak_best INTEGER NOT NULL DEFAULT 0)",
   ...quizSchema
 ];
 
@@ -93,19 +102,22 @@ async function loadBotStrategy(env) {
   return defaultStrategy();
 }
 
+// ★ N28修正: ai_state_experience を stateCache にロード
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
-  const map = { bids: {}, calls: {}, plays: {}, stateCache: null };
+  const map = { bids: {}, calls: {}, plays: {}, stateCache: {} };
   try {
-    const [bids, calls, plays] = await Promise.all([
+    const [bids, calls, plays, states] = await Promise.all([
       env.DB.prepare("SELECT strength_key, trump_type, num, wins, samples FROM ai_bid_experience WHERE samples > 0").all(),
       env.DB.prepare("SELECT call_id, trump_suit, wins, samples FROM ai_call_experience WHERE samples > 0").all(),
-      env.DB.prepare("SELECT role, phase, points_tier, rank_tier, wins, samples FROM ai_play_experience WHERE samples > 0").all()
+      env.DB.prepare("SELECT role, phase, points_tier, rank_tier, wins, samples FROM ai_play_experience WHERE samples > 0").all(),
+      env.DB.prepare("SELECT state_hash, card_win_rates, samples FROM ai_state_experience ORDER BY updated_at DESC LIMIT 2000").all()
     ]);
     for (const r of (bids.results || [])) map.bids[`${r.strength_key}:${r.trump_type}:${r.num}`] = { wins: r.wins, samples: r.samples };
     for (const r of (calls.results || [])) map.calls[`${r.call_id}:${r.trump_suit}`] = { wins: r.wins, samples: r.samples };
     for (const r of (plays.results || [])) map.plays[`${r.role}:${r.phase}:${r.points_tier}:${r.rank_tier}`] = { wins: r.wins, samples: r.samples };
+    for (const r of (states.results || [])) map.stateCache[r.state_hash] = { card_win_rates: r.card_win_rates, samples: r.samples };
   } catch (e) { console.warn("experience load failed", e); }
   __cachedExperience = map;
   __cachedExperienceTime = Date.now();
@@ -124,6 +136,17 @@ function metricRank(db, table, successColumn, attemptColumn, successes, attempts
 
 async function forceInitDB(env) {
   for (const sql of schema) { try { await env.DB.prepare(sql).run(); } catch (e) { console.error("SQL error:", e.message); } }
+}
+
+// ============================================================
+// セッショントークン検証ヘルパー（内部で /api/account/me を呼ぶのではなくDB直参照）
+// ============================================================
+async function getUserIdByToken(env, token) {
+  if (!token) return null;
+  try {
+    const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first();
+    return sess?.user_id || null;
+  } catch { return null; }
 }
 
 export default {
@@ -176,6 +199,9 @@ export default {
         return response({ error: 'not found' }, { status: 404 });
       }
 
+      // ============================================================
+      // アカウント登録・ログイン
+      // ============================================================
       if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
         let body; try { body = await request.json(); } catch { return response({ error: "入力を確認してください" }, 400); }
         const id = String(body.id || "").trim(), pass = String(body.password || "");
@@ -201,6 +227,7 @@ export default {
           if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
           userId = p.user_id;
         }
+        // レート戦・COM戦の統計テーブルを初期化
         await env.DB.batch([
           env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_performance(user_id) VALUES(?)").bind(userId),
@@ -208,7 +235,12 @@ export default {
           env.DB.prepare("INSERT OR IGNORE INTO player_art_rate(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_ally_feed(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_bold_bid_rate(user_id) VALUES(?)").bind(userId),
-          env.DB.prepare("INSERT OR IGNORE INTO player_elo(user_id) VALUES(?)").bind(userId)
+          env.DB.prepare("INSERT OR IGNORE INTO player_elo(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_com_performance(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_com_precision(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_com_ally_feed(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_com_bold_bid_rate(user_id) VALUES(?)").bind(userId),
+          env.DB.prepare("INSERT OR IGNORE INTO player_com_match_stats(user_id) VALUES(?)").bind(userId)
         ]);
         const token = hex(crypto.getRandomValues(new Uint8Array(32)));
         const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
@@ -216,10 +248,13 @@ export default {
         const player = await env.DB.prepare("SELECT player_id AS id,rating,wins,losses,games,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing,com_rating FROM players WHERE user_id=?").bind(userId).first();
         return response({ ...player, sessionToken: token });
       }
+
+      // ============================================================
+      // 寮プロフィール更新
+      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/account/update-dorm") {
         const token = request.headers.get("x-session-token");
-        let userId = null;
-        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        const userId = await getUserIdByToken(env, token);
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         const dormPeriod = Number(body.dormPeriod) || 310;
@@ -235,10 +270,12 @@ export default {
         } catch (e) { return response({ error: e.message }, 500); }
       }
 
+      // ============================================================
+      // 後方互換: COMレート単独更新（新API /api/com-match/finish を推奨）
+      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/account/update-com-rating") {
         const token = request.headers.get("x-session-token");
-        let userId = null;
-        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        const userId = await getUserIdByToken(env, token);
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
         const newComRating = Number(body.comRating);
@@ -251,10 +288,12 @@ export default {
         return response({ error: "invalid" }, 400);
       }
 
+      // ============================================================
+      // ★ /api/account/me（internalUserId追加: B10修正）
+      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
-        let userId = null;
-        if (token) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(token, Date.now()).first(); if (sess) userId = sess.user_id; }
+        let userId = await getUserIdByToken(env, token);
         if (!userId) { const who = signed(request); if (who) userId = who.id; }
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         const p = await env.DB.prepare("SELECT player_id AS id,username,rating,wins,losses,games,dorm_period,favorite_song,career,scary_senior,infinite_food,favorite_standing,com_rating FROM players WHERE user_id=?").bind(userId).first();
@@ -287,14 +326,304 @@ export default {
           ])
         ]);
         const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
-        return response({ ...p, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
+        return response({
+          ...p,
+          internalUserId: userId,
+          performance, precision, artRate, allyFeed, boldBid,
+          ranks: { rating: ratingRank.ahead + 1 },
+          performanceRanks,
+          matchStats,
+          history: historyPage.results
+        });
       }
 
+      // ★ ここから後半へ続く（/api/match/finish, /api/com-match/finish, /api/account/me/com, /api/ai/*）
+      // ===== [worker.js 前半 終了] =====
+      // ============================================================
+      // ★ /api/match/finish（レート戦 マッチ結果永続化）B9修正
+      // ============================================================
+      if (request.method === "POST" && url.pathname === "/api/match/finish") {
+        let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
+        const { matchId, seats } = body;
+        if (!Array.isArray(seats) || !seats.length) return response({ error: 'no seats' }, 400);
+
+        const verified = [];
+        for (const s of seats) {
+          const delta = Number(s.delta);
+          const placement = Number(s.placement);
+          if (!Number.isFinite(delta) || delta < -100 || delta > 100) continue;
+          if (!Number.isInteger(placement) || placement < 1 || placement > 5) continue;
+          if (!s.sessionToken || !s.userId) continue;
+          const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(s.sessionToken, Date.now()).first();
+          if (!sess || sess.user_id !== s.userId) continue;
+          verified.push({ ...s, delta, placement });
+        }
+        if (!verified.length) return response({ error: 'no valid sessions' }, 401);
+
+        const statements = [];
+        const updates = [];
+        try {
+          const userIds = verified.map(v => v.userId);
+          const ph = userIds.map(() => '?').join(',');
+          const profRes = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + ph + ")").bind(...userIds).all();
+          const byId = new Map(profRes.results.map(r => [r.user_id, r]));
+
+          for (const v of verified) {
+            const profile = byId.get(v.userId);
+            if (!profile) continue;
+            // ★ N39修正: newRating を整数化
+            const newRating = Math.max(100, Math.round((Number(profile.rating) || 1000) + v.delta));
+            const roundedDelta = Math.round(v.delta * 10) / 10; // 小数第1位まで保持
+            const outcome = v.outcome || 'loss';
+            const stat = v.stats || {};
+
+            statements.push(
+              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?")
+                .bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
+              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)")
+                .bind(v.userId, profile.username, outcome, roundedDelta, newRating),
+              env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(v.userId),
+              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?")
+                .bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
+              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes")
+                .bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
+              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes")
+                .bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
+              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5")
+                .bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1,
+                  v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
+            );
+            updates.push({ userId: v.userId, rating: newRating, delta: roundedDelta, outcome, placement: v.placement });
+          }
+          if (statements.length) await env.DB.batch(statements);
+          return response({ ok: true, matchId, updates });
+        } catch (e) {
+          console.error('match finish save failed', e);
+          return response({ error: e.message }, 500);
+        }
+      }
+
+      // ============================================================
+      // ★ /api/com-match/finish（COM戦専用・非公開）E4
+      // ============================================================
+      if (request.method === "POST" && url.pathname === "/api/com-match/finish") {
+        const token = request.headers.get("x-session-token");
+        const userId = await getUserIdByToken(env, token);
+        if (!userId) return response({ error: 'auth required' }, 401);
+
+        let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
+        const delta = Number(body.delta);
+        const placement = Number(body.placement);
+        if (!Number.isFinite(delta) || delta < -100 || delta > 100) return response({ error: 'invalid delta' }, 400);
+        if (!Number.isInteger(placement) || placement < 1 || placement > 5) return response({ error: 'invalid placement' }, 400);
+        const outcome = body.outcome || (placement === 1 ? 'win' : (placement >= 2 && placement <= 3 ? 'draw' : 'loss'));
+        const stat = body.stats || {};
+        const tie = body.tie ? JSON.stringify(body.tie) : null;
+
+        try {
+          const profile = await env.DB.prepare("SELECT username,com_rating FROM players WHERE user_id=?").bind(userId).first();
+          if (!profile) return response({ error: 'player not found' }, 404);
+          const prev = Number(profile.com_rating) || 1000;
+          const newComRating = Math.max(100, Math.round(prev + delta));
+          const roundedDelta = Math.round(delta * 10) / 10;
+
+          const msRow = await env.DB.prepare("SELECT streak_current, streak_best FROM player_com_match_stats WHERE user_id=?").bind(userId).first();
+          const prevStreak = msRow?.streak_current ?? 0;
+          const prevBest = msRow?.streak_best ?? 0;
+          let newStreak = prevStreak;
+          if (outcome === 'win') newStreak = prevStreak >= 0 ? prevStreak + 1 : 1;
+          else newStreak = prevStreak <= 0 ? prevStreak - 1 : -1;
+          const newBest = Math.max(prevBest, newStreak);
+
+          await env.DB.batch([
+            env.DB.prepare("UPDATE players SET com_rating=? WHERE user_id=?").bind(newComRating, userId),
+            env.DB.prepare("INSERT INTO player_com_match_history(user_id,username,result,delta,rating_after,placement,tie_json) VALUES(?,?,?,?,?,?,?)")
+              .bind(userId, profile.username, outcome, roundedDelta, newComRating, placement, tie),
+            env.DB.prepare("INSERT OR IGNORE INTO player_com_performance(user_id) VALUES(?)").bind(userId),
+            env.DB.prepare("UPDATE player_com_performance SET declarer_attempts=declarer_attempts+?,declarer_successes=declarer_successes+?,deputy_attempts=deputy_attempts+?,deputy_successes=deputy_successes+? WHERE user_id=?")
+              .bind(stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0, userId),
+            env.DB.prepare("INSERT OR IGNORE INTO player_com_precision(user_id) VALUES(?)").bind(userId),
+            env.DB.prepare("UPDATE player_com_precision SET exact_attempts=exact_attempts+?,exact_successes=exact_successes+?,solo_attempts=solo_attempts+?,solo_successes=solo_successes+? WHERE user_id=?")
+              .bind(stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0, userId),
+            env.DB.prepare("INSERT OR IGNORE INTO player_com_ally_feed(user_id) VALUES(?)").bind(userId),
+            env.DB.prepare("UPDATE player_com_ally_feed SET attempts=attempts+?,successes=successes+? WHERE user_id=?")
+              .bind(stat.allyFeedAttempts || 0, stat.allyFeedSuccesses || 0, userId),
+            env.DB.prepare("INSERT OR IGNORE INTO player_com_bold_bid_rate(user_id) VALUES(?)").bind(userId),
+            env.DB.prepare("UPDATE player_com_bold_bid_rate SET attempts=attempts+?,successes=successes+? WHERE user_id=?")
+              .bind(stat.boldAttempts || 0, stat.boldSuccesses || 0, userId),
+            env.DB.prepare("INSERT OR IGNORE INTO player_com_match_stats(user_id) VALUES(?)").bind(userId),
+            env.DB.prepare("UPDATE player_com_match_stats SET declarer_attempts=declarer_attempts+?,bid_total=bid_total+?,nt_bids=nt_bids+?,color_bids=color_bids+?,match_count=match_count+1,rank_1=rank_1+?,rank_2=rank_2+?,rank_3=rank_3+?,rank_4=rank_4+?,rank_5=rank_5+?,streak_current=?,streak_best=? WHERE user_id=?")
+              .bind(stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0,
+                placement === 1 ? 1 : 0, placement === 2 ? 1 : 0, placement === 3 ? 1 : 0, placement === 4 ? 1 : 0, placement === 5 ? 1 : 0,
+                newStreak, newBest, userId)
+          ]);
+          return response({ ok: true, comRating: newComRating, delta: roundedDelta, placement, streak: newStreak, bestStreak: newBest });
+        } catch (e) {
+          console.error('com match finish failed', e);
+          return response({ error: e.message }, 500);
+        }
+      }
+
+      // ============================================================
+      // ★ /api/account/me/com（COM戦専用プロフィール・本人のみ）E5
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/account/me/com") {
+        const token = request.headers.get("x-session-token");
+        const userId = await getUserIdByToken(env, token);
+        if (!userId) return response({ error: 'auth required' }, 401);
+
+        try {
+          const [playerRow, perfRow, precRow, feedRow, boldRow, matchStatsRow, historyPage] = await Promise.all([
+            env.DB.prepare("SELECT player_id AS id,username,com_rating FROM players WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT declarer_attempts,declarer_successes,deputy_attempts,deputy_successes FROM player_com_performance WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT exact_attempts,exact_successes,solo_attempts,solo_successes FROM player_com_precision WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT attempts,successes FROM player_com_ally_feed WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT attempts,successes FROM player_com_bold_bid_rate WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5,streak_current,streak_best FROM player_com_match_stats WHERE user_id=?").bind(userId).first(),
+            env.DB.prepare("SELECT result,delta,rating_after,placement,tie_json,created_at FROM player_com_match_history WHERE user_id=? ORDER BY id DESC LIMIT 50").bind(userId).all()
+          ]);
+          if (!playerRow) return response({ error: 'no player' }, 404);
+          return response({
+            id: playerRow.id, username: playerRow.username, comRating: Number(playerRow.com_rating) || 1000,
+            performance: perfRow || { declarer_attempts: 0, declarer_successes: 0, deputy_attempts: 0, deputy_successes: 0 },
+            precision: precRow || { exact_attempts: 0, exact_successes: 0, solo_attempts: 0, solo_successes: 0 },
+            allyFeed: feedRow || { attempts: 0, successes: 0 },
+            boldBid: boldRow || { attempts: 0, successes: 0 },
+            matchStats: matchStatsRow || { declarer_attempts: 0, bid_total: 0, nt_bids: 0, color_bids: 0, match_count: 0, rank_1: 0, rank_2: 0, rank_3: 0, rank_4: 0, rank_5: 0, streak_current: 0, streak_best: 0 },
+            history: (historyPage.results || []).map(r => {
+              let tie = null;
+              try { if (r.tie_json) tie = JSON.parse(r.tie_json); } catch {}
+              return { result: r.result, delta: r.delta, rating_after: r.rating_after, placement: r.placement, tie, created_at: r.created_at };
+            })
+          });
+        } catch (e) {
+          return response({ error: e.message }, 500);
+        }
+      }
+
+      // ============================================================
+      // ★ /api/ai/learn（詳細版）N2
+      // ============================================================
+      if (request.method === "POST" && url.pathname === "/api/ai/learn") {
+        let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
+        const { bid, call, playDecisions } = body || {};
+        const statements = [];
+        try {
+          // bid 経験: strength_key(量子化) × trump_type × num
+          if (bid && Number.isFinite(bid.strengthKey) && bid.trumpType && Number.isFinite(bid.num)) {
+            const sk = Math.round(bid.strengthKey * 2) / 2;
+            const won = body.wonRound ? 1 : 0;
+            statements.push(
+              env.DB.prepare("INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,1) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+1,updated_at=CURRENT_TIMESTAMP")
+                .bind(sk, bid.trumpType, bid.num, won)
+            );
+          }
+          // call 経験: callId × trumpSuit
+          if (call && call.callId && call.trumpSuit) {
+            const won = body.wonRound ? 1 : 0;
+            statements.push(
+              env.DB.prepare("INSERT INTO ai_call_experience(call_id,trump_suit,wins,samples) VALUES(?,?,?,1) ON CONFLICT(call_id,trump_suit) DO UPDATE SET wins=wins+excluded.wins,samples=samples+1,updated_at=CURRENT_TIMESTAMP")
+                .bind(call.callId, call.trumpSuit, won)
+            );
+          }
+          // play 経験: role × phase × pointsTier × rankTier ごとに勝ち数を集計
+          if (Array.isArray(playDecisions) && playDecisions.length) {
+            const agg = {};
+            for (const d of playDecisions) {
+              if (d.won === null || d.won === undefined) continue;
+              if (!d.role || !d.phase || !d.pointsTier || !d.rankTier) continue;
+              const key = `${d.role}:${d.phase}:${d.pointsTier}:${d.rankTier}`;
+              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0 };
+              agg[key].wins += d.won ? 1 : 0;
+              agg[key].total += 1;
+            }
+            for (const k of Object.keys(agg)) {
+              const a = agg[k];
+              statements.push(
+                env.DB.prepare("INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples) VALUES(?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP")
+                  .bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total)
+              );
+            }
+          }
+          if (statements.length) await env.DB.batch(statements);
+          // キャッシュを無効化（次回 loadExperience で最新を取得）
+          __cachedExperience = null; __cachedExperienceTime = 0;
+          return response({ ok: true, updated: statements.length });
+        } catch (e) {
+          console.error('ai/learn failed', e);
+          return response({ error: e.message }, 500);
+        }
+      }
+
+      // ============================================================
+      // ★ /api/ai/report（詳細版）N2
+      // ============================================================
+      if (request.method === "POST" && url.pathname === "/api/ai/report") {
+        let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
+        const token = request.headers.get("x-session-token");
+        const userId = token ? await getUserIdByToken(env, token) : null;
+        const statements = [];
+        try {
+          // 契約情報から ai_bid_experience を精緻に更新（num は 13〜20 に clamp）
+          const contracts = Array.isArray(body.contracts) ? body.contracts : [];
+          const bidAgg = {};
+          for (const c of contracts) {
+            if (!Number.isFinite(c.num) || c.num < 13 || c.num > 20) continue;
+            if (!Number.isFinite(c.strengthAtBid)) continue;
+            const sk = Math.round(c.strengthAtBid * 2) / 2;
+            const tt = c.suit === 'NT' ? 'NT' : 'color';
+            const k = `${sk}:${tt}:${c.num}`;
+            if (!bidAgg[k]) bidAgg[k] = { sk, tt, num: c.num, wins: 0, total: 0 };
+            bidAgg[k].wins += c.napWin ? 1 : 0;
+            bidAgg[k].total += 1;
+          }
+          for (const k of Object.keys(bidAgg)) {
+            const a = bidAgg[k];
+            statements.push(
+              env.DB.prepare("INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,?) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP")
+                .bind(a.sk, a.tt, a.num, a.wins, a.total)
+            );
+          }
+
+          // human_win_patterns: マッチ全体のパターン記録
+          if (userId && body.playerRank) {
+            const contractsJson = JSON.stringify(contracts);
+            const aiSnapshot = body.aiWeights ? JSON.stringify(body.aiWeights) : null;
+            statements.push(
+              env.DB.prepare("INSERT INTO human_win_patterns(user_id,player_id,rank,won_as_nap,won_as_deputy,won_as_ally,avg_bid,exact_wins,solo_wins,match_rating_delta,contracts_json,ai_weights_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(
+                  userId, body.playerId || null, Number(body.playerRank) || 0,
+                  Number(body.playerWonAsNap) || 0, Number(body.playerWonAsDeputy) || 0, Number(body.playerWonAsAlly) || 0,
+                  Number(body.avgBid) || 0, Number(body.exactWins) || 0, Number(body.soloWins) || 0,
+                  Number(body.matchRatingDelta) || 0, contractsJson, aiSnapshot
+                )
+            );
+          }
+
+          if (statements.length) await env.DB.batch(statements);
+          __cachedExperience = null; __cachedExperienceTime = 0;
+
+          // 最新の ai_weights を返す（既存挙動の互換）
+          const w = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
+          const weights = w?.weights ? safeJsonParse(w.weights, null) : null;
+          return response({ ok: true, updated: statements.length, weights });
+        } catch (e) {
+          console.error('ai/report failed', e);
+          return response({ error: e.message }, 500);
+        }
+      }
+
+      // ============================================================
+      // ランキング（COM戦は含めない）R7
+      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/rating/top") {
         const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games FROM players p ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
         return response(results);
       }
 
+      // ============================================================
+      // AI戦略系
+      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") {
         const limit = parseInt(url.searchParams.get("limit")) || 10;
         const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all();
@@ -309,11 +638,11 @@ export default {
 
       if (request.method === "GET" && url.pathname === "/api/ai/generations") {
         const { results } = await env.DB.prepare(`
-          SELECT generation, 
-                 AVG(nap_win_rate) as nap, 
-                 AVG(alliance_win_rate) as ally, 
+          SELECT generation,
+                 AVG(nap_win_rate) as nap,
+                 AVG(alliance_win_rate) as ally,
                  AVG(avg_value_loss) as avg_vl,
-                 COUNT(*) as count, 
+                 COUNT(*) as count,
                  MAX(created_at) as time
           FROM ai_strategy_log GROUP BY generation ORDER BY generation ASC LIMIT 20
         `).all();
@@ -355,30 +684,57 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-// ===== [worker.js 前半 終了] ====
+// ===== [worker.js 前半 終了] =====
+
 // ===== [worker.js 後半 開始] =====
 
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
 async function getProfile(env, conn) {
-  const userId = conn.authUserId || conn.userId;
-  if (!userId) return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト" };
-  const p = await env.DB.prepare("SELECT player_id,username,rating,games FROM players WHERE user_id=?").bind(userId).first();
-  return p ? { rating: p.rating, games: p.games, username: p.username, playerId: p.player_id, userId } : { rating: 1000, games: null, username: conn.username || "player", playerId: conn.username || "player", userId: null };
+  // ★ N1修正: sessionToken を必ず含める（レート保存で必要）
+  if (conn.authProfile && conn.authUserId) {
+    return {
+      rating: Number(conn.authProfile.rating) || 1000,
+      games: Number(conn.authProfile.games) || 0,
+      username: conn.authProfile.id || conn.username || "player",
+      playerId: conn.authProfile.id || conn.username || "player",
+      userId: conn.authUserId,
+      sessionToken: conn.authSessionToken || null
+    };
+  }
+  return { rating: 1000, games: 0, username: conn.username || "ゲスト", playerId: conn.username || "ゲスト", userId: null, sessionToken: null };
 }
 
 async function beginMatch(kind, roomCode, group, room, env) {
+  // ★ N14修正: ranked は 5人ちょうど & 全員生きていることを厳密確認
   if (kind === "ranked") {
     if (!Array.isArray(group) || group.length !== 5) return;
     const browserIds = new Set();
+    const ok = [];
     for (const x of group) {
-      if (!x || !x.player || !x.player.userId || !x.id || !conns.has(x.id)) return;
+      if (!x || !x.player || !x.player.userId || !x.id || !conns.has(x.id)) continue;
       if (x.browserId) {
-        if (browserIds.has(x.browserId)) return;
+        if (browserIds.has(x.browserId)) continue;
         browserIds.add(x.browserId);
       }
+      ok.push(x);
     }
+    if (ok.length !== 5) {
+      // 失敗時は生存者をキューへ戻す
+      for (const x of group) {
+        if (!x || !x.conn || !conns.has(x.id)) continue;
+        if (ok.includes(x)) continue;
+        sendSafe(x.conn, { type: 'room-error', message: '対戦相手の接続が切れました。再マッチングします' });
+      }
+      for (const x of ok) {
+        if (!queues.ranked.some(q => q.id === x.id)) queues.ranked.push(x);
+      }
+      broadcastQueueStatus();
+      return;
+    }
+    group = ok;
   }
+
   const id = Math.random().toString(36).slice(2, 12).toUpperCase();
   const newBidSignals = () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 });
   const seats = group.map(x => ({
@@ -403,7 +759,7 @@ async function beginMatch(kind, roomCode, group, room, env) {
   const m = {
     id, kind, code: roomCode, seats: seats.slice(0, 5), created: Date.now(), botLevel: 3,
     matchScores: Array(5).fill(0), matchArt: Array(5).fill(0), matchContracts: [], bidHistory: [],
-    playoff: false, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), botExperience: null,
+    playoff: false, playoffCount: 0, appeal: null, appealInfo: '', botStrategy: defaultStrategy(), botExperience: null,
     matchStats: Array.from({ length: 5 }, () => ({ exactWins: 0, boldExactWins: 0, soloWins: 0, dramaticPlays: 0, declarerAttempts: 0, declarerSuccesses: 0, deputyAttempts: 0, deputySuccesses: 0, exactAttempts: 0, exactSuccesses: 0, soloAttempts: 0, soloSuccesses: 0, artAttempts: 0, allyFeedAttempts: 0, allyFeedSuccesses: 0, boldAttempts: 0, boldSuccesses: 0, bidTotal: 0, ntBids: 0, colorBids: 0 })),
     roundArt: Array(5).fill(0), roundDrama: Array(5).fill(0), roundFeed: Array(5).fill(0),
     phase: "prep", round: 1, mult: 1, redraws: 0, kitty: [], openKitty: [], discardedKitty: [], trick: [], trickNo: 0, active: -1,
@@ -414,13 +770,32 @@ async function beginMatch(kind, roomCode, group, room, env) {
     properPlans: [null, null, null, null, null],
     auctionStartAt: 0,
     properRecomputed: false,
-    winDeclaration: null
+    winDeclaration: null,
+    // ★ N40: プレイフェーズ時間制限プール
+    playPools: [20, 20, 20, 20, 20],
+    turnStartAt: 0,
+    // ★ N33: ホスト端末COM計算用
+    botComputeKeyHex: null,
+    hostSeat: -1,
+    pendingBotRequest: null
   };
   matches.set(id, m);
   m.seats.forEach(x => { if (x.connId) connMatch.set(x.connId, id); });
   if (env?.DB) {
     loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {});
     loadExperience(env).then(e => { m.botExperience = e; }).catch(() => {});
+  }
+  // ★ N33: ホスト端末を決定（最初の人間）
+  const firstHuman = m.seats.findIndex(s => !s.bot && s.connId);
+  if (firstHuman >= 0) {
+    m.hostSeat = firstHuman;
+    // 暗号鍵を生成してホストのみに送信
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+      m.botComputeKeyHex = hex(keyBytes);
+      const hostConn = conns.get(m.seats[firstHuman].connId);
+      if (hostConn) sendSafe(hostConn, { type: 'bot-compute-key', keyHex: m.botComputeKeyHex });
+    } catch (e) { console.warn('key generation failed', e); }
   }
   const players = m.seats.map((x, seat) => ({ seat, id: x.player.playerId, username: x.player.username, rating: x.player.rating, bot: x.bot, abandoned: false }));
   group.forEach((x, seat) => sendSafe(x.conn, { type: "matched", matchId: id, mode: kind, code: roomCode || null, players, seat, botCount: 5 - group.length }));
@@ -451,6 +826,9 @@ function deal(m) {
   m.auctionStartAt = 0;
   m.properRecomputed = false;
   m.winDeclaration = null;
+  // ★ N40: プレイプールも局毎リセット
+  m.playPools = [20, 20, 20, 20, 20];
+  m.turnStartAt = 0;
   const green = m.seats.findIndex(p => !p.hand.some(c => ["10", "J", "Q", "K", "A"].includes(c.rank)));
   if (green >= 0 && m.redraws < 5) {
     m.redraws++; m.mult = m.mult + 1; m.phase = "redeal";
@@ -524,11 +902,12 @@ function isSafeToCashAceInMatch(m, suit, seat) {
 function publicState(m) {
   return {
     matchId: m.id, mode: m.kind, code: m.code, botLevel: m.botLevel, phase: m.phase, round: m.round, mult: m.mult,
-    matchScores: m.matchScores, matchArt: m.matchArt, bidHistory: m.bidHistory || [], playoff: !!m.playoff,
+    matchScores: m.matchScores, matchArt: m.matchArt, bidHistory: m.bidHistory || [], playoff: !!m.playoff, playoffCount: m.playoffCount || 0,
     appeal: m.appeal, appealInfo: m.appealInfo || '', lastTrickWinner: m.lastTrickWinner ?? null,
     finalRoundRule: m.round >= 10 ? finalAuctionRule(m.matchScores, m.mult) : null,
     notice: m.notice, active: m.active, allianceKittyPoints: m.allianceKittyPoints || 0,
     winDeclaration: m.winDeclaration || null,
+    playPools: m.playPools || [20, 20, 20, 20, 20],
     players: m.seats.map((p, seat) => ({
       seat,
       name: p.bot ? (p.abandoned ? (p.originalPlayerName || p.player.username) + " (放棄)" : p.player.username) : (p.player.playerId || p.player.username),
@@ -537,11 +916,12 @@ function publicState(m) {
       abandoned: !!p.abandoned,
       rating: p.player.rating, bot: p.bot,
       handCount: p.hand.length, points: p.points, taken: p.taken, active: m.active,
-      approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.approved) ? !!m.auction.approved[seat] : false,
+      approved: m.phase === "auction" && m.auction && Array.isArray(m.auction.active) ? !m.auction.active.includes(seat) : false,
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    revealedKitty: (m.phase !== "auction" && m.openKitty) ? m.openKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
+    // ★ B5修正: 捨て札フェーズは discardedKitty を参照
+    revealedKitty: (m.phase !== "auction" && m.phase !== "prep" && m.phase !== "discard" && m.discardedKitty) ? m.discardedKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? {
       high: m.auction.high,
       active: m.auction.active,
@@ -584,10 +964,6 @@ function validBid(m, n, s) {
   return Number.isInteger(n) && n >= (m.auction.minBid || 13) && n <= 20 && (SUITS.includes(s) || s === "NT") && (n > h.num || (n === h.num && SV[s] > SV[h.suit]));
 }
 
-// ==========================================
-// 観察期間の設定（bid後の「間」）
-// ==========================================
-
 function scheduleObservationPeriod(m, excludeSeat = -1) {
   const obsBase = m.botStrategy?.auctionObservationMs ?? 2000;
   const jitter = 1000 + Math.random() * 2000;
@@ -622,7 +998,6 @@ function doApprove(m, seat, room, forced = false) {
     const humanPending = m.auction.active.some(s => !m.seats[s].bot && s !== seat && !m.auction.approved[s]);
     const allApproved = !humanPending && (others.length === 0 || others.every(s => m.auction.approved[s]));
     if (allApproved) {
-      // ★ 修正: nScore/2 ではなく computeProperBid を使用
       const proper = computeProperBid(m.seats[seat].hand, m.auction.high.suit, m.botStrategy || defaultStrategy(), seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, m.bidHistory, m.round);
       const properBid = proper.properBid > 0 ? proper.properBid : 13;
       if (m.auction.high.num < properBid) {
@@ -641,6 +1016,7 @@ function doApprove(m, seat, room, forced = false) {
     }
     return;
   }
+  // ★ N25/N26: approved フラグベース（active から除去しない）
   m.auction.approved[seat] = true;
   m.auction.lastAction[seat] = Date.now();
   m.auction.autoApprove[seat] = false;
@@ -680,6 +1056,7 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.high = { num: n, suit: s, player: seat, solo: solo === true };
   if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null;
   m.auction.version++;
+  // ★ N25/N26: bid 時は全員の approved をリセット（復帰）
   m.auction.approved = Array(5).fill(false);
   m.auction.needsHumanConfirm = false;
   m.active = seat;
@@ -692,14 +1069,7 @@ function doBid(m, seat, n, s, room, solo = false) {
         if (i === seat) continue;
         if (!m.seats[i].bidSignals) m.seats[i].bidSignals = { sent: null, received: [], sameColorCount: 0, lastBidAt: 0 };
         if (!Array.isArray(m.seats[i].bidSignals.received)) m.seats[i].bidSignals.received = [];
-        m.seats[i].bidSignals.received.push({
-          from: seat,
-          intent: intent.intent,
-          strength: intent.strength,
-          num: n,
-          suit: s,
-          reason: intent.reason
-        });
+        m.seats[i].bidSignals.received.push({ from: seat, intent: intent.intent, strength: intent.strength, num: n, suit: s, reason: intent.reason });
       }
     } catch (e) { console.warn("inferIntentFromBid failed", e?.message); }
   }
@@ -754,7 +1124,6 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
 
   const params = m.botStrategy || defaultStrategy();
   if (!m.properRecomputed) {
-    // ★ 修正: nScore/2 ではなく computeProperBid を使用
     const proper = computeProperBid(
       m.seats[seat].hand, m.auction.high.suit, params,
       seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory, m.round
@@ -798,7 +1167,14 @@ function startPlay(m, room) {
     if (c.deputy < 0) c.deputy = c.nap;
   }
   m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap;
-  m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null;
+  // ★ N40: プレイプール初期化とターン開始時刻
+  m.playPools = [20, 20, 20, 20, 20];
+  m.turnStartAt = Date.now();
+  const mySeat = m.active;
+  const free = 5;
+  const pool = m.playPools[mySeat] || 20;
+  m.deadline = Date.now() + (free + Math.max(0, pool)) * 1000;
+  m.humanAutoPlayAt = null; m.botThinkAt = null;
   m.notice = "カードを出してください。マストフォローです。"; publish(m, room);
   if (m.seats[m.active].bot) botAction(m, room);
 }
@@ -826,7 +1202,7 @@ function callCard(m, seat, suit, rank, room) {
 }
 
 function discardCards(m, seat, ids, room) {
-  if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2 || (m.contract.solo && m.contract.call && ids.includes(m.contract.call.id))) return;
+  if (m.phase !== "discard" || m.active !== seat || !Array.isArray(ids) || ids.length !== 2 || new Set(ids).size !== 2) return;
   const h = m.seats[seat].hand; if (ids.some(id => !h.some(c => c.id === id))) return;
   const removed = h.filter(c => ids.includes(c.id));
   m.seats[seat].hand = h.filter(c => !ids.includes(c.id));
@@ -878,11 +1254,21 @@ async function finish(m, room, env) {
   for (let i = 0; i < 5; i++) { m.matchScores[i] += scores[i]; m.matchArt[i] += art[i]; }
   m.matchContracts.push({ round: m.round, nap, deputy: m.contract.deputy, num: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, points, napWin: made, revealTrickNo: m.contract.revealTrickNo ?? null, takenPoints: m.seats.map(s => s.roundPoints || 0), strengthAtBid: m.contract.strengthAtBid ?? 8, allianceKittyPoints: allianceKitty, mult: m.mult || 1 });
   const replayAllLast = !!(finalRule && scores[finalRule.bottomSeat] > 0 && m.matchScores[finalRule.bottomSeat] === m.matchScores[finalRule.fourthSeat]);
-  const lastRound = m.round >= 10 && !replayAllLast;
-  if (replayAllLast) m.playoff = true;
+
+  // ★ N3/N9/N36: プレーオフカウント管理と上限判定
+  let lastRound = m.round >= 10 && !replayAllLast;
+  let forceBreak = false;
+  if (replayAllLast) {
+    m.playoff = true;
+    m.playoffCount = (m.playoffCount || 0) + 1;
+    if (m.playoffCount >= 10) { forceBreak = true; lastRound = true; m.notice = "プレーオフ10回上限。席番号順でタイブレークします。"; }
+  } else if (m.playoff && m.round >= 10) {
+    // プレーオフ解決
+    m.playoff = false;
+  }
 
   const abandonedSeats = m.seats.map((s, i) => s.abandoned ? i : -1).filter(i => i >= 0);
-  const rankingResult = matchRatingChanges(m.matchScores, abandonedSeats);
+  const rankingResult = matchRatingChanges(m.matchScores, abandonedSeats, { forceBreakTie: forceBreak });
   m.result = {
     round: m.round, made, points, bid: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, stake: unit,
     nap, deputy: m.contract.deputy,
@@ -894,67 +1280,106 @@ async function finish(m, room, env) {
     winners: made ? team : m.seats.map((_, i) => i).filter(i => !team.includes(i)),
     matchScores: m.matchScores.slice(), matchArt: m.matchArt.slice(),
     placements: rankingResult.map(r => r.placement),
-    allLastReplay: replayAllLast, playoff: !!m.playoff
+    ties: rankingResult.map(r => r.tie),
+    allLastReplay: replayAllLast, playoff: !!m.playoff, playoffCount: m.playoffCount || 0,
+    ratingChanges: rankingResult
   };
   m.phase = lastRound ? "result" : "round-result"; m.active = -1; m.deadline = lastRound ? 0 : Date.now() + 8000;
   m.humanAutoPlayAt = null;
-  m.notice = replayAllLast ? "5位が4位に並びました。プレーオフを行います。" : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
+  m.notice = replayAllLast ? (forceBreak ? "プレーオフ10回上限。席番号順でタイブレークします。" : "5位が4位に並びました。プレーオフを行います。") : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
 
-  if (m.kind === "ranked") {
-    m.result.ratingChanges = rankingResult;
-    const userIds = [...new Set(m.seats.map(seat => seat.originalUserId).filter(Boolean))];
-    const updates = [];
-    if (userIds.length) {
-      try {
-        const placeholders = userIds.map(() => "?").join(",");
-        const profileRes = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + placeholders + ")").bind(...userIds).all();
-        const byId = new Map(profileRes.results.map(profile => [profile.user_id, profile]));
-        const statements = [];
-        const placementBySeat = rankingResult.map(r => r.placement);
-        for (let seat = 0; seat < m.seats.length; seat++) {
-          const playerSeat = m.seats[seat];
-          const userId = playerSeat.originalUserId;
-          const profile = userId && byId.get(userId);
-          if (!profile) continue;
-          const change = rankingResult[seat];
-          const outcome = change.outcome;
-          const combinedDelta = change.delta;
-          const rating = Math.max(100, (Number(profile.rating) || 1000) + combinedDelta);
-          change.rating = rating;
-          const stat = m.matchStats[seat];
-          statements.push(
-            env.DB.prepare("UPDATE players SET rating=?,wins=wins+?,losses=losses+?,games=games+1 WHERE user_id=?").bind(rating, outcome === "win" ? 1 : 0, outcome === "loss" ? 1 : 0, profile.user_id),
-            env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(profile.user_id, profile.username, outcome, combinedDelta, rating),
-            env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(profile.user_id),
-            env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?").bind(stat.exactWins, stat.boldExactWins, stat.soloWins, stat.dramaticPlays, profile.user_id),
-            env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes").bind(profile.user_id, stat.declarerAttempts, stat.declarerSuccesses, stat.deputyAttempts, stat.deputySuccesses),
-            env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes").bind(profile.user_id, stat.exactAttempts, stat.exactSuccesses, stat.soloAttempts, stat.soloSuccesses),
-            env.DB.prepare("INSERT INTO player_art_rate(user_id,attempts,plays) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,plays=plays+excluded.plays").bind(profile.user_id, stat.artAttempts, stat.dramaticPlays),
-            env.DB.prepare("INSERT INTO player_ally_feed(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.allyFeedAttempts, stat.allyFeedSuccesses),
-            env.DB.prepare("INSERT INTO player_bold_bid_rate(user_id,attempts,successes) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET attempts=attempts+excluded.attempts,successes=successes+excluded.successes").bind(profile.user_id, stat.boldAttempts, stat.boldSuccesses),
-            env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(profile.user_id, stat.declarerAttempts, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, ...Array.from({ length: 5 }, (_, index) => placementBySeat[seat] === index + 1 ? 1 : 0))
-          );
-          updates.push({ connId: playerSeat.connId, change, rating, outcome, combinedDelta });
-        }
-        if (statements.length) await env.DB.batch(statements);
-      } catch (error) { console.error("ranked match settlement failed", m.id, error); m.result.rateSaveFailed = true; }
-      if (!m.result.rateSaveFailed) for (const update of updates) {
-        if (!update.connId) continue;
+  // ★ B1/B8/N37/N38: レート保存を try-finally で保護
+  try {
+    if (m.kind === "ranked") {
+      const seatPayloads = [];
+      for (let seat = 0; seat < 5; seat++) {
+        const s = m.seats[seat];
+        const change = rankingResult[seat];
+        const stat = m.matchStats[seat] || {};
+        seatPayloads.push({
+          seat, userId: s.player?.userId || s.originalUserId || null, sessionToken: s.player?.sessionToken || null,
+          outcome: change.outcome, delta: change.delta, placement: change.placement,
+          stats: {
+            declarerAttempts: stat.declarerAttempts || 0, declarerSuccesses: stat.declarerSuccesses || 0,
+            deputyAttempts: stat.deputyAttempts || 0, deputySuccesses: stat.deputySuccesses || 0,
+            exactAttempts: stat.exactAttempts || 0, exactSuccesses: stat.exactSuccesses || 0,
+            soloAttempts: stat.soloAttempts || 0, soloSuccesses: stat.soloSuccesses || 0,
+            boldAttempts: stat.boldAttempts || 0, boldSuccesses: stat.boldSuccesses || 0,
+            artAttempts: stat.artAttempts || 0, dramaticPlays: stat.dramaticPlays || 0,
+            allyFeedAttempts: stat.allyFeedAttempts || 0, allyFeedSuccesses: stat.allyFeedSuccesses || 0,
+            bidTotal: stat.bidTotal || 0, ntBids: stat.ntBids || 0, colorBids: stat.colorBids || 0,
+            exactWins: stat.exactWins || 0, boldExactWins: stat.boldExactWins || 0, soloWins: stat.soloWins || 0
+          }
+        });
+      }
+      // worker.js内部では直接DB更新（APIコール不要）
+      const verified = seatPayloads.filter(s => s.userId);
+      if (verified.length) {
         try {
-          sendSafe(conns.get(update.connId), {
-            type: "rating-updated", result: update.outcome, delta: update.combinedDelta, rating: update.rating,
-            placement: update.change.placement, abandoned: update.change.abandoned, abandonPenalty: update.change.abandonPenalty
-          });
-        } catch (error) { console.warn("rating notification failed", m.id, error); }
+          const userIds = verified.map(v => v.userId);
+          const ph = userIds.map(() => '?').join(',');
+          const profRes = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + ph + ")").bind(...userIds).all();
+          const byId = new Map(profRes.results.map(r => [r.user_id, r]));
+          const statements = [];
+          const updates = [];
+          for (const v of verified) {
+            const profile = byId.get(v.userId);
+            if (!profile) continue;
+            const newRating = Math.max(100, Math.round((Number(profile.rating) || 1000) + v.delta));
+            const roundedDelta = Math.round(v.delta * 10) / 10;
+            const outcome = v.outcome || 'loss';
+            const stat = v.stats || {};
+            statements.push(
+              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?")
+                .bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
+              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)")
+                .bind(v.userId, profile.username, outcome, roundedDelta, newRating),
+              env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(v.userId),
+              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?")
+                .bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
+              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes")
+                .bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
+              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes")
+                .bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
+              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5")
+                .bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1,
+                  v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
+            );
+            updates.push({ userId: v.userId, rating: newRating, delta: roundedDelta, outcome, placement: v.placement });
+          }
+          if (statements.length) await env.DB.batch(statements);
+          for (const update of updates) {
+            const seat = m.seats.findIndex(s => (s.player?.userId || s.originalUserId) === update.userId);
+            if (seat >= 0 && m.seats[seat].connId && conns.has(m.seats[seat].connId)) {
+              sendSafe(conns.get(m.seats[seat].connId), {
+                type: "rating-updated", result: update.outcome, delta: update.delta,
+                rating: update.rating, placement: update.placement
+              });
+            }
+          }
+        } catch (e) {
+          console.error('ranked settlement failed', m.id, e);
+          m.result.rateSaveFailed = true;
+          for (let seat = 0; seat < 5; seat++) {
+            if (m.seats[seat].connId && conns.has(m.seats[seat].connId)) {
+              sendSafe(conns.get(m.seats[seat].connId), { type: 'rate-save-failed', message: 'レート保存に失敗しました。次回ログイン時に再同期されます' });
+            }
+          }
+        }
       }
     }
-  }
-
-  publish(m, room); matches.delete(m.id);
-  for (const seat of m.seats) {
-    if (seat.connId) connMatch.delete(seat.connId);
-    if (seat.originalUserId) rankedUsers.delete(seat.originalUserId);
+  } finally {
+    // ★ N38: matches.delete を確実に実行
+    try { publish(m, room); } catch (e) { console.warn('final publish failed', e); }
+    matches.delete(m.id);
+    for (const seat of m.seats) {
+      if (seat.connId) connMatch.delete(seat.connId);
+      const uid = seat.player?.userId || seat.originalUserId;
+      if (uid && rankedUsers.get(uid) === seat.connId) rankedUsers.delete(uid);
+      // ★ N34修正: connIdがnullでも解放
+      if (uid) rankedUsers.delete(uid);
+    }
   }
 }
 
@@ -973,6 +1398,14 @@ function playCard(m, seat, id, room, env) {
   const teamOf = i => i === m.contract.nap || (!m.contract.solo && i === m.contract.deputy) ? "nap" : "alliance";
   const feedOpportunity = !!(previous && previous.seat !== seat && m.contract.revealedCall && teamOf(previous.seat) === teamOf(seat) && legal.some(x => ["10", "J", "Q", "K", "A"].includes(x.rank)));
   const feedCard = feedOpportunity && ["10", "J", "Q", "K", "A"].includes(card.rank);
+
+  // ★ N40/N41: プール消費計算（ターン開始からの経過時間）
+  if (!m.seats[seat].bot && m.turnStartAt) {
+    const elapsed = (Date.now() - m.turnStartAt) / 1000;
+    const consumed = Math.max(0, elapsed - 5);
+    if (m.playPools) m.playPools[seat] = Math.max(0, (m.playPools[seat] || 20) - consumed);
+  }
+
   hand.splice(hand.findIndex(x => x.id === id), 1);
   m.trick.push({ seat, card, feedOpportunity, feedCard });
   m.playedCards.push({ suit: card.suit, rank: card.rank, id: card.id, seat: seat });
@@ -1001,9 +1434,15 @@ function playCard(m, seat, id, room, env) {
   const revealNotice = m.contract.solo ? "ひとり立ちが判明しました。" : "副官が判明しました。";
   m.humanAutoPlayAt = null;
   m.botThinkAt = null;
+
   if (m.trick.length < 5) {
     m.active = (seat + 1) % 5;
-    m.deadline = Date.now() + 30000;
+    // ★ N40: 次のターン開始時刻とタイマー
+    m.turnStartAt = Date.now();
+    const nextSeat = m.active;
+    const free = 5;
+    const pool = (m.playPools && m.playPools[nextSeat]) || 20;
+    m.deadline = Date.now() + (free + Math.max(0, pool)) * 1000;
     m.notice = raisedNotice || (reveal ? revealNotice : "カードを出してください。");
     publish(m, room);
     if (m.seats[m.active].bot) botAction(m, room);
@@ -1032,10 +1471,6 @@ function playCard(m, seat, id, room, env) {
   publish(m, room);
 }
 
-// ==========================================
-// ★ AI競り（段階上げ＋暗黙シグナル）
-// ==========================================
-
 function botAuctionBid(m, seat, room) {
   m.botLevel = 3;
   const a = m.auction, version = a.version;
@@ -1057,15 +1492,15 @@ function botAuctionBid(m, seat, room) {
     role = determineRole(hand, params);
     m.seats[seat].role = role;
   } catch (e) {
-    console.warn("determineRole failed", e?.message);
     role = { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' };
   }
 
   let decision;
   try {
-    decision = decideNextBid(hand, a.high, role, params, bidSignals.received || []);
+    decision = decideNextBid(hand, a.high, role, params, bidSignals.received || [], {
+      bidHistory: m.bidHistory, mySeat: seat, openKitty: m.openKitty, playedCards: m.playedCards, voids: m.voids, matchScores: m.matchScores, round: m.round
+    });
   } catch (e) {
-    console.warn("decideNextBid failed", e?.message);
     decision = { type: 'PASS', reason: 'error' };
   }
 
@@ -1076,6 +1511,87 @@ function botAuctionBid(m, seat, room) {
   }
 }
 
+// ★ N33: ホスト端末COM計算 — 暗号化してホストへ送信
+async function requestHostBotCompute(m, seat, room) {
+  if (m.pendingBotRequest) return; // 既にペンディング中
+  if (m.hostSeat < 0 || !m.botComputeKeyHex) {
+    // フォールバック: サーバー側で計算
+    return serverBotAction(m, seat, room);
+  }
+  const hostConn = m.seats[m.hostSeat].connId && conns.get(m.seats[m.hostSeat].connId);
+  if (!hostConn) return serverBotAction(m, seat, room);
+
+  try {
+    const ctx = buildBotContext(m, seat);
+    const plaintext = JSON.stringify(ctx);
+    const keyBytes = unhex(m.botComputeKeyHex);
+    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+    const requestId = Math.random().toString(36).slice(2, 10);
+    m.pendingBotRequest = {
+      seat, requestId, sentAt: Date.now(),
+      fallbackTimer: setTimeout(() => {
+        if (m.pendingBotRequest && m.pendingBotRequest.requestId === requestId) {
+          m.pendingBotRequest = null;
+          serverBotAction(m, seat, room);
+        }
+      }, 8000)
+    };
+    sendSafe(hostConn, {
+      type: 'compute-bot-turn', requestId, seat,
+      encrypted: { iv: hex(iv), ciphertext: hex(encrypted) }
+    });
+  } catch (e) {
+    console.warn('requestHostBotCompute failed', e);
+    serverBotAction(m, seat, room);
+  }
+}
+
+function buildBotContext(m, seat) {
+  const p = m.seats[seat];
+  const legal = legalCards(m, seat);
+  const contract = { ...m.contract };
+  const params = { ...(m.botStrategy || defaultStrategy()), maxThinkTimeMs: 2000 };
+  return {
+    hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract,
+    playedCards: m.playedCards, voids: m.voids, seat, deputy: m.contract.deputy,
+    discardedKitty: m.discardedKitty || [],
+    isMySideNap: seat === contract.nap || (contract.revealedCall && seat === contract.deputy),
+    isCurrentNapWinning: false,
+    isRevealed: contract.revealedCall,
+    isNapLeading: m.trick.length > 0 && m.trick[0].seat === contract.nap,
+    lastSeat: m.trick.length === 4,
+    params,
+    call: m.contract.call,
+    currentNapPoints: (m.seats[m.contract.nap].points || 0) + (contract.solo ? 0 : (m.seats[m.contract.deputy]?.points || 0)),
+    experience: m.botExperience,
+    points: m.seats.map(s => s.points || 0),
+    allianceKittyPoints: m.allianceKittyPoints || 0,
+    bidHistory: m.bidHistory || [],
+    matchScores: m.matchScores || [0,0,0,0,0],
+    players: m.seats.map(s => ({ handCount: s.hand.length }))
+  };
+}
+
+function serverBotAction(m, seat, room) {
+  if (m.phase === "play") {
+    const legal = legalCards(m, seat);
+    if (!legal.length) return;
+    const ctx = buildBotContext(m, seat);
+    // ★ N27a: サーバー側は MCTS 2秒予算
+    let chosen = null;
+    try {
+      chosen = chooseCardWithMCTS({ ...ctx, params: { ...ctx.params, maxThinkTimeMs: 2000 } });
+    } catch (e) { /* fallback */ }
+    if (!chosen || !legal.some(x => x.id === chosen.id)) {
+      try { chosen = chooseCardToPlay(ctx); } catch (e) {}
+    }
+    if (!chosen) chosen = legal[Math.floor(Math.random() * legal.length)];
+    playCard(m, seat, chosen.id, room, null);
+  }
+}
+
 function botAction(m, room) {
   if (!m || m.phase === "result") return;
   m.botLevel = 3;
@@ -1083,7 +1599,7 @@ function botAction(m, room) {
   if (!p?.bot) return;
   m.lastBot = Date.now();
   m.botThinkAt = 0;
-  const params = m.botStrategy || defaultStrategy(), experience = m.botExperience || null;
+  const params = m.botStrategy || defaultStrategy();
 
   if (m.phase === "auction") { botAuctionBid(m, i, room); return; }
   if (m.phase === "call") {
@@ -1092,7 +1608,7 @@ function botAction(m, room) {
     if (forceSolo) { const chosen = p.hand.slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0]; if (chosen) callCard(m, i, chosen.suit, chosen.rank, room); }
     else {
       const receivedSignals = (p.bidSignals?.received || []).filter(s => ['S1', 'S2', 'S3', 'S4'].includes(s.intent));
-      const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, experience, receivedSignals);
+      const x = chooseDeputyCall(p.hand, m.kitty, m.contract.suit, m.botLevel || 2, m.contract.num, params, m.botExperience, receivedSignals);
       if (x) callCard(m, i, x.suit, x.rank, room);
     }
     return;
@@ -1110,52 +1626,20 @@ function botAction(m, room) {
     return;
   }
   if (m.phase === "play") {
-    const legal = legalCards(m, i);
-    const deputyPts = (!m.contract.solo && m.contract.deputy >= 0) ? (m.seats[m.contract.deputy].points || 0) : 0;
-    const currentNapPoints = (m.seats[m.contract.nap].points || 0) + deputyPts;
-
-    const ctx = {
-      hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract: m.contract,
-      playedCards: m.playedCards, voids: m.voids, seat: i, deputy: m.contract.deputy,
-      discardedKitty: m.discardedKitty || [],
-      isMySideNap: i === m.contract.nap || (m.contract.revealedCall && i === m.contract.deputy),
-      isCurrentNapWinning: m.trick.length ? (winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.nap || (!m.contract.solo && winningEntry(m.contract, m.trickNo, m.trick).seat === m.contract.deputy)) : false,
-      isRevealed: m.contract.revealedCall,
-      isNapLeading: m.trick.length > 0 && m.trick[0].seat === m.contract.nap,
-      lastSeat: m.trick.length === 4,
-      params, call: m.contract.call, currentNapPoints, experience,
-      points: m.seats.map(s => s.points || 0),
-      allianceKittyPoints: m.allianceKittyPoints || 0,
-      bidHistory: m.bidHistory || [],
-      matchScores: m.matchScores || [0, 0, 0, 0, 0],
-      players: m.seats.map(s => ({ handCount: s.hand.length }))
-    };
-
-    if (m.trick.length === 0 && canDeclareWin(ctx)) {
-      m.winDeclaration = {
-        seat: i,
-        hand: [...m.seats[i].hand],
-        declaredAt: Date.now(),
-        expiresAt: Date.now() + 5000,
-      };
-      m.phase = "win-declaration";
-      m.deadline = Date.now() + 5000;
-      m.notice = m.seats[i].player.username + " が上がり宣言！手札を確認してください。";
-      publish(m, room);
-      return;
-    }
-
-    let c;
-    if (i === m.contract.deputy && !m.contract.solo && m.contract.revealedCall) c = chooseDeputyCard(ctx);
-    else c = chooseCardWithMCTS(ctx);
-    if (!c || !legal.some(x => x.id === c.id)) c = legal[Math.floor(Math.random() * legal.length)];
-    playCard(m, i, c.id, room, null);
+    // ★ N33: ホスト端末へ計算依頼（暗号化）、タイムアウトでサーバー計算
+    requestHostBotCompute(m, i, room);
   }
 }
 
 function nextRound(m, room) {
   if (m.phase !== "round-result") return;
-  m.round++; m.mult = 1; m.redraws = 0;
+  // ★ N3: playoff中は round 据え置き（同着解消まで round 10 を繰り返す）
+  if (!m.playoff || m.playoffCount === 0) {
+    m.round++;
+  }
+  // ただし初回のプレーオフ突入時は round 据え置き
+  if (m.round > 10 && !m.playoff) m.round = 1;
+  m.mult = 1; m.redraws = 0;
   deal(m);
   publish(m, room);
 }
@@ -1164,6 +1648,21 @@ async function processAction(conn, msg, room, env) {
   const id = connMatch.get(conn.id), m = id && matches.get(id); if (!m) return;
   const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
   const a = msg.action || {};
+
+  // ★ N33: ホスト端末からのCOM計算結果を受け取る
+  if (a.type === "bot-move-result" || msg.type === "bot-move-result") {
+    if (!m.pendingBotRequest) return;
+    if (m.pendingBotRequest.requestId !== (a.requestId || msg.requestId)) return;
+    const seatToMove = m.pendingBotRequest.seat;
+    const cardId = a.cardId || msg.cardId;
+    clearTimeout(m.pendingBotRequest.fallbackTimer);
+    m.pendingBotRequest = null;
+    if (!cardId) { serverBotAction(m, seatToMove, room); return; }
+    const legal = legalCards(m, seatToMove);
+    if (!legal.some(x => x.id === cardId)) { serverBotAction(m, seatToMove, room); return; }
+    playCard(m, seatToMove, cardId, room, env);
+    return;
+  }
 
   if (a.type === "declare-win") {
     if (m.phase !== "play" || m.active !== seat || m.trick.length > 0) return;
@@ -1180,13 +1679,10 @@ async function processAction(conn, msg, room, env) {
     };
     if (canDeclareWin(ctx)) {
       m.winDeclaration = {
-        seat,
-        hand: [...m.seats[seat].hand],
-        declaredAt: Date.now(),
-        expiresAt: Date.now() + 5000,
+        seat, hand: [...m.seats[seat].hand],
+        declaredAt: Date.now(), expiresAt: Date.now() + 5000,
       };
-      m.phase = "win-declaration";
-      m.deadline = Date.now() + 5000;
+      m.phase = "win-declaration"; m.deadline = Date.now() + 5000;
       m.notice = (m.seats[seat].originalPlayerName || m.seats[seat].player.username) + " が上がり宣言！手札を確認してください。";
       publish(m, room);
     } else {
@@ -1200,8 +1696,17 @@ async function processAction(conn, msg, room, env) {
   if (a.type === "appeal-declare") return answerAppealResponse(m, seat, "declare", room);
   if (a.type === "appeal-stand") return answerAppealResponse(m, seat, "stand", room);
   if (a.type === "next-round") return nextRound(m, room);
-  if (a.type === "auction-activity") { if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; } return; }
-  if (a.type === "confirm-call") { if (m.phase !== "call-reveal" || m.contract.ready[seat]) return; m.contract.ready[seat] = true; if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room); else { m.notice = "指名カードの確認中です。"; publish(m, room); } return; }
+  if (a.type === "auction-activity") {
+    if (m.phase === "auction" && m.auction.active.includes(seat)) { m.auction.lastAction[seat] = Date.now(); m.auction.autoApprove[seat] = false; }
+    return;
+  }
+  if (a.type === "confirm-call") {
+    if (m.phase !== "call-reveal" || m.contract.ready[seat]) return;
+    m.contract.ready[seat] = true;
+    if (m.contract.ready.every((ready, i) => ready || m.seats[i].bot)) startPlay(m, room);
+    else { m.notice = "指名カードの確認中です。"; publish(m, room); }
+    return;
+  }
   if (a.type === "confirm-auction") {
     if (m.phase === "auction" && m.auction.needsHumanConfirm && m.auction.high.player === seat) {
       m.auction.needsHumanConfirm = false;
@@ -1252,6 +1757,7 @@ function timeoutAction(m, room) {
     const ids = chooseDiscard(p.hand, m.contract.suit, discardContext).map(x => x.id);
     discardCards(m, i, ids, room);
   } else if (m.phase === "play") {
+    // ★ N41: 時間切れ → 合法手の中で一番弱いカードを自動プレイ
     const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
     if (c) playCard(m, i, c.id, room, null);
   }
@@ -1270,6 +1776,22 @@ export const room = {
   async onMessage(conn, raw, room, env) {
     let msg; try { msg = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return; }
 
+    // ★ A1: チャット中継
+    if (msg.type === "chat") {
+      const text = String(msg.text || "").slice(0, 200).trim();
+      const name = String(msg.name || "ゲスト").slice(0, 20);
+      if (!text) return;
+      const now = Date.now();
+      if (now - (conn._lastChatAt || 0) < 1500) {
+        sendSafe(conn, { type: "room-error", message: "チャットは少し間隔をあけてください" });
+        return;
+      }
+      conn._lastChatAt = now;
+      const chatMsg = { type: "chat-message", from: name, fromId: conn.id, text, at: now };
+      for (const c of conns.values()) sendSafe(c, chatMsg);
+      return;
+    }
+
     if (msg.type === "reconnect") {
       if (!msg.sessionToken) { sendSafe(conn, { type: "reconnect-failed" }); return; }
       try {
@@ -1277,6 +1799,10 @@ export const room = {
         if (!sess) { sendSafe(conn, { type: "reconnect-failed" }); return; }
         const userId = sess.user_id;
         conn.authUserId = userId;
+        conn.authSessionToken = msg.sessionToken;
+        // ★ N5修正: 古い connMatch エントリを先に削除
+        const oldMatchId = connMatch.get(conn.id);
+        if (oldMatchId) connMatch.delete(conn.id);
         let foundMatch = null, foundSeat = -1;
         for (const m of matches.values()) {
           if (m.phase === "result") continue;
@@ -1288,13 +1814,13 @@ export const room = {
         }
         if (!foundMatch) { sendSafe(conn, { type: "reconnect-failed" }); return; }
         const seat = foundMatch.seats[foundSeat];
-        if (connMatch.has(conn.id) && connMatch.get(conn.id) !== foundMatch.id) connMatch.delete(conn.id);
         seat.connId = conn.id;
         seat.bot = false;
-        seat.abandoned = false;
+        seat.abandoned = false; // ★ N35修正
         seat.player.username = seat.originalPlayerName || "player";
         seat.player.playerId = seat.originalPlayerId || "player";
         if (foundMatch.kind === "ranked") seat.player.userId = userId;
+        seat.player.sessionToken = msg.sessionToken;
         seat.disconnectedAt = null;
         connMatch.set(conn.id, foundMatch.id);
         if (foundMatch.kind === "ranked") rankedUsers.set(userId, conn.id);
@@ -1305,7 +1831,15 @@ export const room = {
     }
 
     if (msg.type === "join") {
-      if (msg.sessionToken) { const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(msg.sessionToken, Date.now()).first(); if (sess) conn.authUserId = sess.user_id; }
+      if (msg.sessionToken) {
+        const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token=? AND expires_at>?").bind(msg.sessionToken, Date.now()).first();
+        if (sess) {
+          conn.authUserId = sess.user_id;
+          conn.authSessionToken = msg.sessionToken;
+          const prof = await env.DB.prepare("SELECT player_id AS id,rating,games FROM players WHERE user_id=?").bind(sess.user_id).first();
+          if (prof) conn.authProfile = prof;
+        }
+      }
       const mode = msg.mode === "ranked" ? "ranked" : "friend";
       const browserId = (typeof msg.browserId === "string" && msg.browserId) ? msg.browserId.slice(0, 64) : null;
 
@@ -1319,7 +1853,6 @@ export const room = {
         catch (error) { sendSafe(conn, { type: "room-error", message: "プレイヤー情報を確認できませんでした。再度お試しください" }); return; }
         if (!conns.has(conn.id)) return;
         const entry = { id: conn.id, player, conn, joined: Date.now(), browserId };
-        if (msg.playerId) { entry.player.username = String(msg.playerId); entry.player.playerId = String(msg.playerId); }
         rankedUsers.set(conn.authUserId, conn.id);
         queues.ranked.push(entry);
         queues.ranked.sort((a, b) => a.joined - b.joined);
@@ -1338,7 +1871,6 @@ export const room = {
       if (browserId && l.players.some(x => x.browserId === browserId)) { sendSafe(conn, { type: "room-error", message: "同じブラウザから複数のタブで同じ部屋に参加することはできません" }); return; }
       if (l.players.length >= 5) { sendSafe(conn, { type: "room-error", message: "この部屋は満員です" }); return; }
       const entry = { id: conn.id, player, conn, joined: Date.now(), code: entryCode, browserId };
-      if (msg.playerId) { entry.player.username = String(msg.playerId); entry.player.playerId = String(msg.playerId); }
       l.players.push(entry);
       l.players.forEach(x => sendSafe(x.conn, { type: "friend-lobby", code: l.code, count: l.players.length, host: x.id === l.host }));
       sendSafe(conn, { type: "lobby", text: "合言葉 " + l.code + " · " + l.players.length + "/5人" });
@@ -1441,15 +1973,12 @@ export const room = {
           try {
             const role = determineRole(m.seats[seat].hand, params);
             m.seats[seat].role = role;
-            // ★ 修正: nScore/2 ではなく computeProperBid を使用
             if (role.role === 'NAP') {
               const proper = computeProperBid(m.seats[seat].hand, role.bestSuit || '♠', params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty, m.playedCards, m.voids, [], m.round);
               m.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
               m.properPlans[seat] = proper.plan;
             }
-          } catch (e) {
-            console.warn("determineRole failed for seat", seat, e?.message);
-          }
+          } catch (e) { console.warn("determineRole failed for seat", seat, e?.message); }
         }
 
         m.active = -1; m.deadline = 0;
@@ -1509,6 +2038,7 @@ export const room = {
             else if (now >= m.humanAutoPlayAt) { m.humanAutoPlayAt = null; m.notice = "出すカードが1枚しかないため、自動で出します。"; publish(m, room); playCard(m, activeSeat, legal[0].id, room, env); }
           } else {
             m.humanAutoPlayAt = null;
+            // ★ N40/N41: プール+5秒切れで自動プレイ
             if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
           }
         }
@@ -1533,7 +2063,17 @@ export const room = {
         if (m.earlyFinish) { await saveEnd(m, room, env); continue; }
         m.trickNo++;
         if (m.trickNo >= 10) await saveEnd(m, room, env);
-        else { m.trick = []; m.phase = "play"; m.deadline = Date.now() + 30000; m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "次の勝負です。"; publish(m, room); if (m.seats[m.active].bot) botAction(m, room); }
+        else {
+          m.trick = []; m.phase = "play";
+          // ★ N40: 次ターン開始時刻
+          m.turnStartAt = Date.now();
+          const free = 5;
+          const pool = (m.playPools && m.playPools[m.active]) || 20;
+          m.deadline = Date.now() + (free + Math.max(0, pool)) * 1000;
+          m.humanAutoPlayAt = null; m.botThinkAt = null; m.notice = "次の勝負です。";
+          publish(m, room);
+          if (m.seats[m.active].bot) botAction(m, room);
+        }
       } else if (m.phase === "redeal" && now >= m.deadline) {
         deal(m); publish(m, room);
       }
@@ -1567,6 +2107,17 @@ export const room = {
           s.player.username = "COM";
           s.player.playerId = "COM";
           if (m.phase !== "result") m.notice = (s.originalPlayerName || "プレイヤー") + "が切断しました。COM操作になります。";
+          // ★ N33: ホストが切断した場合、次の人間に昇格
+          if (m.hostSeat === m.seats.indexOf(s)) {
+            const newHost = m.seats.findIndex(seat => seat.connId && !seat.bot);
+            m.hostSeat = newHost;
+            if (newHost >= 0 && m.botComputeKeyHex) {
+              try {
+                const hostConn = conns.get(m.seats[newHost].connId);
+                if (hostConn) sendSafe(hostConn, { type: 'bot-compute-key', keyHex: m.botComputeKeyHex });
+              } catch (e) { console.warn('host key transfer failed', e); }
+            }
+          }
         }
         publish(m, room);
       }
@@ -1577,3 +2128,5 @@ export const room = {
   }
 };
 // ===== [worker.js 後半 終了] =====
+
+    
