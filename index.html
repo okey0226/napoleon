@@ -9,7 +9,6 @@
   <link rel="stylesheet" href="/style.css">
   <script>
     window.NAPOLEON_WS_URL = 'wss://napoleon-4ufm.onrender.com/ws';
-
     window.addEventListener('error', function(e) {
       const errDiv = document.createElement('div');
       errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;z-index:99999;padding:10px;font-size:12px;word-break:break-all;';
@@ -115,6 +114,18 @@
               <button id="join-friend" class="quiet-button">参加</button>
             </div>
           </article>
+
+          <!-- ★ NAPプランラボ -->
+          <article class="mode-card mode-nap-lab">
+            <div class="mode-mark gold">🎯</div>
+            <div class="mode-info">
+              <h2>NAPプランラボ</h2>
+              <p>宣言・捨て札・指名・切り順をすべて自分で決め、AIがプラン通りにプレイ。乖離を測定します。</p>
+            </div>
+            <div class="mode-action">
+              <button id="open-nap-plan-lab" class="rank-button">開始する</button>
+            </div>
+          </article>
         </div>
 
         <button id="open-extra-menu" class="extra-menu-btn">
@@ -123,7 +134,6 @@
           <span class="extra-menu-arrow">→</span>
         </button>
 
-        <!-- ★ ロビー（チャットのみ） -->
         <section id="lobby-area" class="lobby-area">
           <div class="lobby-header">
             <div class="lobby-title">💬 ロビー</div>
