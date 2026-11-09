@@ -1087,3 +1087,676 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .hand-dock { padding-bottom: calc(9px + env(safe-area-inset-bottom, 0px)); }
   .toast { bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
 }
+/* ============================================================
+   ▼ NAPプランラボ（モバイル最適）
+   ============================================================ */
+.nap-lab-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #0b2620;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#nap-plan-lab-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.nap-lab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  min-height: 100%;
+  background: #0b2620;
+}
+
+/* ===== ヘッダー ===== */
+.lab-step-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(7, 23, 19, 0.96);
+  border-bottom: 1px solid rgba(225, 188, 112, 0.18);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.lab-step-header .back-button,
+.lab-step-header .primary-button {
+  min-height: 44px;
+  min-width: 64px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 8px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.lab-step-title {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #f3d48e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== ボディ ===== */
+.lab-body {
+  flex: 1;
+  padding: 14px 12px 24px;
+  overflow-y: visible;
+}
+
+/* ===== sticky 情報バー ===== */
+.lab-sticky-info {
+  position: sticky;
+  top: 64px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 0 -12px 12px;
+  background: rgba(7, 23, 19, 0.96);
+  border-bottom: 1px solid rgba(225, 188, 112, 0.15);
+  font-size: 13px;
+  color: #e8d7a9;
+}
+.lab-sticky-info b {
+  color: #f3d48e;
+  font-weight: 800;
+}
+
+/* ===== 宣言：スート ===== */
+.lab-suit-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lab-suit-btn {
+  flex: 1;
+  min-width: 56px;
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #456256;
+  background: #1a3a30;
+  color: #edf4ee;
+  border-radius: 10px;
+  font-size: 24px;
+  font-weight: 800;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s, background .15s, border-color .15s;
+}
+.lab-suit-btn:active { transform: scale(0.96); }
+.lab-suit-btn.selected {
+  border-color: var(--gold);
+  background: rgba(225, 188, 112, 0.22);
+  color: #f8e5a8;
+}
+
+/* ===== 宣言：枚数 ===== */
+.lab-num-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.lab-num-btn {
+  width: 64px;
+  height: 64px;
+  border: 1px solid #456256;
+  background: #1a3a30;
+  color: #edf4ee;
+  border-radius: 12px;
+  font-size: 28px;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s;
+}
+.lab-num-btn:active { transform: scale(0.94); }
+.lab-num-display {
+  font-size: 40px;
+  font-weight: 900;
+  color: var(--gold);
+  min-width: 64px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== 手札タップ ===== */
+.lab-hand-tap .card {
+  min-width: 44px;
+  min-height: 62px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .15s ease, outline-color .15s ease;
+}
+.lab-hand-tap .card.playable:active { transform: translateY(-4px); }
+.lab-hand-tap .card.selected {
+  transform: translateY(-17px);
+  z-index: 5;
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.lab-hand-compact .card {
+  min-width: 36px;
+  min-height: 52px;
+}
+
+/* ===== 副官期待ブロック ===== */
+.lab-expect-block {
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid rgba(225, 188, 112, 0.15);
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.5);
+}
+.lab-expect-suit {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f2f5ef;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+.lab-expect-suit.red { color: #f5b3a8; }
+.lab-expect-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lab-expect-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 239, 230, 0.2);
+  background: rgba(14, 36, 30, 0.9);
+  color: #edf4ee;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s, background .15s, border-color .15s;
+}
+.lab-expect-btn:active { transform: scale(0.94); }
+.lab-expect-btn.selected {
+  border-color: var(--gold);
+  background: rgba(225, 188, 112, 0.25);
+  color: #f8e5a8;
+}
+
+/* ===== 切り順プラン ===== */
+.lab-plan-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+.lab-plan-slot {
+  display: grid;
+  grid-template-columns: 32px 1fr 76px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 239, 230, 0.15);
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.85);
+  min-height: 56px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.lab-plan-slot.empty {
+  border-style: dashed;
+  border-color: rgba(226, 239, 230, 0.25);
+}
+.lab-plan-slot.selectable {
+  border-color: rgba(225, 188, 112, 0.7);
+  box-shadow: 0 0 0 1px rgba(225, 188, 112, 0.3);
+}
+.lab-slot-no {
+  font-size: 14px;
+  font-weight: 800;
+  color: #a3b1a8;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.lab-slot-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  color: #93a69a;
+  font-size: 12px;
+}
+.lab-slot-card .card {
+  width: 32px;
+  height: 46px;
+  flex-shrink: 0;
+}
+.lab-slot-card .card .rank { font-size: 12px; left: 3px; top: 2px; }
+.lab-slot-card .card .suit { font-size: 11px; left: 3px; top: 16px; }
+
+/* ===== WIN/LOSE トグル ===== */
+.lab-outcome-btn {
+  min-height: 44px;
+  min-width: 68px;
+  padding: 6px 10px;
+  border: 1px solid rgba(226, 239, 230, 0.25);
+  background: rgba(14, 36, 30, 0.9);
+  color: #edf4ee;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s, background .15s, border-color .15s;
+  letter-spacing: .05em;
+}
+.lab-outcome-btn:active { transform: scale(0.95); }
+.lab-outcome-btn.win {
+  border-color: rgba(169, 210, 174, 0.7);
+  background: rgba(169, 210, 174, 0.18);
+  color: #a9d2ae;
+}
+.lab-outcome-btn.lose {
+  border-color: rgba(232, 150, 133, 0.6);
+  background: rgba(232, 150, 133, 0.14);
+  color: #e89685;
+}
+
+/* ===== 観戦画面 ===== */
+.lab-table {
+  margin: 14px 0;
+  padding: 12px;
+  min-height: 180px;
+  border: 1px solid rgba(225, 188, 112, 0.2);
+  border-radius: 12px;
+  background: radial-gradient(ellipse at 50% 50%, #10443a, #0a2a22 70%, #061a15);
+}
+.lab-trick-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+}
+.lab-trick-card .card {
+  width: 46px;
+  height: 64px;
+  flex-shrink: 0;
+}
+.lab-trick-card .card .rank { font-size: 15px; }
+.lab-trick-card .card .suit { font-size: 14px; top: 22px; }
+
+/* 観戦中のプラン照合カード */
+.lab-record-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.9);
+  border: 1px solid rgba(226, 239, 230, 0.15);
+  margin-bottom: 10px;
+}
+.lab-record-card.ok { border-color: rgba(169, 210, 174, 0.4); }
+.lab-record-card.deviation { border-color: rgba(232, 150, 133, 0.55); }
+.lab-record-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #c8d4cd;
+  padding: 2px 0;
+}
+.lab-record-row b {
+  color: #f3d48e;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 観戦中のボトムバー */
+.lab-bottom-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0));
+  background: rgba(7, 23, 19, 0.96);
+  border-top: 1px solid rgba(225, 188, 112, 0.18);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.lab-bottom-bar button {
+  min-height: 52px;
+  font-size: 14px;
+  font-weight: 800;
+  border-radius: 10px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ===== レポート画面 ===== */
+.lab-report-card {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(225, 188, 112, 0.2);
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.85);
+}
+.lab-report-card .panel-title {
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #f3d48e;
+}
+.lab-report-card .subcopy {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 2px 0;
+  color: #c8d4cd;
+}
+.lab-report-card .micro-copy {
+  font-size: 11px;
+  color: #93a69a;
+  margin: 2px 0;
+}
+
+/* ============================================================
+   ▼ モーダル（ボトムシート式）
+   ============================================================ */
+.lab-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  animation: labFadeIn 0.15s ease;
+}
+@keyframes labFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.lab-modal-card {
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0));
+  background: #112a23;
+  border: 1px solid #476356;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  color: #f2f5ef;
+  animation: labSlideUp 0.2s ease;
+}
+@keyframes labSlideUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.lab-modal-card .panel-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #f3d48e;
+  margin-bottom: 10px;
+}
+.lab-modal-card .micro-copy {
+  color: #93a69a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lab-modal-card textarea {
+  width: 100%;
+  min-height: 70px;
+  padding: 10px 12px;
+  margin-top: 12px;
+  background: #0c211c;
+  color: #f6f7f2;
+  border: 1px solid #35534a;
+  border-radius: 8px;
+  font-size: 16px;   /* iOS自動ズーム防止: 16px以上 */
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.lab-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.lab-modal-actions button {
+  min-height: 48px;
+  font-size: 14px;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============================================================
+   ▼ プラン修正スロット
+   ============================================================ */
+.lab-revision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lab-revision-slot {
+  padding: 10px;
+  border: 1px solid rgba(226, 239, 230, 0.15);
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.7);
+}
+.lab-revision-slot.executed { opacity: 0.45; }
+.lab-revision-head {
+  display: grid;
+  grid-template-columns: 32px 1fr 68px;
+  align-items: center;
+  gap: 8px;
+}
+.lab-revision-card .card { width: 32px; height: 44px; }
+.lab-revision-card .card .rank { font-size: 12px; }
+.lab-revision-card .card .suit { font-size: 11px; top: 16px; }
+.lab-revision-outcome {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #f3d48e;
+  letter-spacing: .05em;
+}
+.lab-revision-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lab-toggle-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgba(226, 239, 230, 0.25);
+  background: rgba(14, 36, 30, 0.9);
+  color: #c8d4cd;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s, background .15s, border-color .15s;
+}
+.lab-toggle-btn:active { transform: scale(0.96); }
+.lab-toggle-btn.active {
+  border-color: var(--gold);
+  background: rgba(225, 188, 112, 0.22);
+  color: #f8e5a8;
+}
+.lab-revision-edit {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.lab-revision-edit button {
+  flex: 1;
+  min-width: 100px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============================================================
+   ▼ カード入れ替え選択
+   ============================================================ */
+.lab-swap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.lab-swap-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid rgba(226, 239, 230, 0.2);
+  background: rgba(14, 36, 30, 0.9);
+  color: #edf4ee;
+  border-radius: 8px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .1s, border-color .15s;
+  cursor: pointer;
+}
+.lab-swap-option:active { transform: scale(0.95); }
+.lab-swap-option:hover { border-color: rgba(225, 188, 112, 0.5); }
+.lab-swap-option .card { width: 36px; height: 50px; }
+.lab-swap-option .micro-copy { font-size: 10px; }
+
+/* ============================================================
+   ▼ 修正理由選択
+   ============================================================ */
+.lab-reason-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lab-reason-btn {
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 239, 230, 0.25);
+  background: rgba(14, 36, 30, 0.9);
+  color: #edf4ee;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  text-align: left;
+  transition: transform .1s, border-color .15s, background .15s;
+}
+.lab-reason-btn:active { transform: scale(0.97); }
+.lab-reason-btn:hover { border-color: rgba(225, 188, 112, 0.5); }
+
+/* ============================================================
+   ▼ モード選択画面：NAPプランラボカード
+   ============================================================ */
+.mode-card.mode-nap-lab {
+  border-color: rgba(225, 188, 112, 0.35);
+  background: radial-gradient(ellipse at 80% 10%, rgba(225, 188, 112, 0.14), transparent 60%),
+              linear-gradient(145deg, rgba(28, 26, 60, 0.88), rgba(12, 14, 34, 0.94));
+}
+.mode-card.mode-nap-lab .mode-mark.gold {
+  color: #e8d18a;
+}
+.mode-select-screen .mode-action .rank-button {
+  background: linear-gradient(135deg, #e8d18a, #d5b365);
+  color: #0a0a1a;
+  box-shadow: 0 0 20px rgba(225, 188, 112, 0.45);
+}
+
+/* ============================================================
+   ▼ 横向き非対応（NAPプランラボのみ）
+   ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  .nap-lab-screen::before {
+    content: "縦向きにしてください";
+    position: fixed;
+    inset: 0;
+    z-index: 100001;
+    background: #03050d;
+    color: #f2f5ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-align: center;
+    padding: 20px;
+  }
+}
+
+/* ============================================================
+   ▼ 極小画面の微調整（iPhone SE / 小型Android）
+   ============================================================ */
+@media (max-width: 360px) {
+  .lab-suit-btn { min-width: 48px; min-height: 52px; font-size: 20px; }
+  .lab-num-btn { width: 56px; height: 56px; font-size: 24px; }
+  .lab-num-display { font-size: 32px; }
+  .lab-expect-btn { min-width: 40px; min-height: 40px; font-size: 13px; padding: 6px 8px; }
+  .lab-plan-slot { grid-template-columns: 28px 1fr 68px; min-height: 52px; padding: 6px 8px; }
+  .lab-outcome-btn { min-width: 60px; font-size: 11px; }
+  .lab-bottom-bar button { min-height: 48px; font-size: 13px; }
+  .lab-reason-list { grid-template-columns: 1fr; }
+  .lab-swap-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ============================================================
+   ▼ タッチデバイス全般の微調整
+   ============================================================ */
+@media (hover: none) and (pointer: coarse) {
+  .lab-suit-btn,
+  .lab-num-btn,
+  .lab-expect-btn,
+  .lab-outcome-btn,
+  .lab-toggle-btn,
+  .lab-reason-btn,
+  .lab-swap-option,
+  .lab-bottom-bar button,
+  .lab-step-header button {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* hoverを無効化（タッチでは残像を防ぐ） */
+  .lab-suit-btn:hover,
+  .lab-expect-btn:hover,
+  .lab-outcome-btn:hover,
+  .lab-toggle-btn:hover,
+  .lab-reason-btn:hover,
+  .lab-swap-option:hover {
+    transform: none;
+  }
+}
+
