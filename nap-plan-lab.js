@@ -604,7 +604,7 @@ async function persistSessionRecord(report) {
 // ===== [前半 終了。後半へ続く] =====
 // nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（後半）
 // 後半: 各ステップのレンダリング・モーダル・画面開閉・デバッグ用
-// 修正: 全ステップをグリッド表示に統一、指名カードは手札外から選択
+// 修正: 切り順プランはスロットタップ→カード選択モーダル方式、副官期待に現在手札表示
 
 // ============================================================
 // 画面遷移
@@ -826,7 +826,7 @@ function renderDiscardStep(shell) {
 }
 
 // ============================================================
-// Step: 指名カード（★修正版: 手札外から選ぶ）
+// Step: 指名カード（手札外から選ぶ）
 // ============================================================
 function renderCallStep(shell) {
   const myHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
@@ -951,7 +951,7 @@ function renderCallStep(shell) {
 }
 
 // ============================================================
-// Step: 副官期待カード
+// Step: 副官期待カード（現在手札表示付き）
 // ============================================================
 function renderExpectStep(shell) {
   const usedIds = new Set();
@@ -977,6 +977,14 @@ function renderExpectStep(shell) {
       </div>`;
   }).join('');
 
+  // ★ 現在の手札を生成
+  const currentHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
+    c => !S.discard.some(d => d.id === c.id)
+  );
+  const currentHandHTML = currentHand.map(c =>
+    cardElHTML(c, c.id === S.call?.id ? 'protected' : '')
+  ).join('');
+
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('副官に期待するカード')}
@@ -988,6 +996,9 @@ function renderExpectStep(shell) {
         </div>
         <p class="micro-copy" style="margin-bottom:10px;">複数可・0枚でもOK</p>
         ${blocks}
+
+        <div class="panel-title" style="margin-top:16px;">現在の手札（参考）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">${currentHandHTML}</div>
       </div>
     </div>`;
 
@@ -1050,7 +1061,7 @@ function buildNaivePlan(myHand, contract) {
 }
 
 // ============================================================
-// Step: 切り順プラン（2段階タップ）
+// Step: 切り順プラン（スロットタップ→カード選択モーダル方式）
 // ============================================================
 function renderPlanStep(shell) {
   if (!S.initialPlan) {
@@ -1067,61 +1078,45 @@ function renderPlanStep(shell) {
   const loseCount = plan.sequence.filter(s => s.outcome === 'LOSE').length;
 
   const slotsHTML = plan.sequence.map((s, i) => `
-    <div class="lab-plan-slot ${s.card ? 'filled' : 'empty'} ${S.selectedUnplacedId && !s.card ? 'selectable' : ''}" data-slot="${i}">
+    <div class="lab-plan-slot ${s.card ? 'filled' : 'empty'}" data-slot="${i}">
       <span class="lab-slot-no">${i + 1}</span>
       <span class="lab-slot-card" data-slot-card="${i}">${s.card ? cardElHTML(s.card) : '未配置'}</span>
       <button class="lab-outcome-btn ${s.outcome === 'WIN' ? 'win' : 'lose'}" data-toggle="${i}">${s.outcome}</button>
     </div>`).join('');
-
-  const unplacedHTML = unplaced.length
-    ? unplaced.map(c =>
-        cardElHTML(c, `playable ${S.selectedUnplacedId === c.id ? 'selected' : ''}`)
-      ).join('')
-    : '<p class="micro-copy" style="padding:8px;grid-column:1/-1;text-align:center;">すべて配置済み</p>';
 
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('切り順プラン')}
       <div class="lab-sticky-info">
         <span>予測: <b>${winCount}勝 ${loseCount}敗</b></span>
-        <span class="micro-copy" style="color:#e6be72;">${S.selectedUnplacedId ? 'スロットをタップ' : '手札→スロット'}</span>
+        <span class="micro-copy" style="color:#e6be72;">スロットをタップして配置</span>
       </div>
       <div class="lab-body" style="padding-top:0;">
         <div class="lab-plan-slots">${slotsHTML}</div>
-        <div class="panel-title" style="margin-top:14px;">未配置の手札</div>
-        <div class="lab-hand-grid lab-hand-grid-sm">${unplacedHTML}</div>
+
+        <div class="panel-title" style="margin-top:16px;">未配置のカード（${unplaced.length}枚）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">
+          ${unplaced.length
+            ? unplaced.map(c => cardElHTML(c, 'playable')).join('')
+            : '<p class="micro-copy" style="padding:8px;grid-column:1/-1;text-align:center;">すべて配置済み</p>'}
+        </div>
       </div>
     </div>`;
 
-  shell.querySelectorAll('.lab-hand-grid .card.playable').forEach((el, i) => {
-    const card = unplaced[i];
-    el.onclick = () => {
-      S.selectedUnplacedId = (S.selectedUnplacedId === card.id) ? null : card.id;
-      renderPlanStep(shell);
-    };
-  });
-
+  // スロットのカード欄をタップ → モーダル表示
   shell.querySelectorAll('[data-slot-card]').forEach(el => {
     const idx = Number(el.dataset.slotCard);
     el.onclick = () => {
       const current = plan.sequence[idx];
       if (current.card) {
-        plan.sequence[idx] = { slot: idx + 1, card: null, outcome: current.outcome };
-        renderPlanStep(shell);
-        return;
+        showSlotMenu(idx, shell);
+      } else {
+        showSlotCardPicker(idx, shell);
       }
-      if (!S.selectedUnplacedId) {
-        toast('先に手札からカードを選んでください');
-        return;
-      }
-      const picked = unplaced.find(c => c.id === S.selectedUnplacedId);
-      if (!picked) { toast('選択中のカードが見つかりません'); return; }
-      plan.sequence[idx] = { slot: idx + 1, card: picked, outcome: current.outcome };
-      S.selectedUnplacedId = null;
-      renderPlanStep(shell);
     };
   });
 
+  // WIN/LOSEトグル
   shell.querySelectorAll('[data-toggle]').forEach(btn => {
     const idx = Number(btn.dataset.toggle);
     btn.onclick = (e) => {
@@ -1133,6 +1128,73 @@ function renderPlanStep(shell) {
   });
 
   bindHeader(shell);
+}
+
+// ============================================================
+// スロット操作モーダル（カード選択・メニュー）
+// ============================================================
+function showSlotCardPicker(slotIdx, shell) {
+  const plan = S.currentPlan;
+  const usedIds = new Set(plan.sequence.map(s => s.card?.id).filter(Boolean));
+  const allMyCards = S.scenario.hand10.concat(S.scenario.openKitty).filter(
+    c => !S.discard.some(d => d.id === c.id)
+  );
+  const unplaced = allMyCards.filter(c => !usedIds.has(c.id));
+
+  if (!unplaced.length) {
+    toast('配置できるカードがありません');
+    return;
+  }
+
+  const html = unplaced.map(c => `
+    <button class="lab-swap-option" data-pick="${c.id}">
+      ${cardElHTML(c)}
+    </button>
+  `).join('');
+
+  showModal(`
+    <div class="panel-title">スロット ${slotIdx + 1} に配置するカード</div>
+    <div class="lab-swap-grid" style="grid-template-columns:repeat(4,1fr);">${html}</div>
+    <div class="lab-modal-actions">
+      <button class="secondary-button" id="slot-pick-cancel" style="flex:1;min-height:48px;">キャンセル</button>
+    </div>
+  `);
+
+  document.querySelectorAll('[data-pick]').forEach(btn => {
+    btn.onclick = () => {
+      const cardId = btn.dataset.pick;
+      const card = unplaced.find(c => c.id === cardId);
+      if (card) {
+        plan.sequence[slotIdx] = { slot: slotIdx + 1, card, outcome: plan.sequence[slotIdx].outcome };
+        closeModal();
+        renderPlanStep(shell);
+      }
+    };
+  });
+  document.querySelector('#slot-pick-cancel').onclick = () => closeModal();
+}
+
+function showSlotMenu(slotIdx, shell) {
+  showModal(`
+    <div class="panel-title">スロット ${slotIdx + 1} の操作</div>
+    <div class="lab-modal-actions" style="flex-direction:column;">
+      <button class="secondary-button" id="slot-change" style="width:100%;min-height:48px;">カードを変更する</button>
+      <button class="secondary-button" id="slot-remove" style="width:100%;min-height:48px;background:#49302b;">配置を外す</button>
+      <button class="secondary-button" id="slot-menu-cancel" style="width:100%;min-height:48px;">キャンセル</button>
+    </div>
+  `);
+  document.querySelector('#slot-change').onclick = () => {
+    closeModal();
+    showSlotCardPicker(slotIdx, shell);
+  };
+  document.querySelector('#slot-remove').onclick = () => {
+    const plan = S.currentPlan;
+    const outcome = plan.sequence[slotIdx].outcome;
+    plan.sequence[slotIdx] = { slot: slotIdx + 1, card: null, outcome };
+    closeModal();
+    renderPlanStep(shell);
+  };
+  document.querySelector('#slot-menu-cancel').onclick = () => closeModal();
 }
 
 // ============================================================
