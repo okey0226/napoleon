@@ -148,8 +148,9 @@ function escapeHTML(value) { return String(value ?? '').replace(/[&<>"']/g, c =>
 
 function toast(t) { const e = $('toast'); if (!e) return; e.textContent = t; e.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => e.classList.remove('show'), 2600); }
 
+// ★ 修正1: 'nap-plan-lab-screen' を配列に追加
 function screen(id) {
-  ['home-screen', 'mode-select-screen', 'extra-menu-screen', 'profile-screen', 'game-screen', 'records-screen', 'strategy-screen', 'quiz-screen', 'training-screen', 'past-games-screen'].forEach(x => {
+  ['home-screen', 'mode-select-screen', 'extra-menu-screen', 'profile-screen', 'game-screen', 'records-screen', 'strategy-screen', 'quiz-screen', 'training-screen', 'past-games-screen', 'nap-plan-lab-screen'].forEach(x => {
     const el = $(x);
     if (el) {
       if (x === id) { el.classList.remove('hidden'); el.style.removeProperty('display'); }
@@ -170,7 +171,6 @@ function screen(id) {
       try { g.lobbyRoom.close?.(); } catch {}
       g.lobbyRoom = null;
     }
-    // 戻ってきた時に備えて再描画
     renderChatLog();
   }
 
@@ -728,7 +728,6 @@ async function renderQuickStats() {
 }
 
 // ===== [app.js Part 1/3 終了] =====
-
 // ===== [app.js Part 2/3 開始] =====
 
 function startLocal() {
@@ -2350,7 +2349,6 @@ function announceCall(card, onConfirm, online = false) {
 }
 
 // ===== [app.js Part 2/3 終了] =====
-
 // ===== [app.js Part 3/3 開始] =====
 
 // ============================================================
@@ -3068,6 +3066,10 @@ function drawOnlineControls() {
   if (g.phase === 'play' && g.active === g.mySeat) { drawLocalPlayControls(); notifyTurn(); return; }
 }
 
+function notifyTurn() {
+  try { if (navigator.vibrate) navigator.vibrate(60); } catch {}
+}
+
 async function onlineReconnect() {
   if (!g.sessionToken || g.reconnecting) return;
   g.reconnecting = true;
@@ -3182,6 +3184,18 @@ $('start-training')?.addEventListener('click', async () => {
   try { const mod = await import('./training-app.js?v=1'); mod.openTrainingScreen(); }
   catch (err) { alert('トレーニングモードの読み込みに失敗しました: ' + err.message); }
 });
+
+// ★ 修正2: NAPプランラボのボタンバインド
+$('open-nap-plan-lab')?.addEventListener('click', async () => {
+  try {
+    const mod = await import('./nap-plan-lab.js');
+    mod.openNapPlanLabScreen();
+  } catch (err) {
+    console.error('[nap-plan-lab] load failed:', err);
+    alert('NAPプランラボの読み込みに失敗しました: ' + err.message);
+  }
+});
+
 $('open-extra-menu')?.addEventListener('click', () => screen('extra-menu-screen'));
 $('open-strategy-lab-from-menu')?.addEventListener('click', () => screen('strategy-screen'));
 $('open-past-games')?.addEventListener('click', () => screen('past-games-screen'));
@@ -3231,7 +3245,7 @@ window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhand
 // ★ 起動: 永続化したチャットログを復元してから画面初期化
 (async () => {
   try { await getUser(); } catch {}
-  loadChatLog();  // ★ 復元
+  loadChatLog();
   try { await loadAccount(); } catch {}
   try { await loadLeaderboard(); } catch {}
   bindChatInputFocus();
@@ -3239,4 +3253,6 @@ window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhand
 })();
 
 // ===== [app.js 完全版 終わり] =====
+
+
 
