@@ -1,4 +1,4 @@
-// ===== [worker.js 前半 開始] =====
+// ===== [worker.js 前編 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard,
@@ -79,6 +79,9 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS player_com_ally_feed (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0, streak_current INTEGER NOT NULL DEFAULT 0, streak_best INTEGER NOT NULL DEFAULT 0)",
+  // ★ NAPプランラボ セッション保存
+  "CREATE TABLE IF NOT EXISTS nap_lab_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, seed INTEGER, record_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS nap_lab_sessions_user ON nap_lab_sessions(user_id, id DESC)",
   ...quizSchema
 ];
 
@@ -102,7 +105,6 @@ async function loadBotStrategy(env) {
   return defaultStrategy();
 }
 
-// ★ N28修正: ai_state_experience を stateCache にロード
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
@@ -138,9 +140,6 @@ async function forceInitDB(env) {
   for (const sql of schema) { try { await env.DB.prepare(sql).run(); } catch (e) { console.error("SQL error:", e.message); } }
 }
 
-// ============================================================
-// セッショントークン検証ヘルパー（内部で /api/account/me を呼ぶのではなくDB直参照）
-// ============================================================
 async function getUserIdByToken(env, token) {
   if (!token) return null;
   try {
@@ -200,6 +199,27 @@ export default {
       }
 
       // ============================================================
+      // ★ NAPプランラボ セッション保存
+      // ============================================================
+      if (request.method === "POST" && url.pathname === "/api/nap-lab/save") {
+        const token = request.headers.get("x-session-token");
+        const userId = token ? await getUserIdByToken(env, token) : null;
+        if (!userId) return response({ error: "auth required" }, { status: 401 });
+
+        let body;
+        try { body = await request.json(); } catch { return response({ error: "invalid" }, { status: 400 }); }
+        try {
+          await env.DB.prepare(
+            "INSERT INTO nap_lab_sessions(user_id, seed, record_json) VALUES(?,?,?)"
+          ).bind(userId, Number(body.seed) || 0, JSON.stringify(body)).run();
+          return response({ ok: true });
+        } catch (e) {
+          console.error("nap-lab save failed", e);
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
       // アカウント登録・ログイン
       // ============================================================
       if (request.method === "POST" && (url.pathname === "/api/account/register" || url.pathname === "/api/account/login")) {
@@ -227,7 +247,6 @@ export default {
           if (!p || await hashPassword(pass, unhex(p.salt)) !== p.password_hash) return response({ error: "IDまたはパスワードが違います" }, 401);
           userId = p.user_id;
         }
-        // レート戦・COM戦の統計テーブルを初期化
         await env.DB.batch([
           env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(userId),
           env.DB.prepare("INSERT OR IGNORE INTO player_performance(user_id) VALUES(?)").bind(userId),
@@ -270,9 +289,6 @@ export default {
         } catch (e) { return response({ error: e.message }, 500); }
       }
 
-      // ============================================================
-      // 後方互換: COMレート単独更新（新API /api/com-match/finish を推奨）
-      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/account/update-com-rating") {
         const token = request.headers.get("x-session-token");
         const userId = await getUserIdByToken(env, token);
@@ -289,7 +305,7 @@ export default {
       }
 
       // ============================================================
-      // ★ /api/account/me（internalUserId追加: B10修正）
+      // /api/account/me
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
@@ -337,10 +353,10 @@ export default {
         });
       }
 
-      // ★ ここから後半へ続く（/api/match/finish, /api/com-match/finish, /api/account/me/com, /api/ai/*）
-      // ===== [worker.js 前半 終了] =====
+// ===== [前編 終了。後編へ続く] =====
+// ===== [worker.js 後編 開始] =====
       // ============================================================
-      // ★ /api/match/finish（レート戦 マッチ結果永続化）B9修正
+      // /api/match/finish（レート戦 マッチ結果永続化）
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/match/finish") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -371,9 +387,8 @@ export default {
           for (const v of verified) {
             const profile = byId.get(v.userId);
             if (!profile) continue;
-            // ★ N39修正: newRating を整数化
             const newRating = Math.max(100, Math.round((Number(profile.rating) || 1000) + v.delta));
-            const roundedDelta = Math.round(v.delta * 10) / 10; // 小数第1位まで保持
+            const roundedDelta = Math.round(v.delta * 10) / 10;
             const outcome = v.outcome || 'loss';
             const stat = v.stats || {};
 
@@ -404,7 +419,7 @@ export default {
       }
 
       // ============================================================
-      // ★ /api/com-match/finish（COM戦専用・非公開）E4
+      // /api/com-match/finish（COM戦専用・非公開）
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/com-match/finish") {
         const token = request.headers.get("x-session-token");
@@ -465,7 +480,7 @@ export default {
       }
 
       // ============================================================
-      // ★ /api/account/me/com（COM戦専用プロフィール・本人のみ）E5
+      // /api/account/me/com（COM戦専用プロフィール）
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me/com") {
         const token = request.headers.get("x-session-token");
@@ -502,14 +517,13 @@ export default {
       }
 
       // ============================================================
-      // ★ /api/ai/learn（詳細版）N2
+      // /api/ai/learn（詳細版）
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/learn") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
         const { bid, call, playDecisions } = body || {};
         const statements = [];
         try {
-          // bid 経験: strength_key(量子化) × trump_type × num
           if (bid && Number.isFinite(bid.strengthKey) && bid.trumpType && Number.isFinite(bid.num)) {
             const sk = Math.round(bid.strengthKey * 2) / 2;
             const won = body.wonRound ? 1 : 0;
@@ -518,7 +532,6 @@ export default {
                 .bind(sk, bid.trumpType, bid.num, won)
             );
           }
-          // call 経験: callId × trumpSuit
           if (call && call.callId && call.trumpSuit) {
             const won = body.wonRound ? 1 : 0;
             statements.push(
@@ -526,7 +539,6 @@ export default {
                 .bind(call.callId, call.trumpSuit, won)
             );
           }
-          // play 経験: role × phase × pointsTier × rankTier ごとに勝ち数を集計
           if (Array.isArray(playDecisions) && playDecisions.length) {
             const agg = {};
             for (const d of playDecisions) {
@@ -546,7 +558,6 @@ export default {
             }
           }
           if (statements.length) await env.DB.batch(statements);
-          // キャッシュを無効化（次回 loadExperience で最新を取得）
           __cachedExperience = null; __cachedExperienceTime = 0;
           return response({ ok: true, updated: statements.length });
         } catch (e) {
@@ -556,7 +567,7 @@ export default {
       }
 
       // ============================================================
-      // ★ /api/ai/report（詳細版）N2
+      // /api/ai/report（詳細版）
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/report") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -564,7 +575,6 @@ export default {
         const userId = token ? await getUserIdByToken(env, token) : null;
         const statements = [];
         try {
-          // 契約情報から ai_bid_experience を精緻に更新（num は 13〜20 に clamp）
           const contracts = Array.isArray(body.contracts) ? body.contracts : [];
           const bidAgg = {};
           for (const c of contracts) {
@@ -585,7 +595,6 @@ export default {
             );
           }
 
-          // human_win_patterns: マッチ全体のパターン記録
           if (userId && body.playerRank) {
             const contractsJson = JSON.stringify(contracts);
             const aiSnapshot = body.aiWeights ? JSON.stringify(body.aiWeights) : null;
@@ -603,7 +612,6 @@ export default {
           if (statements.length) await env.DB.batch(statements);
           __cachedExperience = null; __cachedExperienceTime = 0;
 
-          // 最新の ai_weights を返す（既存挙動の互換）
           const w = await env.DB.prepare("SELECT weights FROM ai_weights WHERE id=1").first();
           const weights = w?.weights ? safeJsonParse(w.weights, null) : null;
           return response({ ok: true, updated: statements.length, weights });
@@ -614,7 +622,7 @@ export default {
       }
 
       // ============================================================
-      // ランキング（COM戦は含めない）R7
+      // ランキング
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/rating/top") {
         const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games FROM players p ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
@@ -684,14 +692,11 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-// ===== [worker.js 前半 終了] =====
-
 // ===== [worker.js 後半 開始] =====
 
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
 async function getProfile(env, conn) {
-  // ★ N1修正: sessionToken を必ず含める（レート保存で必要）
   if (conn.authProfile && conn.authUserId) {
     return {
       rating: Number(conn.authProfile.rating) || 1000,
@@ -706,7 +711,6 @@ async function getProfile(env, conn) {
 }
 
 async function beginMatch(kind, roomCode, group, room, env) {
-  // ★ N14修正: ranked は 5人ちょうど & 全員生きていることを厳密確認
   if (kind === "ranked") {
     if (!Array.isArray(group) || group.length !== 5) return;
     const browserIds = new Set();
@@ -720,7 +724,6 @@ async function beginMatch(kind, roomCode, group, room, env) {
       ok.push(x);
     }
     if (ok.length !== 5) {
-      // 失敗時は生存者をキューへ戻す
       for (const x of group) {
         if (!x || !x.conn || !conns.has(x.id)) continue;
         if (ok.includes(x)) continue;
@@ -771,10 +774,8 @@ async function beginMatch(kind, roomCode, group, room, env) {
     auctionStartAt: 0,
     properRecomputed: false,
     winDeclaration: null,
-    // ★ N40: プレイフェーズ時間制限プール
     playPools: [20, 20, 20, 20, 20],
     turnStartAt: 0,
-    // ★ N33: ホスト端末COM計算用
     botComputeKeyHex: null,
     hostSeat: -1,
     pendingBotRequest: null
@@ -785,11 +786,9 @@ async function beginMatch(kind, roomCode, group, room, env) {
     loadBotStrategy(env).then(s => { m.botStrategy = s; }).catch(() => {});
     loadExperience(env).then(e => { m.botExperience = e; }).catch(() => {});
   }
-  // ★ N33: ホスト端末を決定（最初の人間）
   const firstHuman = m.seats.findIndex(s => !s.bot && s.connId);
   if (firstHuman >= 0) {
     m.hostSeat = firstHuman;
-    // 暗号鍵を生成してホストのみに送信
     try {
       const keyBytes = crypto.getRandomValues(new Uint8Array(32));
       m.botComputeKeyHex = hex(keyBytes);
@@ -826,7 +825,6 @@ function deal(m) {
   m.auctionStartAt = 0;
   m.properRecomputed = false;
   m.winDeclaration = null;
-  // ★ N40: プレイプールも局毎リセット
   m.playPools = [20, 20, 20, 20, 20];
   m.turnStartAt = 0;
   const green = m.seats.findIndex(p => !p.hand.some(c => ["10", "J", "Q", "K", "A"].includes(c.rank)));
@@ -920,7 +918,6 @@ function publicState(m) {
       role: m.contract ? (m.contract.nap === seat ? "ナポレオン" : !m.contract.revealedCall ? "" : m.contract.deputy === seat ? "副官" : "連合軍") : ""
     })),
     kitty: m.phase === "auction" ? m.kitty : [],
-    // ★ B5修正: 捨て札フェーズは discardedKitty を参照
     revealedKitty: (m.phase !== "auction" && m.phase !== "prep" && m.phase !== "discard" && m.discardedKitty) ? m.discardedKitty.filter(c => ["10", "J", "Q", "K", "A"].includes(c.rank)) : [],
     auction: m.auction ? {
       high: m.auction.high,
@@ -1016,7 +1013,6 @@ function doApprove(m, seat, room, forced = false) {
     }
     return;
   }
-  // ★ N25/N26: approved フラグベース（active から除去しない）
   m.auction.approved[seat] = true;
   m.auction.lastAction[seat] = Date.now();
   m.auction.autoApprove[seat] = false;
@@ -1056,7 +1052,6 @@ function doBid(m, seat, n, s, room, solo = false) {
   m.auction.high = { num: n, suit: s, player: seat, solo: solo === true };
   if (m.auction.requiredBidSeat === seat) m.auction.requiredBidSeat = null;
   m.auction.version++;
-  // ★ N25/N26: bid 時は全員の approved をリセット（復帰）
   m.auction.approved = Array(5).fill(false);
   m.auction.needsHumanConfirm = false;
   m.active = seat;
@@ -1167,7 +1162,6 @@ function startPlay(m, room) {
     if (c.deputy < 0) c.deputy = c.nap;
   }
   m.phase = "play"; m.trick = []; m.trickNo = 0; m.active = c.nap;
-  // ★ N40: プレイプール初期化とターン開始時刻
   m.playPools = [20, 20, 20, 20, 20];
   m.turnStartAt = Date.now();
   const mySeat = m.active;
@@ -1255,7 +1249,6 @@ async function finish(m, room, env) {
   m.matchContracts.push({ round: m.round, nap, deputy: m.contract.deputy, num: m.contract.num, suit: m.contract.suit, solo: !!m.contract.solo, points, napWin: made, revealTrickNo: m.contract.revealTrickNo ?? null, takenPoints: m.seats.map(s => s.roundPoints || 0), strengthAtBid: m.contract.strengthAtBid ?? 8, allianceKittyPoints: allianceKitty, mult: m.mult || 1 });
   const replayAllLast = !!(finalRule && scores[finalRule.bottomSeat] > 0 && m.matchScores[finalRule.bottomSeat] === m.matchScores[finalRule.fourthSeat]);
 
-  // ★ N3/N9/N36: プレーオフカウント管理と上限判定
   let lastRound = m.round >= 10 && !replayAllLast;
   let forceBreak = false;
   if (replayAllLast) {
@@ -1263,7 +1256,6 @@ async function finish(m, room, env) {
     m.playoffCount = (m.playoffCount || 0) + 1;
     if (m.playoffCount >= 10) { forceBreak = true; lastRound = true; m.notice = "プレーオフ10回上限。席番号順でタイブレークします。"; }
   } else if (m.playoff && m.round >= 10) {
-    // プレーオフ解決
     m.playoff = false;
   }
 
@@ -1289,7 +1281,6 @@ async function finish(m, room, env) {
   m.notice = replayAllLast ? (forceBreak ? "プレーオフ10回上限。席番号順でタイブレークします。" : "5位が4位に並びました。プレーオフを行います。") : lastRound ? "オールラスト終了。レートを集計しています。" : "第" + m.round + "局が終了しました。";
   if (!lastRound) { publish(m, room); return; }
 
-  // ★ B1/B8/N37/N38: レート保存を try-finally で保護
   try {
     if (m.kind === "ranked") {
       const seatPayloads = [];
@@ -1313,7 +1304,6 @@ async function finish(m, room, env) {
           }
         });
       }
-      // worker.js内部では直接DB更新（APIコール不要）
       const verified = seatPayloads.filter(s => s.userId);
       if (verified.length) {
         try {
@@ -1370,14 +1360,12 @@ async function finish(m, room, env) {
       }
     }
   } finally {
-    // ★ N38: matches.delete を確実に実行
     try { publish(m, room); } catch (e) { console.warn('final publish failed', e); }
     matches.delete(m.id);
     for (const seat of m.seats) {
       if (seat.connId) connMatch.delete(seat.connId);
       const uid = seat.player?.userId || seat.originalUserId;
       if (uid && rankedUsers.get(uid) === seat.connId) rankedUsers.delete(uid);
-      // ★ N34修正: connIdがnullでも解放
       if (uid) rankedUsers.delete(uid);
     }
   }
@@ -1399,7 +1387,6 @@ function playCard(m, seat, id, room, env) {
   const feedOpportunity = !!(previous && previous.seat !== seat && m.contract.revealedCall && teamOf(previous.seat) === teamOf(seat) && legal.some(x => ["10", "J", "Q", "K", "A"].includes(x.rank)));
   const feedCard = feedOpportunity && ["10", "J", "Q", "K", "A"].includes(card.rank);
 
-  // ★ N40/N41: プール消費計算（ターン開始からの経過時間）
   if (!m.seats[seat].bot && m.turnStartAt) {
     const elapsed = (Date.now() - m.turnStartAt) / 1000;
     const consumed = Math.max(0, elapsed - 5);
@@ -1437,7 +1424,6 @@ function playCard(m, seat, id, room, env) {
 
   if (m.trick.length < 5) {
     m.active = (seat + 1) % 5;
-    // ★ N40: 次のターン開始時刻とタイマー
     m.turnStartAt = Date.now();
     const nextSeat = m.active;
     const free = 5;
@@ -1511,11 +1497,9 @@ function botAuctionBid(m, seat, room) {
   }
 }
 
-// ★ N33: ホスト端末COM計算 — 暗号化してホストへ送信
 async function requestHostBotCompute(m, seat, room) {
-  if (m.pendingBotRequest) return; // 既にペンディング中
+  if (m.pendingBotRequest) return;
   if (m.hostSeat < 0 || !m.botComputeKeyHex) {
-    // フォールバック: サーバー側で計算
     return serverBotAction(m, seat, room);
   }
   const hostConn = m.seats[m.hostSeat].connId && conns.get(m.seats[m.hostSeat].connId);
@@ -1579,7 +1563,6 @@ function serverBotAction(m, seat, room) {
     const legal = legalCards(m, seat);
     if (!legal.length) return;
     const ctx = buildBotContext(m, seat);
-    // ★ N27a: サーバー側は MCTS 2秒予算
     let chosen = null;
     try {
       chosen = chooseCardWithMCTS({ ...ctx, params: { ...ctx.params, maxThinkTimeMs: 2000 } });
@@ -1626,18 +1609,15 @@ function botAction(m, room) {
     return;
   }
   if (m.phase === "play") {
-    // ★ N33: ホスト端末へ計算依頼（暗号化）、タイムアウトでサーバー計算
     requestHostBotCompute(m, i, room);
   }
 }
 
 function nextRound(m, room) {
   if (m.phase !== "round-result") return;
-  // ★ N3: playoff中は round 据え置き（同着解消まで round 10 を繰り返す）
   if (!m.playoff || m.playoffCount === 0) {
     m.round++;
   }
-  // ただし初回のプレーオフ突入時は round 据え置き
   if (m.round > 10 && !m.playoff) m.round = 1;
   m.mult = 1; m.redraws = 0;
   deal(m);
@@ -1649,7 +1629,6 @@ async function processAction(conn, msg, room, env) {
   const seat = m.seats.findIndex(s => s.connId === conn.id); if (seat < 0) return;
   const a = msg.action || {};
 
-  // ★ N33: ホスト端末からのCOM計算結果を受け取る
   if (a.type === "bot-move-result" || msg.type === "bot-move-result") {
     if (!m.pendingBotRequest) return;
     if (m.pendingBotRequest.requestId !== (a.requestId || msg.requestId)) return;
@@ -1757,11 +1736,14 @@ function timeoutAction(m, room) {
     const ids = chooseDiscard(p.hand, m.contract.suit, discardContext).map(x => x.id);
     discardCards(m, i, ids, room);
   } else if (m.phase === "play") {
-    // ★ N41: 時間切れ → 合法手の中で一番弱いカードを自動プレイ
     const c = legalCards(m, i).slice().sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
     if (c) playCard(m, i, c.id, room, null);
   }
 }
+
+// ===== [後編 2/3 終了。3/3 へ続く] =====
+
+// ===== [後編 3/3 開始] =====
 
 export const room = {
   tickMs: 500,
@@ -1776,7 +1758,6 @@ export const room = {
   async onMessage(conn, raw, room, env) {
     let msg; try { msg = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return; }
 
-    // ★ A1: チャット中継
     if (msg.type === "chat") {
       const text = String(msg.text || "").slice(0, 200).trim();
       const name = String(msg.name || "ゲスト").slice(0, 20);
@@ -1800,7 +1781,6 @@ export const room = {
         const userId = sess.user_id;
         conn.authUserId = userId;
         conn.authSessionToken = msg.sessionToken;
-        // ★ N5修正: 古い connMatch エントリを先に削除
         const oldMatchId = connMatch.get(conn.id);
         if (oldMatchId) connMatch.delete(conn.id);
         let foundMatch = null, foundSeat = -1;
@@ -1816,7 +1796,7 @@ export const room = {
         const seat = foundMatch.seats[foundSeat];
         seat.connId = conn.id;
         seat.bot = false;
-        seat.abandoned = false; // ★ N35修正
+        seat.abandoned = false;
         seat.player.username = seat.originalPlayerName || "player";
         seat.player.playerId = seat.originalPlayerId || "player";
         if (foundMatch.kind === "ranked") seat.player.userId = userId;
@@ -2038,7 +2018,6 @@ export const room = {
             else if (now >= m.humanAutoPlayAt) { m.humanAutoPlayAt = null; m.notice = "出すカードが1枚しかないため、自動で出します。"; publish(m, room); playCard(m, activeSeat, legal[0].id, room, env); }
           } else {
             m.humanAutoPlayAt = null;
-            // ★ N40/N41: プール+5秒切れで自動プレイ
             if (m.deadline && now >= m.deadline) { m.notice = "持ち時間が切れたため、自動で進行します。"; timeoutAction(m, room); }
           }
         }
@@ -2065,7 +2044,6 @@ export const room = {
         if (m.trickNo >= 10) await saveEnd(m, room, env);
         else {
           m.trick = []; m.phase = "play";
-          // ★ N40: 次ターン開始時刻
           m.turnStartAt = Date.now();
           const free = 5;
           const pool = (m.playPools && m.playPools[m.active]) || 20;
@@ -2107,7 +2085,6 @@ export const room = {
           s.player.username = "COM";
           s.player.playerId = "COM";
           if (m.phase !== "result") m.notice = (s.originalPlayerName || "プレイヤー") + "が切断しました。COM操作になります。";
-          // ★ N33: ホストが切断した場合、次の人間に昇格
           if (m.hostSeat === m.seats.indexOf(s)) {
             const newHost = m.seats.findIndex(seat => seat.connId && !seat.bot);
             m.hostSeat = newHost;
@@ -2127,6 +2104,10 @@ export const room = {
     room.broadcast(presence);
   }
 };
-// ===== [worker.js 後半 終了] =====
+
+// ===== [worker.js 完成] =====
+
+
+
 
     
