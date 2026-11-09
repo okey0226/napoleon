@@ -122,7 +122,6 @@ function generateScenario(seed) {
     const openKitty = deck.splice(0, 2).map(c => ({ ...c }));
     sortHand(hand10);
 
-    // 14枚以上立てられるスートを探す
     let bestSuit = null;
     let bestProper = 0;
     for (const suit of SUITS.concat(['NT'])) {
@@ -141,7 +140,6 @@ function generateScenario(seed) {
     }
     if (bestProper < 14 || !bestSuit) continue;
 
-    // 追加条件: 切札4枚以上（NT以外）、サイドA1枚以上、点札5枚以上
     if (bestSuit !== 'NT') {
       const trumps = hand10.filter(c => c.suit === bestSuit).length;
       if (trumps < 4) continue;
@@ -151,7 +149,6 @@ function generateScenario(seed) {
     const points = hand10.filter(c => POINT.includes(c.rank)).length;
     if (points < 5) continue;
 
-    // 残り40枚を4人に10枚ずつ分配（シナリオ固定）
     const oppHands = [[], [], [], [], []];
     for (let i = 1; i < 5; i++) {
       oppHands[i] = deck.splice(0, 10).map(c => ({ ...c }));
@@ -275,7 +272,6 @@ function buildPlayCtx(state, seat) {
 }
 
 function detectForcedLoss(state, card) {
-  // 最後手番のときだけ「即敗北確定」を判定（早期逸脱を防ぐ）
   if (state.trick.length < 4) return false;
   const testTrick = [...state.trick, { seat: 0, card }];
   const winner = winningEntry(state.contract, state.trickNo, testTrick);
@@ -291,7 +287,6 @@ function closestCardToPlan(slot, legal) {
   if (!slot || !legal.length) return legal[0];
   const target = slot.card;
 
-  // 1. 同スート
   const sameSuit = legal.filter(c => c.suit === target.suit);
   if (sameSuit.length) {
     if (slot.outcome === 'LOSE') {
@@ -302,11 +297,9 @@ function closestCardToPlan(slot, legal) {
       RANKS.indexOf(c.rank) > RANKS.indexOf(b.rank) ? c : b);
   }
 
-  // 2. 同ランク
   const sameRank = legal.filter(c => c.rank === target.rank);
   if (sameRank.length) return sameRank[0];
 
-  // 3. フォールバック: LOSEなら最弱、WINなら最強
   if (slot.outcome === 'LOSE') {
     return legal.reduce((b, c) =>
       RANKS.indexOf(c.rank) < RANKS.indexOf(b.rank) ? c : b);
@@ -329,7 +322,7 @@ function chooseNapCardWithPlanPriority(state) {
   const legalPlan = legal.find(c => c.id === planCard.id);
 
   if (legalPlan && !detectForcedLoss(state, legalPlan)) {
-    return legalPlan;  // プラン通り
+    return legalPlan;
   }
   return closestCardToPlan(slot, legal);
 }
@@ -353,7 +346,6 @@ async function runWatchSimulation() {
   while (!state.finished && !S.aborted) {
     const trickNo = state.trickNo;
 
-    // 1トリック実行
     while (state.trick.length < 5 && !state.finished) {
       const seat = state.trick.length === 0
         ? state.active
@@ -370,7 +362,6 @@ async function runWatchSimulation() {
 
     if (state.trick.length < 5) break;
 
-    // トリック解決
     const trickSnapshot = state.trick.slice();
     const winnerEntry = winningEntry(state.contract, state.trickNo, state.trick);
     const winner = winnerEntry.seat;
@@ -385,7 +376,6 @@ async function runWatchSimulation() {
     state.trickNo++;
     if (state.trickNo >= 10) state.finished = true;
 
-    // TrickRecord
     const napCard = trickSnapshot.find(t => t.seat === 0)?.card;
     const slot = S.currentPlan?.sequence?.[trickNo];
     const plannedCard = slot?.card;
@@ -428,7 +418,6 @@ async function runWatchSimulation() {
     S.currentTrickNo = state.trickNo;
     renderWatchStep();
 
-    // ユーザー操作待ち（プラン修正・次のトリック）
     if (!state.finished) {
       await new Promise(resolve => { S.pauseResolve = resolve; });
       if (S.aborted) return;
@@ -603,7 +592,6 @@ async function persistSessionRecord(report) {
     });
   } catch (e) {
     console.warn('[nap-plan-lab] save failed:', e);
-    // ローカル保存にフォールバック（直近20件）
     try {
       const key = 'nap_lab_unsaved';
       const arr = JSON.parse(localStorage.getItem(key) || '[]');
@@ -615,8 +603,8 @@ async function persistSessionRecord(report) {
 
 // ===== [前半 終了。後半へ続く] =====
 // nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（後半）
-// 前半の末尾に連結してください。
 // 後半: 各ステップのレンダリング・モーダル・画面開閉・デバッグ用
+// 修正: 全ステップをグリッド表示に統一、指名カードは手札外から選択
 
 // ============================================================
 // 画面遷移
@@ -663,6 +651,9 @@ function goNext() {
   if (S.step === 'bid' && !S.bid) return toast('宣言を選んでください');
   if (S.step === 'discard' && S.discard.length !== 2) return toast('捨て札を2枚選んでください');
   if (S.step === 'call' && !S.call) return toast('指名カードを選んでください');
+  if (S.step === 'call' && S.discard.some(d => d.id === S.call.id)) {
+    return toast('捨て札は指名できません');
+  }
   if (S.step === 'plan') {
     const usedIds = new Set(S.currentPlan.sequence.map(s => s.card?.id).filter(Boolean));
     const allCards = S.scenario.hand10.concat(S.scenario.openKitty).filter(
@@ -740,9 +731,9 @@ function renderScenarioStep(shell) {
       ${stepHeader('シナリオ', { noBack: true })}
       <div class="lab-body">
         <div class="panel-title">手札10枚</div>
-        <div class="hand">${hand}</div>
-        <div class="panel-title" style="margin-top:14px;">オープン（浮き札）</div>
-        <div class="hand">${kitty}</div>
+        <div class="lab-hand-grid">${hand}</div>
+        <div class="panel-title" style="margin-top:16px;">オープン（浮き札）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">${kitty}</div>
         <p class="subcopy" style="margin-top:20px;">この手札でNAPを務めます。宣言から切り順まで、すべてあなたが決めます。</p>
       </div>
     </div>`;
@@ -778,7 +769,7 @@ function renderBidStep(shell) {
         </div>
 
         <div class="panel-title" style="margin-top:18px;">手札（参考）</div>
-        <div class="hand">${hand}</div>
+        <div class="lab-hand-grid">${hand}</div>
       </div>
     </div>`;
 
@@ -811,13 +802,16 @@ function renderDiscardStep(shell) {
     <div class="game-screen nap-lab">
       ${stepHeader('捨て札を2枚選ぶ')}
       <div class="lab-body">
-        <p class="subcopy">手札12枚から2枚を捨てます（${S.discard.length}/2）</p>
-        <div class="hand lab-hand-tap">${handHTML}</div>
+        <div class="lab-sticky-info">
+          <span>選択: <b>${S.discard.length}/2</b></span>
+          <span class="micro-copy" style="color:#e6be72;">カードをタップ</span>
+        </div>
+        <div class="lab-hand-grid">${handHTML}</div>
         <p class="micro-copy" style="margin-top:12px;color:#e6be72;">点札を捨てると連合軍に点が入ります</p>
       </div>
     </div>`;
 
-  shell.querySelectorAll('.hand .card.playable').forEach((el, i) => {
+  shell.querySelectorAll('.lab-hand-grid .card.playable').forEach((el, i) => {
     el.onclick = () => {
       const card = hand12[i];
       if (selectedIds.has(card.id)) {
@@ -832,40 +826,127 @@ function renderDiscardStep(shell) {
 }
 
 // ============================================================
-// Step: 指名
+// Step: 指名カード（★修正版: 手札外から選ぶ）
 // ============================================================
 function renderCallStep(shell) {
-  const hand10 = S.scenario.hand10.concat(S.scenario.openKitty).filter(
+  const myHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
     c => !S.discard.some(d => d.id === c.id)
   );
-  const selectedId = S.call?.id;
-  const handHTML = hand10.map(c =>
-    cardElHTML(c, c.id === selectedId ? 'selected playable' : 'playable')
+  const myHandIds = new Set(myHand.map(c => c.id));
+  const discardIds = new Set(S.discard.map(c => c.id));
+
+  const selSuit = S.call?.suit || '♠';
+  const selRank = S.call?.rank || 'A';
+  const selId = selSuit + selRank;
+  const hasSelection = !!S.call;
+
+  const isOwnCard = myHandIds.has(selId);
+  const isDiscarded = discardIds.has(selId);
+
+  const suitBtns = SUITS.map(s =>
+    `<button class="lab-suit-btn ${s === selSuit ? 'selected' : ''}" data-cs="${s}">${s}</button>`
   ).join('');
-  const discardHTML = S.discard.map(c => cardElHTML(c)).join('');
+
+  const rankBtns = RANKS.slice().reverse().map(r => {
+    const id = selSuit + r;
+    const isDis = discardIds.has(id);
+    const isHand = myHandIds.has(id);
+    const cls = [
+      'lab-rank-btn',
+      r === selRank ? 'selected' : '',
+      isDis ? 'disabled' : '',
+      isHand ? 'hand-badge' : '',
+    ].filter(Boolean).join(' ');
+    return `<button class="${cls}" data-cr="${r}" ${isDis ? 'disabled' : ''}>${r}</button>`;
+  }).join('');
+
+  const handHTML = myHand.map(c =>
+    cardElHTML(c, c.id === selId ? 'selected' : '')
+  ).join('');
+
+  const discardHTML = S.discard.map(c => cardElHTML(c, 'protected')).join('');
+
+  let previewHTML = '';
+  if (hasSelection) {
+    if (isDiscarded) {
+      previewHTML = `
+        <div class="lab-selected-card" style="border-color:#e89685;">
+          <p class="micro-copy" style="color:#e89685;margin:0;text-align:center;">
+            ⚠ ${selId} は捨て札のため指名できません
+          </p>
+        </div>`;
+    } else {
+      previewHTML = `
+        <div class="lab-selected-card">
+          <div class="lab-selected-row">
+            ${cardElHTML({ suit: selSuit, rank: selRank, id: selId })}
+            <div class="lab-selected-info">
+              <strong>${selId}</strong>
+              <span class="micro-copy" style="color:${isOwnCard ? '#e6be72' : '#a9d2ae'};">
+                ${isOwnCard ? '⚠ 自分の手札 → ひとり立ち' : '副官指名'}
+              </span>
+            </div>
+          </div>
+          <button class="primary-button" id="call-confirm"
+            style="width:100%;min-height:52px;margin-top:14px;font-size:15px;font-weight:800;">
+            この札を指名する
+          </button>
+        </div>`;
+    }
+  } else {
+    previewHTML = `
+      <p class="micro-copy" style="margin-top:16px;text-align:center;color:#e6be72;">
+        スートとランクを選んでください
+      </p>`;
+  }
 
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('指名カードを選ぶ')}
       <div class="lab-body">
-        <div class="hand lab-hand-tap">${handHTML}</div>
+        <p class="subcopy" style="margin-bottom:14px;">
+          副官に指名するカードを選んでください。<br>
+          自分の手札にある札を指名すると「ひとり立ち」になります。
+        </p>
 
-        <div class="panel-title" style="margin-top:16px;">捨て札（指名不可）</div>
-        <div class="hand" style="opacity:.45;pointer-events:none;">${discardHTML}</div>
+        <div class="panel-title">スート</div>
+        <div class="lab-suit-row">${suitBtns}</div>
 
-        <p class="micro-copy" style="margin-top:10px;">自分の手札を選ぶと「ひとり立ち」になります</p>
+        <div class="panel-title" style="margin-top:16px;">ランク（★ = 自分の手札）</div>
+        <div class="lab-rank-grid">${rankBtns}</div>
+
+        <div class="panel-title" style="margin-top:16px;">あなたの手札（参考）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">${handHTML}</div>
+
+        <div class="panel-title" style="margin-top:12px;">捨て札（指名不可）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm lab-hand-discard">${discardHTML}</div>
+
+        ${previewHTML}
       </div>
     </div>`;
 
-  shell.querySelectorAll('.hand .card.playable').forEach((el, i) => {
-    el.onclick = () => {
-      const card = hand10[i];
-      if (!confirm('自分の手札を指名すると「ひとり立ち」になります。よろしいですか？')) return;
-      S.call = card;
-      S.solo = true;
-      renderCallStep(shell);
-    };
+  shell.querySelectorAll('[data-cs]').forEach(b => b.onclick = () => {
+    S.call = { suit: b.dataset.cs, rank: selRank, id: b.dataset.cs + selRank };
+    S.solo = myHandIds.has(S.call.id);
+    renderCallStep(shell);
   });
+
+  shell.querySelectorAll('[data-cr]:not(.disabled)').forEach(b => b.onclick = () => {
+    S.call = { suit: selSuit, rank: b.dataset.cr, id: selSuit + b.dataset.cr };
+    S.solo = myHandIds.has(S.call.id);
+    renderCallStep(shell);
+  });
+
+  const confirmBtn = shell.querySelector('#call-confirm');
+  if (confirmBtn) {
+    confirmBtn.onclick = () => {
+      if (!S.call) return;
+      if (discardIds.has(S.call.id)) { toast('捨て札は指名できません'); return; }
+      S.solo = myHandIds.has(S.call.id);
+      goNext();
+    };
+  }
+
   bindHeader(shell);
 }
 
@@ -996,24 +1077,23 @@ function renderPlanStep(shell) {
     ? unplaced.map(c =>
         cardElHTML(c, `playable ${S.selectedUnplacedId === c.id ? 'selected' : ''}`)
       ).join('')
-    : '<p class="micro-copy" style="padding:8px;">すべて配置済み</p>';
+    : '<p class="micro-copy" style="padding:8px;grid-column:1/-1;text-align:center;">すべて配置済み</p>';
 
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('切り順プラン')}
       <div class="lab-sticky-info">
         <span>予測: <b>${winCount}勝 ${loseCount}敗</b></span>
-        <span class="micro-copy" style="color:#e6be72;">${S.selectedUnplacedId ? 'スロットをタップ' : '手札をタップ→スロット'}</span>
+        <span class="micro-copy" style="color:#e6be72;">${S.selectedUnplacedId ? 'スロットをタップ' : '手札→スロット'}</span>
       </div>
       <div class="lab-body" style="padding-top:0;">
         <div class="lab-plan-slots">${slotsHTML}</div>
         <div class="panel-title" style="margin-top:14px;">未配置の手札</div>
-        <div class="hand lab-hand-tap">${unplacedHTML}</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">${unplacedHTML}</div>
       </div>
     </div>`;
 
-  // 未配置カードの選択
-  shell.querySelectorAll('.hand .card.playable').forEach((el, i) => {
+  shell.querySelectorAll('.lab-hand-grid .card.playable').forEach((el, i) => {
     const card = unplaced[i];
     el.onclick = () => {
       S.selectedUnplacedId = (S.selectedUnplacedId === card.id) ? null : card.id;
@@ -1021,7 +1101,6 @@ function renderPlanStep(shell) {
     };
   });
 
-  // スロットのカード欄タップ → 選択中カードを嵌める / 既存カードを外す
   shell.querySelectorAll('[data-slot-card]').forEach(el => {
     const idx = Number(el.dataset.slotCard);
     el.onclick = () => {
@@ -1043,7 +1122,6 @@ function renderPlanStep(shell) {
     };
   });
 
-  // WIN/LOSEトグル
   shell.querySelectorAll('[data-toggle]').forEach(btn => {
     const idx = Number(btn.dataset.toggle);
     btn.onclick = (e) => {
@@ -1099,7 +1177,7 @@ function renderWatchStep() {
           <div class="lab-trick-cards">${trickCardsHTML}</div>
         </div>
         <div class="panel-title" style="margin-top:12px;">手札（${state.hands[0].length}枚）</div>
-        <div class="hand lab-hand-compact">${state.hands[0].map(c => cardElHTML(c)).join('')}</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">${state.hands[0].map(c => cardElHTML(c)).join('')}</div>
       </div>
       <div class="lab-bottom-bar">
         <button class="secondary-button" id="lab-revise" style="flex:1;min-height:52px;">✎ プラン修正</button>
@@ -1433,3 +1511,6 @@ export function __setScenarioForTest(handIds, kittyIds) {
   S.step = 'scenario';
   renderStep();
 }
+
+
+
