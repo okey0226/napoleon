@@ -1,5 +1,5 @@
-// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（完全版）
-// 追加: シナリオ生成の多様化（未学習クラスタ優先）、verdict(承認/修正)付与、学習進捗UI
+// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（前編）
+// 修正: 切り順プランは全て未配置から開始
 
 import {
   SUITS, RANKS, defaultStrategy, sortHand,
@@ -32,7 +32,6 @@ const S = {
   aborted: false,
   revisionDraft: null,
   selectedUnplacedId: null,
-  // 学習状況
   learningStats: null,
 };
 
@@ -100,16 +99,24 @@ function buildDeck() {
   return d;
 }
 
-// ============================================================
-// シナリオ生成（多様性強化: 未学習クラスタ優先）
-// ============================================================
+async function fetchLearningStats() {
+  try {
+    const token = localStorage.getItem('napoleon_session');
+    const res = await fetch('/api/nap-lab/learning-stats', {
+      headers: { ...(token ? { 'x-session-token': token } : {}) }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 function generateScenario(seed) {
   const rng = mulberry32(seed >>> 0);
   const params = defaultStrategy();
   const MAX_ATTEMPTS = 300;
-
-  // クラスタの多様性を確保するためのカテゴリ選択
-  const category = seed % 4; // 0:基本, 1:高宣言, 2:超高宣言, 3:特殊
+  const category = seed % 4;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const deck = shuffleWithRng(buildDeck(), rng);
@@ -135,7 +142,6 @@ function generateScenario(seed) {
     }
     if (!bestSuit) continue;
 
-    // カテゴリ別の条件チェック
     if (category === 0) {
       if (bestProper < 14 || bestProper > 15) continue;
     } else if (category === 1) {
@@ -144,7 +150,6 @@ function generateScenario(seed) {
       if (bestProper < 18) continue;
     } else if (category === 3) {
       if (bestProper < 14) continue;
-      // 特殊条件: セイム2持ち、または♥Q相手（簡易判定）
       const hasSame2 = hand10.some(c => c.rank === '2');
       if (!hasSame2) continue;
     }
@@ -166,22 +171,6 @@ function generateScenario(seed) {
     return { seed, hand10, openKitty, opponents: oppHands, category };
   }
   return null;
-}
-
-// ============================================================
-// 学習状況の取得（ダッシュボード用）
-// ============================================================
-async function fetchLearningStats() {
-  try {
-    const token = localStorage.getItem('napoleon_session');
-    const res = await fetch('/api/nap-lab/learning-stats', {
-      headers: { ...(token ? { 'x-session-token': token } : {}) }
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
 }
 
 function createMatchState(scenario, bid, discard, call, solo) {
@@ -330,7 +319,6 @@ function chooseNapCardWithPlanPriority(state) {
   const planCard = slot.card;
   const legalPlan = legal.find(c => c.id === planCard.id);
 
-  // 合法手にあるなら絶対にプランカードを出す
   if (legalPlan) {
     return legalPlan;
   }
@@ -552,7 +540,7 @@ async function persistSessionRecord(report) {
     revisions: S.revisions,
     trickRecords: S.trickRecords,
     report,
-    verdict, // ★ 承認(APPROVED) / 修正(REVISED)
+    verdict,
     createdAt: new Date().toISOString(),
   };
   try {
@@ -576,9 +564,10 @@ async function persistSessionRecord(report) {
   }
 }
 
-// ============================================================
-// UI・画面遷移
-// ============================================================
+// ===== [前編 終了。後編へ続く] =====
+// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（後編）
+// 後編: UI・画面遷移
+
 function resetSession() {
   S.step = 'scenario';
   S.seed = 0;
@@ -605,7 +594,6 @@ async function startNewScenario() {
   resetSession();
   S.seed = Date.now() & 0x7fffffff;
   
-  // 学習状況の取得と表示（非同期）
   if (!S.learningStats) {
     S.learningStats = await fetchLearningStats();
   }
@@ -993,53 +981,22 @@ function renderExpectStep(shell) {
   bindHeader(shell);
 }
 
-function generateInitialPlan(scenario, bid, discard, call, solo) {
-  const myHand = scenario.hand10.concat(scenario.openKitty).filter(
-    c => !discard.some(d => d.id === c.id)
-  );
-  const contract = {
-    nap: 0,
-    num: bid.num,
-    suit: bid.suit,
-    deputy: solo ? 0 : -1,
-    solo,
-    revealedCall: false,
-    call: { ...call },
-  };
-  return buildNaivePlan(myHand, contract);
-}
-
-function buildNaivePlan(myHand, contract) {
-  const scored = myHand.map(c => {
-    let score = 0;
-    if (c.id === '♠A') score = 100;
-    else if (c.id === '♥Q') score = 90;
-    else if (contract.suit !== 'NT' && c.rank === 'J' && c.suit === contract.suit) score = 85;
-    else if (contract.suit !== 'NT' && c.rank === 'J'
-      && (c.suit === '♣' || c.suit === '♠') === (contract.suit === '♣' || contract.suit === '♠')) score = 75;
-    else if (c.rank === 'A') score = 70;
-    else if (c.rank === 'K') score = 40;
-    else if (c.rank === 'Q') score = 35;
-    else if (contract.suit !== 'NT' && c.suit === contract.suit) score = 30;
-    else if (c.rank === '2') score = 20;
-    else score = 10;
-    return { card: c, score };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return {
-    sequence: scored.map((e, i) => ({
-      slot: i + 1,
-      card: e.card,
-      outcome: e.score >= 60 ? 'WIN' : 'LOSE',
-    })),
-  };
-}
-
+// ============================================================
+// 切り順プラン（全て未配置から開始）
+// ============================================================
 function renderPlanStep(shell) {
+  // ★ 修正: AIの初期案は使わず、全て未配置で初期化
   if (!S.initialPlan) {
-    S.initialPlan = generateInitialPlan(S.scenario, S.bid, S.discard, S.call, S.solo);
+    S.initialPlan = {
+      sequence: Array.from({ length: 10 }, (_, i) => ({
+        slot: i + 1,
+        card: null,
+        outcome: 'LOSE'
+      }))
+    };
     S.currentPlan = { sequence: S.initialPlan.sequence.map(s => ({ ...s })) };
   }
+  
   const plan = S.currentPlan;
   const usedIds = new Set(plan.sequence.map(s => s.card?.id).filter(Boolean));
   const allMyCards = S.scenario.hand10.concat(S.scenario.openKitty).filter(
@@ -1609,3 +1566,5 @@ export function __setScenarioForTest(handIds, kittyIds) {
   S.step = 'scenario';
   renderStep();
 }
+
+// ===== [後編 終了] =====
