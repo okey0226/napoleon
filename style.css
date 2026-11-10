@@ -1079,18 +1079,15 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 #nap-plan-lab-shell {
   flex: 1;
-  min-height: 0; /* ★ スクロールを有効にするために必須 */
-  display: flex;
-  flex-direction: column;
+  min-height: 0;
+  display: block; /* ★ 修正: flex から block に変更してスクロールを有効化 */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .nap-lab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: block; /* ★ 修正: flex から block に変更 */
   padding: 0;
   min-height: 100%;
   background: #0b2620;
@@ -1134,7 +1131,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 
 /* ===== ボディ ===== */
 .lab-body {
-  flex: 1;
   padding: 14px 12px 24px;
   overflow-y: visible;
 }
@@ -1353,7 +1349,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   background: rgba(225, 188, 112, 0.25);
   color: #f8e5a8;
 }
-/* 自分の手札にあるランク = ひとり立ちになる可能性 */
 .lab-rank-btn.hand-badge {
   border-color: rgba(230, 190, 114, 0.55);
   background: rgba(230, 190, 114, 0.1);
@@ -1367,7 +1362,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   color: #e6be72;
   line-height: 1;
 }
-/* 捨て札で無効 */
 .lab-rank-btn.disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1375,7 +1369,6 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 .lab-rank-btn.disabled:active { transform: none; }
 
-/* 極小画面 */
 @media (max-width: 360px) {
   .lab-rank-grid { grid-template-columns: repeat(5, 1fr); }
   .lab-rank-btn { min-height: 40px; font-size: 13px; }
@@ -1427,7 +1420,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 
 /* ============================================================
-   ▼ 切り順プラン（10スロットが収まる高さに圧縮）
+   ▼ 切り順プラン
    ============================================================ */
 .lab-plan-slots {
   display: flex;
@@ -1887,6 +1880,46 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   .lab-swap-option:hover {
     transform: none;
   }
+}
+
+/* ============================================================
+   ▼ 学習進捗バー
+   ============================================================ */
+.lab-learning-progress {
+  padding: 10px 12px;
+  border: 1px solid rgba(225, 188, 112, 0.25);
+  border-radius: 10px;
+  background: rgba(14, 36, 30, 0.7);
+}
+.lab-learning-progress .lab-progress-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+.lab-learning-progress .lab-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a9d2ae, #e1bc70);
+  border-radius: 4px;
+  transition: width .3s ease;
+}
+.lab-learning-progress .lab-progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #e8d7a9;
+}
+.lab-learning-progress .lab-progress-label b {
+  color: #f3d48e;
+  font-weight: 800;
+}
+.lab-learning-progress .lab-progress-sub {
+  font-size: 10px;
+  color: #93a69a;
+  text-align: right;
 }
 
 /* ============================================================
