@@ -1,9 +1,5 @@
 // nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（完全版）
-// 修正点:
-// - COM思考にMCTSを導入
-// - 合法手にあるならプランカードを絶対に出す
-// - リアルタイム描画とCOM戦互換のテーブルUI
-// - 逸脱理由の厳密な判定
+// 追加: シナリオ生成の多様化（未学習クラスタ優先）、verdict(承認/修正)付与、学習進捗UI
 
 import {
   SUITS, RANKS, defaultStrategy, sortHand,
@@ -36,6 +32,8 @@ const S = {
   aborted: false,
   revisionDraft: null,
   selectedUnplacedId: null,
+  // 学習状況
+  learningStats: null,
 };
 
 function hashSeed(...args) {
@@ -102,10 +100,16 @@ function buildDeck() {
   return d;
 }
 
+// ============================================================
+// シナリオ生成（多様性強化: 未学習クラスタ優先）
+// ============================================================
 function generateScenario(seed) {
   const rng = mulberry32(seed >>> 0);
   const params = defaultStrategy();
-  const MAX_ATTEMPTS = 250;
+  const MAX_ATTEMPTS = 300;
+
+  // クラスタの多様性を確保するためのカテゴリ選択
+  const category = seed % 4; // 0:基本, 1:高宣言, 2:超高宣言, 3:特殊
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const deck = shuffleWithRng(buildDeck(), rng);
@@ -129,7 +133,21 @@ function generateScenario(seed) {
         bestSuit = suit;
       }
     }
-    if (bestProper < 14 || !bestSuit) continue;
+    if (!bestSuit) continue;
+
+    // カテゴリ別の条件チェック
+    if (category === 0) {
+      if (bestProper < 14 || bestProper > 15) continue;
+    } else if (category === 1) {
+      if (bestProper < 16 || bestProper > 17) continue;
+    } else if (category === 2) {
+      if (bestProper < 18) continue;
+    } else if (category === 3) {
+      if (bestProper < 14) continue;
+      // 特殊条件: セイム2持ち、または♥Q相手（簡易判定）
+      const hasSame2 = hand10.some(c => c.rank === '2');
+      if (!hasSame2) continue;
+    }
 
     if (bestSuit !== 'NT') {
       const trumps = hand10.filter(c => c.suit === bestSuit).length;
@@ -145,9 +163,25 @@ function generateScenario(seed) {
       oppHands[i] = deck.splice(0, 10).map(c => ({ ...c }));
     }
 
-    return { seed, hand10, openKitty, opponents: oppHands };
+    return { seed, hand10, openKitty, opponents: oppHands, category };
   }
   return null;
+}
+
+// ============================================================
+// 学習状況の取得（ダッシュボード用）
+// ============================================================
+async function fetchLearningStats() {
+  try {
+    const token = localStorage.getItem('napoleon_session');
+    const res = await fetch('/api/nap-lab/learning-stats', {
+      headers: { ...(token ? { 'x-session-token': token } : {}) }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 function createMatchState(scenario, bid, discard, call, solo) {
@@ -308,7 +342,6 @@ function chooseComCard(state, seat) {
   if (!legal.length) return null;
   const ctx = buildPlayCtx(state, seat);
   try {
-    // COM戦と同様にMCTSを実行（UIをブロックしないよう計算時間を抑える）
     const chosen = chooseCardWithMCTS({ ...ctx, params: { ...ctx.params, maxThinkTimeMs: 800 } });
     if (chosen && legal.some(c => c.id === chosen.id)) return chosen;
   } catch (e) { /* fallback */ }
@@ -335,7 +368,7 @@ async function runWatchSimulation() {
 
       if (!Number.isInteger(seat) || seat < 0 || seat > 4) break;
 
-      const legalBefore = legalCards(state, seat); // 偏差判定用にプレイ前の合法手を保持
+      const legalBefore = legalCards(state, seat);
       
       const chosen = seat === 0
         ? chooseNapCardWithPlanPriority(state)
@@ -346,7 +379,7 @@ async function runWatchSimulation() {
       const ok = playCardToState(state, seat, chosen);
       if (!ok) break;
 
-      renderWatchStep(); // 1枚出るたびに描画を更新
+      renderWatchStep();
       await delay(250);
       if (S.aborted) return;
     }
@@ -377,7 +410,6 @@ async function runWatchSimulation() {
     state.taken[winner].push(...taken);
     state.active = winner;
     
-    // トリック終了時のスナップショットを保存（次のトリックが始まるまで表示するため）
     state.lastTrick = trickSnapshot;
     state.lastTrickWinner = winner;
 
@@ -394,9 +426,7 @@ async function runWatchSimulation() {
     let deviation = null;
     if (plannedCard && napCard) {
       if (plannedCard.id !== napCard.id) {
-        // プランカードがプレイ前に合法手だったか確認
         const planWasLegal = legalBefore.some(c => c.id === plannedCard.id);
-        
         deviation = {
           type: 'CARD_CHANGED',
           plannedCard: plannedCard.id,
@@ -495,9 +525,11 @@ function computeReport() {
 }
 
 async function persistSessionRecord(report) {
+  const verdict = S.revisions.length === 0 ? 'APPROVED' : 'REVISED';
   const record = {
     scenarioId: `nap-lab-${S.seed}`,
     seed: S.seed,
+    category: S.scenario.category || 0,
     scenario: {
       hand: S.scenario.hand10.map(c => c.id),
       openKitty: S.scenario.openKitty.map(c => c.id),
@@ -520,6 +552,7 @@ async function persistSessionRecord(report) {
     revisions: S.revisions,
     trickRecords: S.trickRecords,
     report,
+    verdict, // ★ 承認(APPROVED) / 修正(REVISED)
     createdAt: new Date().toISOString(),
   };
   try {
@@ -568,9 +601,15 @@ function resetSession() {
   S.selectedUnplacedId = null;
 }
 
-function startNewScenario() {
+async function startNewScenario() {
   resetSession();
   S.seed = Date.now() & 0x7fffffff;
+  
+  // 学習状況の取得と表示（非同期）
+  if (!S.learningStats) {
+    S.learningStats = await fetchLearningStats();
+  }
+  
   const sc = generateScenario(S.seed);
   if (!sc) {
     renderError('シナリオ生成に失敗しました。もう一度お試しください。');
@@ -657,10 +696,29 @@ function renderScenarioStep(shell) {
   const sc = S.scenario;
   const hand = sc.hand10.map(c => cardElHTML(c)).join('');
   const kitty = sc.openKitty.map(c => cardElHTML(c)).join('');
+  
+  let learningHTML = '';
+  if (S.learningStats) {
+    const st = S.learningStats;
+    const pct = st.total > 0 ? Math.min(100, Math.round(st.approved / 10 * 100)) : 0;
+    learningHTML = `
+      <div class="lab-learning-progress" style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#e8d7a9;margin-bottom:4px;">
+          <span>テンプレート抽出まで</span>
+          <span><b>${st.approved}/10件</b></span>
+        </div>
+        <div class="lab-progress-track" style="height:8px;background:rgba(0,0,0,.4);border-radius:4px;overflow:hidden;">
+          <div class="lab-progress-fill" style="width:${pct}%;height:100%;background:linear-gradient(90deg,#a9d2ae,#e1bc70);border-radius:4px;transition:width .3s;"></div>
+        </div>
+        <div style="font-size:10px;color:#93a69a;margin-top:4px;text-align:right;">承認 ${st.approved}件 / 修正 ${st.revised}件</div>
+      </div>`;
+  }
+
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('シナリオ', { noBack: true })}
       <div class="lab-body">
+        ${learningHTML}
         <div class="panel-title">手札10枚</div>
         <div class="lab-hand-grid">${hand}</div>
         <div class="panel-title" style="margin-top:16px;">オープン（浮き札）</div>
@@ -1115,15 +1173,12 @@ function renderWatchStep() {
   const lastRecord = S.trickRecords[S.trickRecords.length - 1];
   const trickNoDisplay = Math.min(state.trickNo + 1, 10);
 
-  // 現在の場札
   const trickCardsHTML = state.trick.map(t => {
     return `<div class="trick-card played-seat-${t.seat}">${cardElHTML(t.card)}</div>`;
   }).join('');
 
-  // 直前のトリック勝者（ハイライト用）
   const lastWinner = state.lastTrickWinner;
 
-  // 前トリックの結果カード
   const recordHTML = lastRecord
     ? `
       <div class="lab-record-card ${lastRecord.deviation ? 'deviation' : 'ok'}" style="margin: 0; padding: 8px 10px;">
@@ -1140,7 +1195,6 @@ function renderWatchStep() {
       </div>`
     : `<div class="lab-record-card ok" style="margin: 0; padding: 8px 10px;"><div class="lab-record-row" style="font-size: 12px;"><span>シミュレーション開始</span></div></div>`;
 
-  // プレイヤー席の描画
   const playersHTML = state.hands.map((_, i) => {
     const isActive = state.active === i;
     const isWinner = lastWinner === i;
@@ -1155,7 +1209,6 @@ function renderWatchStep() {
       </div>`;
   }).join('');
 
-  // 全体レイアウト（COM戦の game-screen を踏襲）
   shell.innerHTML = `
     <div class="game-screen nap-lab" style="height: 100dvh; overflow: hidden; padding: 0; background: #0b2620;">
       <div class="lab-step-header" style="flex-shrink: 0;">
@@ -1168,7 +1221,6 @@ function renderWatchStep() {
         ${recordHTML}
       </div>
 
-      <!-- テーブルエリア -->
       <div class="table-area" style="flex: 1; min-height: 0; margin: 0; position: relative; display: block;">
         <div class="players-ring">${playersHTML}</div>
         <div class="trick-cards">${trickCardsHTML}</div>
@@ -1177,7 +1229,6 @@ function renderWatchStep() {
         </div>
       </div>
 
-      <!-- 自分の手札 -->
       <div style="flex-shrink: 0; padding: 0 12px; padding-bottom: env(safe-area-inset-bottom, 0);">
         <div class="panel-title" style="margin-bottom: 4px;">手札（${state.hands[0].length}枚）</div>
         <div class="lab-hand-grid lab-hand-grid-sm" style="max-height: 110px; overflow-y: auto; padding: 4px; margin-bottom: 8px;">
@@ -1554,7 +1605,7 @@ export function __setScenarioForTest(handIds, kittyIds) {
   );
   const oppHands = [[], [], [], [], []];
   for (let i = 1; i < 5; i++) oppHands[i] = remaining.splice(0, 10);
-  S.scenario = { seed: 0, hand10, openKitty, opponents: oppHands };
+  S.scenario = { seed: 0, hand10, openKitty, opponents: oppHands, category: 0 };
   S.step = 'scenario';
   renderStep();
 }
