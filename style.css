@@ -1385,8 +1385,8 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
    ▼ 副官期待ブロック
    ============================================================ */
 .lab-expect-block {
-  margin-bottom: 14px;
-  padding: 10px;
+  margin-bottom: 10px;
+  padding: 8px;
   border: 1px solid rgba(225, 188, 112, 0.15);
   border-radius: 10px;
   background: rgba(14, 36, 30, 0.5);
@@ -1402,17 +1402,17 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 .lab-expect-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 .lab-expect-btn {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 8px 10px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px 8px;
   border: 1px solid rgba(226, 239, 230, 0.2);
   background: rgba(14, 36, 30, 0.9);
   color: #edf4ee;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -1426,24 +1426,24 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
 }
 
 /* ============================================================
-   ▼ 切り順プラン
+   ▼ 切り順プラン（10スロットが収まる高さに圧縮）
    ============================================================ */
 .lab-plan-slots {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 12px 0 16px;
+  gap: 6px;
+  margin: 10px 0 12px;
 }
 .lab-plan-slot {
   display: grid;
   grid-template-columns: 32px 1fr 76px;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border: 1px solid rgba(226, 239, 230, 0.15);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(14, 36, 30, 0.85);
-  min-height: 48px;
+  min-height: 42px;
   transition: border-color .15s, box-shadow .15s;
 }
 .lab-plan-slot.empty {
@@ -1455,7 +1455,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   box-shadow: 0 0 0 1px rgba(225, 188, 112, 0.3);
 }
 .lab-slot-no {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   color: #a3b1a8;
   text-align: center;
@@ -1465,7 +1465,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 38px;
+  min-height: 32px;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -1473,23 +1473,23 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   font-size: 12px;
 }
 .lab-slot-card .card {
-  width: 28px;
-  height: 40px;
+  width: 24px;
+  height: 34px;
   flex-shrink: 0;
 }
-.lab-slot-card .card .rank { font-size: 12px; left: 3px; top: 2px; }
-.lab-slot-card .card .suit { font-size: 11px; left: 3px; top: 16px; }
+.lab-slot-card .card .rank { font-size: 11px; left: 3px; top: 2px; }
+.lab-slot-card .card .suit { font-size: 10px; left: 3px; top: 14px; }
 
 /* ===== WIN/LOSE トグル ===== */
 .lab-outcome-btn {
-  min-height: 38px;
-  min-width: 68px;
-  padding: 6px 10px;
+  min-height: 34px;
+  min-width: 64px;
+  padding: 4px 8px;
   border: 1px solid rgba(226, 239, 230, 0.25);
   background: rgba(14, 36, 30, 0.9);
   color: #edf4ee;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -1660,7 +1660,7 @@ body:has(:is(.home-screen,.mode-select-screen):not(.hidden)) .profile-nav{
   color: #f6f7f2;
   border: 1px solid #35534a;
   border-radius: 8px;
-  font-size: 16px;
+  font-size: 16px;   /* iOS自動ズーム防止 */
   resize: vertical;
   outline: none;
   font-family: inherit;
