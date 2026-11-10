@@ -1,9 +1,5 @@
 // nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（前半）
 // 前半: 状態・ユーティリティ・シナリオ生成・試合進行・プラン優先プレイ・修正・レポート・保存
-// 後半: 各ステップのレンダリング・モーダル・画面開閉・デバッグ用
-//
-// 依存: constants.js, ai-tactics.js
-// 公開: openNapPlanLabScreen()（後半で定義）
 
 import {
   SUITS, RANKS, defaultStrategy, sortHand,
@@ -16,9 +12,6 @@ const $ = id => document.getElementById(id);
 const POINT = ['10', 'J', 'Q', 'K', 'A'];
 const STEPS = ['scenario', 'bid', 'discard', 'call', 'expect', 'plan', 'watch', 'report'];
 
-// ============================================================
-// セッション状態（1セッション = 1シナリオ）
-// ============================================================
 const S = {
   step: 'scenario',
   seed: 0,
@@ -41,9 +34,6 @@ const S = {
   selectedUnplacedId: null,
 };
 
-// ============================================================
-// ユーティリティ
-// ============================================================
 function hashSeed(...args) {
   let h = 2166136261 >>> 0;
   const str = args.join(':');
@@ -102,9 +92,6 @@ function toast(msg) {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ============================================================
-// シナリオ生成（computeProperBid >= 14 の手札のみ採用）
-// ============================================================
 function buildDeck() {
   const d = [];
   for (const s of SUITS) for (const r of RANKS) d.push({ suit: s, rank: r, id: s + r });
@@ -154,19 +141,11 @@ function generateScenario(seed) {
       oppHands[i] = deck.splice(0, 10).map(c => ({ ...c }));
     }
 
-    return {
-      seed,
-      hand10,
-      openKitty,
-      opponents: oppHands,
-    };
+    return { seed, hand10, openKitty, opponents: oppHands };
   }
   return null;
 }
 
-// ============================================================
-// 試合状態
-// ============================================================
 function createMatchState(scenario, bid, discard, call, solo) {
   const hands = [[], [], [], [], []];
   hands[0] = scenario.hand10.concat(scenario.openKitty).filter(
@@ -212,7 +191,9 @@ function createMatchState(scenario, bid, discard, call, solo) {
 }
 
 function legalCards(state, seat) {
+  if (!Number.isInteger(seat) || seat < 0 || seat > 4) return [];
   const h = state.hands[seat];
+  if (!h) return [];
   if (!state.trick.length) return h;
   const led = state.trick[0].card.suit;
   const follow = h.filter(c => c.suit === led);
@@ -220,9 +201,11 @@ function legalCards(state, seat) {
 }
 
 function playCardToState(state, seat, card) {
+  if (!Number.isInteger(seat) || seat < 0 || seat > 4) return false;
+  if (!state.hands[seat] || !card || !card.id) return false;
   const hand = state.hands[seat];
   const idx = hand.findIndex(c => c.id === card.id);
-  if (idx < 0) return;
+  if (idx < 0) return false;
   hand.splice(idx, 1);
   if (state.trick.length > 0) {
     const led = state.trick[0].card.suit;
@@ -236,11 +219,9 @@ function playCardToState(state, seat, card) {
     id: card.id,
     seat,
   });
+  return true;
 }
 
-// ============================================================
-// プラン優先プレイ
-// ============================================================
 function buildPlayCtx(state, seat) {
   const deputyPts = !state.contract.solo && state.contract.deputy >= 0
     ? (state.points[state.contract.deputy] || 0)
@@ -274,8 +255,10 @@ function buildPlayCtx(state, seat) {
 function detectForcedLoss(state, card) {
   if (state.trick.length < 4) return false;
   const testTrick = [...state.trick, { seat: 0, card }];
-  const winner = winningEntry(state.contract, state.trickNo, testTrick);
-  if (!winner || winner.seat === 0) return false;
+  let winnerEntry = null;
+  try { winnerEntry = winningEntry(state.contract, state.trickNo, testTrick); } catch { return false; }
+  if (!winnerEntry || !Number.isInteger(winnerEntry.seat)) return false;
+  if (winnerEntry.seat === 0) return false;
   const napPts = state.points[0]
     + (state.contract.solo ? 0 : (state.points[state.contract.deputy] || 0));
   const remaining = 10 - state.trickNo - 1;
@@ -313,6 +296,8 @@ function chooseNapCardWithPlanPriority(state) {
   const slot = plan?.sequence?.[state.trickNo];
   const legal = legalCards(state, 0);
 
+  if (!legal.length) return null;
+
   if (!slot || !slot.card) {
     try { return chooseCardToPlay(buildPlayCtx(state, 0)); }
     catch { return legal[0]; }
@@ -328,17 +313,15 @@ function chooseNapCardWithPlanPriority(state) {
 }
 
 function chooseComCard(state, seat) {
+  const legal = legalCards(state, seat);
+  if (!legal.length) return null;
   try {
     return chooseCardToPlay(buildPlayCtx(state, seat));
   } catch {
-    const legal = legalCards(state, seat);
     return legal[0];
   }
 }
 
-// ============================================================
-// 観戦シミュレーション
-// ============================================================
 async function runWatchSimulation() {
   const state = S.matchState;
   S.currentTrickNo = 0;
@@ -347,15 +330,22 @@ async function runWatchSimulation() {
     const trickNo = state.trickNo;
 
     while (state.trick.length < 5 && !state.finished) {
+      const lastSeat = state.trick.length > 0 ? state.trick[state.trick.length - 1].seat : null;
       const seat = state.trick.length === 0
         ? state.active
-        : (state.trick[state.trick.length - 1].seat + 1) % 5;
+        : (Number.isInteger(lastSeat) ? (lastSeat + 1) % 5 : 0);
+
+      if (!Number.isInteger(seat) || seat < 0 || seat > 4) break;
 
       const chosen = seat === 0
         ? chooseNapCardWithPlanPriority(state)
         : chooseComCard(state, seat);
 
-      playCardToState(state, seat, chosen);
+      if (!chosen) break;
+
+      const ok = playCardToState(state, seat, chosen);
+      if (!ok) break;
+
       await delay(180);
       if (S.aborted) return;
     }
@@ -363,14 +353,27 @@ async function runWatchSimulation() {
     if (state.trick.length < 5) break;
 
     const trickSnapshot = state.trick.slice();
-    const winnerEntry = winningEntry(state.contract, state.trickNo, state.trick);
-    const winner = winnerEntry.seat;
+    let winnerEntry = null;
+    try {
+      winnerEntry = winningEntry(state.contract, state.trickNo, state.trick);
+    } catch (e) {
+      winnerEntry = null;
+    }
+
+    let winner = 0;
+    if (winnerEntry && Number.isInteger(winnerEntry.seat) && winnerEntry.seat >= 0 && winnerEntry.seat < 5) {
+      winner = winnerEntry.seat;
+    } else if (state.trick[0] && Number.isInteger(state.trick[0].seat)) {
+      winner = state.trick[0].seat;
+    }
+
     const taken = state.trick
       .filter(e => POINT.includes(e.card.rank))
       .map(e => e.card);
 
-    state.points[winner.seat] += taken.length;
-    state.taken[winner.seat].push(...taken);
+    if (!state.taken[winner]) state.taken[winner] = [];
+    state.points[winner] += taken.length;
+    state.taken[winner].push(...taken);
     state.active = winner;
     state.trick = [];
     state.trickNo++;
@@ -437,9 +440,6 @@ function resumeFromPause() {
   }
 }
 
-// ============================================================
-// プラン修正
-// ============================================================
 function openRevisionMode() {
   S.revisionDraft = {
     slots: S.currentPlan.sequence.map((s, i) => ({
@@ -499,9 +499,6 @@ function finalizeRevision(trigger, reason) {
   resumeFromPause();
 }
 
-// ============================================================
-// 乖離レポート
-// ============================================================
 function computeReport() {
   const records = S.trickRecords;
   const matches = records.filter(r => !r.deviation).length;
@@ -549,9 +546,6 @@ function computeReport() {
   };
 }
 
-// ============================================================
-// 学習データ保存
-// ============================================================
 async function persistSessionRecord(report) {
   const record = {
     scenarioId: `nap-lab-${S.seed}`,
@@ -603,12 +597,7 @@ async function persistSessionRecord(report) {
 
 // ===== [前半 終了。後半へ続く] =====
 // nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（後半）
-// 後半: 各ステップのレンダリング・モーダル・画面開閉・デバッグ用
-// 修正: 切り順プランはスロットタップ→カード選択モーダル方式、副官期待に現在手札表示
 
-// ============================================================
-// 画面遷移
-// ============================================================
 function resetSession() {
   S.step = 'scenario';
   S.seed = 0;
@@ -687,9 +676,6 @@ function goBack() {
   renderStep();
 }
 
-// ============================================================
-// レンダリング分岐
-// ============================================================
 function renderStep() {
   const shell = $('nap-plan-lab-shell');
   if (!shell) return;
@@ -719,9 +705,6 @@ function bindHeader(shell) {
   shell.querySelector('#lab-next')?.addEventListener('click', goNext);
 }
 
-// ============================================================
-// Step: シナリオ
-// ============================================================
 function renderScenarioStep(shell) {
   const sc = S.scenario;
   const hand = sc.hand10.map(c => cardElHTML(c)).join('');
@@ -740,9 +723,6 @@ function renderScenarioStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// Step: 宣言
-// ============================================================
 function renderBidStep(shell) {
   const sc = S.scenario;
   const hand = sc.hand10.concat(sc.openKitty).map(c => cardElHTML(c)).join('');
@@ -788,9 +768,6 @@ function renderBidStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// Step: 捨て札
-// ============================================================
 function renderDiscardStep(shell) {
   const hand12 = S.scenario.hand10.concat(S.scenario.openKitty);
   const selectedIds = new Set(S.discard.map(c => c.id));
@@ -825,9 +802,6 @@ function renderDiscardStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// Step: 指名カード（手札外から選ぶ）
-// ============================================================
 function renderCallStep(shell) {
   const myHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
     c => !S.discard.some(d => d.id === c.id)
@@ -950,9 +924,6 @@ function renderCallStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// Step: 副官期待カード（現在手札表示付き）
-// ============================================================
 function renderExpectStep(shell) {
   const usedIds = new Set();
   S.scenario.hand10.forEach(c => usedIds.add(c.id));
@@ -961,6 +932,14 @@ function renderExpectStep(shell) {
   if (S.call) usedIds.add(S.call.id);
 
   const expectedSet = new Set(S.expectedCards);
+
+  const currentHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
+    c => !S.discard.some(d => d.id === c.id)
+  );
+  const currentHandHTML = currentHand.map(c =>
+    cardElHTML(c, c.id === S.call?.id ? 'protected' : '')
+  ).join('');
+
   const blocks = SUITS.map(suit => {
     const ranks = RANKS.slice().reverse();
     const buttons = ranks.map(r => {
@@ -977,14 +956,6 @@ function renderExpectStep(shell) {
       </div>`;
   }).join('');
 
-  // ★ 現在の手札を生成
-  const currentHand = S.scenario.hand10.concat(S.scenario.openKitty).filter(
-    c => !S.discard.some(d => d.id === c.id)
-  );
-  const currentHandHTML = currentHand.map(c =>
-    cardElHTML(c, c.id === S.call?.id ? 'protected' : '')
-  ).join('');
-
   shell.innerHTML = `
     <div class="game-screen nap-lab">
       ${stepHeader('副官に期待するカード')}
@@ -994,11 +965,12 @@ function renderExpectStep(shell) {
           <button class="secondary-button" id="expect-clear"
             style="min-height:40px;padding:6px 12px;font-size:12px;">クリア</button>
         </div>
-        <p class="micro-copy" style="margin-bottom:10px;">複数可・0枚でもOK</p>
-        ${blocks}
 
-        <div class="panel-title" style="margin-top:16px;">現在の手札（参考）</div>
+        <div class="panel-title" style="margin-top:12px;">現在の手札（参考）</div>
         <div class="lab-hand-grid lab-hand-grid-sm">${currentHandHTML}</div>
+
+        <p class="micro-copy" style="margin-top:12px;margin-bottom:10px;">複数可・0枚でもOK</p>
+        ${blocks}
       </div>
     </div>`;
 
@@ -1015,9 +987,6 @@ function renderExpectStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// 初期プラン生成
-// ============================================================
 function generateInitialPlan(scenario, bid, discard, call, solo) {
   const myHand = scenario.hand10.concat(scenario.openKitty).filter(
     c => !discard.some(d => d.id === c.id)
@@ -1060,9 +1029,6 @@ function buildNaivePlan(myHand, contract) {
   };
 }
 
-// ============================================================
-// Step: 切り順プラン（スロットタップ→カード選択モーダル方式）
-// ============================================================
 function renderPlanStep(shell) {
   if (!S.initialPlan) {
     S.initialPlan = generateInitialPlan(S.scenario, S.bid, S.discard, S.call, S.solo);
@@ -1089,7 +1055,7 @@ function renderPlanStep(shell) {
       ${stepHeader('切り順プラン')}
       <div class="lab-sticky-info">
         <span>予測: <b>${winCount}勝 ${loseCount}敗</b></span>
-        <span class="micro-copy" style="color:#e6be72;">スロットをタップして配置</span>
+        <span class="micro-copy" style="color:#e6be72;">スロットをタップ</span>
       </div>
       <div class="lab-body" style="padding-top:0;">
         <div class="lab-plan-slots">${slotsHTML}</div>
@@ -1103,7 +1069,6 @@ function renderPlanStep(shell) {
       </div>
     </div>`;
 
-  // スロットのカード欄をタップ → モーダル表示
   shell.querySelectorAll('[data-slot-card]').forEach(el => {
     const idx = Number(el.dataset.slotCard);
     el.onclick = () => {
@@ -1116,7 +1081,6 @@ function renderPlanStep(shell) {
     };
   });
 
-  // WIN/LOSEトグル
   shell.querySelectorAll('[data-toggle]').forEach(btn => {
     const idx = Number(btn.dataset.toggle);
     btn.onclick = (e) => {
@@ -1130,9 +1094,6 @@ function renderPlanStep(shell) {
   bindHeader(shell);
 }
 
-// ============================================================
-// スロット操作モーダル（カード選択・メニュー）
-// ============================================================
 function showSlotCardPicker(slotIdx, shell) {
   const plan = S.currentPlan;
   const usedIds = new Set(plan.sequence.map(s => s.card?.id).filter(Boolean));
@@ -1197,9 +1158,6 @@ function showSlotMenu(slotIdx, shell) {
   document.querySelector('#slot-menu-cancel').onclick = () => closeModal();
 }
 
-// ============================================================
-// Step: 観戦
-// ============================================================
 function renderWatchStep() {
   const shell = $('nap-plan-lab-shell');
   if (!shell) return;
@@ -1251,9 +1209,6 @@ function renderWatchStep() {
   shell.querySelector('#lab-continue').onclick = () => { resumeFromPause(); };
 }
 
-// ============================================================
-// プラン修正モーダル
-// ============================================================
 function renderRevisionModal() {
   const draft = S.revisionDraft;
   if (!draft) return;
@@ -1391,9 +1346,6 @@ function showRevisionReasonModal(revisedSlots) {
   document.querySelector('#rev-r-cancel').onclick = () => { renderRevisionModal(); };
 }
 
-// ============================================================
-// Step: レポート
-// ============================================================
 function renderReportStep(shell) {
   const r = S.report || computeReport();
   const plan = r.planExecution;
@@ -1456,9 +1408,6 @@ function renderReportStep(shell) {
   };
 }
 
-// ============================================================
-// 観戦開始
-// ============================================================
 function startWatch() {
   S.matchState = createMatchState(S.scenario, S.bid, S.discard, S.call, S.solo);
   S.currentTrickNo = 0;
@@ -1471,9 +1420,6 @@ function startWatch() {
   });
 }
 
-// ============================================================
-// モーダル
-// ============================================================
 function showModal(innerHTML) {
   let m = document.getElementById('nap-lab-modal');
   if (!m) {
@@ -1490,9 +1436,6 @@ function closeModal() {
   if (m) m.remove();
 }
 
-// ============================================================
-// 画面開閉
-// ============================================================
 export function openNapPlanLabScreen() {
   const screenIds = [
     'home-screen', 'mode-select-screen', 'extra-menu-screen', 'profile-screen',
@@ -1556,9 +1499,6 @@ function renderError(msg) {
   document.getElementById('lab-error-close').onclick = closeNapPlanLab;
 }
 
-// ============================================================
-// デバッグ用
-// ============================================================
 export function __debugState() { return JSON.parse(JSON.stringify(S)); }
 
 export function __setScenarioForTest(handIds, kittyIds) {
@@ -1573,6 +1513,3 @@ export function __setScenarioForTest(handIds, kittyIds) {
   S.step = 'scenario';
   renderStep();
 }
-
-
-
