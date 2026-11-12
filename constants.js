@@ -12,9 +12,6 @@ export const ALLY_LOSS_PENALTY = -5;
 export const ALLY_WIN_BONUS = 5;
 export const ALLY_BLOCK_BONUS = 2;
 
-// ============================================================
-// ★ 順位点テーブル（ART廃止版）
-// ============================================================
 export const RATING_BASE = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
 export const PLAYOFF_MAX_ITERATIONS = 10;
 
@@ -23,9 +20,6 @@ export const RANK_2_BONUS = 5;
 export const RANK_4_PENALTY = -5;
 export const RANK_5_PENALTY = -25;
 
-// ============================================================
-// ★ プレイ精度指標の定義
-// ============================================================
 export const METRIC_KEYS = [
   'avgValueLoss', 'endgameAccuracy', 'openingAccuracy', 'sameTwoUtilization',
   'trumpEfficiency', 'voidExploitSuccess', 'allTakeAvoidance', 'overtrickAvoidance',
@@ -81,18 +75,23 @@ export const defaultStrategy = () => ({
   experienceBlendRatio: 0.4,
 
   // ============================================================
+  // ★ MECE戦術エンジン用: 有効/無効フラグ
+  // ============================================================
+  enableTacticEngine: true,
+
+  // ============================================================
   // ★ MECE戦術エンジン用: 決定論MCTS
   // ============================================================
   mctsNodeBudget: 5000,
   useDeterministicSeed: 1.0,
 
   // ============================================================
-  // ★ セイム2評価パラメータ
+  // ★ セイム2評価パラメータ（調整済み）
   // ============================================================
   sameTwoThreatWeight: 1.5,
   sameTwoRiskWeight: 1.0,
   sameTwoResidualWeight: 0.8,
-  aCutRiskThreshold: 0.35,
+  aCutRiskThreshold: 0.65,        // ★ 0.35 → 0.65（デフォルト回避、証拠で許可）
   sameTwoAttackChance: 0.55,
   sameTwoDefenseMargin: 0.25,
   sameTwoTrumpBonus: 1.5,
@@ -102,7 +101,7 @@ export const defaultStrategy = () => ({
   sameTwoTimingLate: 0.8,
 
   // ============================================================
-  // 既存パラメータ（変更なし）
+  // 既存パラメータ
   // ============================================================
   bidThreshold: 2.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
@@ -238,9 +237,6 @@ export const pointsTierOf = (pts) => pts === 0 ? 'zero' : pts < 3 ? 'mid' : 'hig
 export const experienceConfidence = (samples) => Math.min(1, samples / 10);
 export const blendWithExperience = (p, exp) => exp && exp.samples >= 3 ? (p * 0.7 + (exp.wins / exp.samples) * 0.3) : p;
 
-// ============================================================
-// ★ 順位点計算（同着は平均配分・ART廃止版）
-// ============================================================
 export const matchRatingChanges = (matchScores, abandonedSeats = [], options = {}) => {
   const abandoned = new Set(Array.isArray(abandonedSeats) ? abandonedSeats : []);
   const forceBreak = options.forceBreakTie === true;
@@ -392,9 +388,6 @@ export const clampToBounds = (key, value) => {
   return Math.max(bounds[0], Math.min(bounds[1], value));
 };
 
-// ============================================================
-// ★ パラメータ境界（新規追加パラメータも含む）
-// ============================================================
 export const PARAM_BOUNDS = {
   // 期待値目的関数
   W_WIN: [5.0, 30.0], W_POINTS: [0.5, 5.0], W_TRICKS: [0.1, 2.0], W_ALLTAKE: [10.0, 50.0],
@@ -405,11 +398,12 @@ export const PARAM_BOUNDS = {
   mctsNodeBudget: [1000, 20000], useDeterministicSeed: [0.0, 1.0],
   // セイム2
   sameTwoThreatWeight: [0.5, 3.0], sameTwoRiskWeight: [0.5, 2.0], sameTwoResidualWeight: [0.3, 1.5],
-  aCutRiskThreshold: [0.1, 0.7], sameTwoAttackChance: [0.3, 0.8],
+  aCutRiskThreshold: [0.1, 0.9],  // ★ 拡張
+  sameTwoAttackChance: [0.3, 0.8],
   sameTwoDefenseMargin: [0.1, 0.5], sameTwoTrumpBonus: [0.5, 3.0], sameTwoSideBonus: [0.3, 2.0],
   sameTwoTimingEarly: [0.5, 2.5], sameTwoTimingMid: [0.5, 2.0], sameTwoTimingLate: [0.3, 1.5],
 
-  // 既存パラメータ（変更なし）
+  // 既存パラメータ
   bidThreshold: [2, 3.5], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
   safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
@@ -558,8 +552,5 @@ export const crossoverStrategy = (parentA, parentB) => {
   return child;
 };
 
-// ============================================================
-// ★ プレイフェーズ時間制限
-// ============================================================
 export const PLAY_FREE_SECONDS = 5;
 export const PLAY_POOL_SECONDS = 20;
