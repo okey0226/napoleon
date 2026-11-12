@@ -1,11 +1,10 @@
-// combinations.js — カード組み合わせ構造のMECEカタログ
-// 新規ファイル: 手札の組み合わせ構造（11クラス×22構造×8機能×24実行戦術）を検出・評価
-// 純関数のみ。副作用なし。乱数なし（決定論保証）。
+// combinations.js — カード組み合わせ構造のMECEカタログ（既存ファイル修正）
+// 修正: SX1影狩り体制の精密化、SX1d影狩り防御の追加、E3-x状況依存スコア、SF3/SF4厳密化
 
 import { SUITS, RANKS, FACE, sameColorSuitOf } from './constants.js';
 
 // ============================================================
-// 公開: カード役割の11クラス分類（素材の基礎）
+// 公開: カード役割の11クラス分類
 // ============================================================
 export function classifyCardRole(card, contract) {
   if (!card) return 'discard';
@@ -15,10 +14,10 @@ export function classifyCardRole(card, contract) {
   const trump = isNT ? null : contract?.suit;
 
   if (card.id === '♠A') return 'mighty';
-  if (card.id === '♥Q') return 'shadow'; // よろめき
+  if (card.id === '♥Q') return 'shadow';
   if (!isNT && rank === 'J' && suit === trump) return 'trumpJ';
   if (!isNT && rank === 'J' && suit === sameColorSuitOf(trump)) return 'sameColorJ';
-  if (rank === '2') return 'two'; // セイム2候補
+  if (rank === '2') return 'two';
   if (!isNT && suit === trump && rank === 'A') return 'trumpA';
   if (!isNT && suit === trump && rank === 'K') return 'trumpK';
   if (rank === 'A') return 'sideA';
@@ -47,6 +46,7 @@ export function aggregateCardRoles(hand, contract) {
 
 // ============================================================
 // 公開: 手札の組み合わせ構造検出（22構造 × 6グループ）
+// ★ 修正: SX1（影狩り体制）と SX1d（影狩り防御）を分離
 // ============================================================
 export function detectCombinations(hand, contract) {
   if (!Array.isArray(hand) || hand.length === 0) return [];
@@ -105,13 +105,35 @@ export function detectCombinations(hand, contract) {
   }
 
   // ─────────────────────────────────────
-  // グループ4: 特殊異スート（SX1-SX5）
+  // グループ4: 特殊異スート（SX1/SX1d/SX2-SX5）
+  // ★ 修正: 影狩り体制と影狩り防御を分離
   // ─────────────────────────────────────
   const hasMighty = hand.some(c => c.id === '♠A');
   const hasShadow = hand.some(c => c.id === '♥Q');
-  if (hasMighty && hasShadow) {
-    result.push({ id: 'SX1', cards: hand.filter(c => c.id === '♠A' || c.id === '♥Q'), group: 'SX', function: 'shadow_hunt_setup' });
+
+  // SX1: 影狩り体制（♥Q持ち、♠Aなし）→ 敵の♠Aを狩れる
+  if (hasShadow && !hasMighty) {
+    result.push({
+      id: 'SX1',
+      cards: hand.filter(c => c.id === '♥Q'),
+      group: 'SX',
+      function: 'shadow_hunt_setup',
+      canHunt: true,
+    });
   }
+
+  // SX1d: 影狩り防御（♠A + ♥Q）→ 両方制御、狩りも狩られもしない
+  if (hasMighty && hasShadow) {
+    result.push({
+      id: 'SX1d',
+      cards: hand.filter(c => c.id === '♠A' || c.id === '♥Q'),
+      group: 'SX',
+      function: 'shadow_defense',
+      canHunt: false,
+    });
+  }
+
+  // SX2: マイティ+正J
   if (!isNT) {
     const trumpJ = hand.find(c => c.rank === 'J' && c.suit === trump);
     const sameColorJ = hand.find(c => c.rank === 'J' && c.suit === sameColorSuitOf(trump));
@@ -132,6 +154,7 @@ export function detectCombinations(hand, contract) {
 
   // ─────────────────────────────────────
   // グループ5: 機能組み合わせ（SF1-SF4）
+  // ★ 修正: SF3/SF4の判定を厳密化
   // ─────────────────────────────────────
   for (const suit of SUITS) {
     const suitCards = hand.filter(c => c.suit === suit);
@@ -142,17 +165,24 @@ export function detectCombinations(hand, contract) {
     if (ranks.includes('A') && ranks.includes('2') && ranks.includes('K')) {
       result.push({ id: 'SF2', suit, cards: suitCards.filter(c => ['A','2','K'].includes(c.rank)), group: 'SF', function: 'same_two_guard_plus' });
     }
-    if (suitCards.length >= 4 && ranks.includes('A')) {
-      result.push({ id: 'SF4', suit, cards: suitCards.filter(c => ['A','K','Q','J','10','9','8','7','6','5','4','3','2'].includes(c.rank)).slice(0, 4), group: 'SF', function: 'long_suit_growth' });
+    // ★ 修正: SF4は「5枚以上 + A持ち」または「4枚 + 高札2枚以上」
+    if (suit !== trump) {
+      if (suitCards.length >= 5 && ranks.includes('A')) {
+        result.push({ id: 'SF4', suit, cards: suitCards.slice(0, 5), group: 'SF', function: 'long_suit_growth', strength: 'strong' });
+      } else if (suitCards.length >= 4 && ranks.includes('A') && (ranks.includes('K') || ranks.includes('Q'))) {
+        result.push({ id: 'SF4', suit, cards: suitCards.slice(0, 4), group: 'SF', function: 'long_suit_growth', strength: 'moderate' });
+      }
     }
   }
-  // SF3: クロスラフ体制（切札複数 + 異スートボイド）
+  // SF3: クロスラフ体制（切札4+ + 異スートボイド候補2つ以上）
   if (!isNT) {
     const trumps = hand.filter(c => c.suit === trump);
-    if (trumps.length >= 3) {
+    if (trumps.length >= 4) {
       const shortSuits = SUITS.filter(s => s !== trump && hand.filter(c => c.suit === s).length <= 1);
-      if (shortSuits.length >= 1) {
-        result.push({ id: 'SF3', cards: trumps, shortSuits, group: 'SF', function: 'cross_ruff_setup' });
+      if (shortSuits.length >= 2) {
+        result.push({ id: 'SF3', cards: trumps, shortSuits, group: 'SF', function: 'cross_ruff_setup', quality: 'full' });
+      } else if (shortSuits.length >= 1 && trumps.length >= 5) {
+        result.push({ id: 'SF3', cards: trumps, shortSuits, group: 'SF', function: 'cross_ruff_setup', quality: 'partial' });
       }
     }
   }
@@ -176,17 +206,18 @@ export function detectCombinations(hand, contract) {
 
 // ============================================================
 // 公開: 構造から機能の導出（8機能）
+// ★ 修正: SX1d（影狩り防御）はFN3に加算しない
 // ============================================================
 export function deriveFunctions(combinations) {
   const functions = {
-    FN1_guaranteed_tricks: { value: 0, sources: [] },   // 確定Nトリック
-    FN2_probability_boost: { value: 0, sources: [] },   // 確率向上
-    FN3_shadow_hunt: { value: 0, sources: [] },         // 影狩り体制
-    FN4_trump_two_stage: { value: 0, sources: [] },     // 切札二段構え
-    FN5_same_two_guard: { value: 0, sources: [] },      // セイム2ガード
-    FN6_cross_ruff: { value: 0, sources: [] },          // クロスラフ体制
-    FN7_suit_dominance: { value: 0, sources: [] },      // スート支配
-    FN8_point_concentration: { value: 0, sources: [] }, // 点札集中
+    FN1_guaranteed_tricks: { value: 0, sources: [] },
+    FN2_probability_boost: { value: 0, sources: [] },
+    FN3_shadow_hunt: { value: 0, sources: [] },
+    FN4_trump_two_stage: { value: 0, sources: [] },
+    FN5_same_two_guard: { value: 0, sources: [] },
+    FN6_cross_ruff: { value: 0, sources: [] },
+    FN7_suit_dominance: { value: 0, sources: [] },
+    FN8_point_concentration: { value: 0, sources: [] },
   };
 
   for (const combo of (combinations || [])) {
@@ -198,10 +229,11 @@ export function deriveFunctions(combinations) {
       functions.FN2_probability_boost.value += 0.5;
       functions.FN2_probability_boost.sources.push(combo.id);
     }
-    if (combo.id === 'SX1') {
+    if (combo.id === 'SX1') {  // ★ 修正: 影狩り体制（狩れる方）のみ
       functions.FN3_shadow_hunt.value += 1.0;
       functions.FN3_shadow_hunt.sources.push(combo.id);
     }
+    // SX1d（影狩り防御）はFN3に加算しない
     if (combo.id === 'SX3' || combo.id === 'SX4') {
       functions.FN4_trump_two_stage.value += 0.8;
       functions.FN4_trump_two_stage.sources.push(combo.id);
@@ -211,7 +243,8 @@ export function deriveFunctions(combinations) {
       functions.FN5_same_two_guard.sources.push(combo.id);
     }
     if (combo.id === 'SF3') {
-      functions.FN6_cross_ruff.value += 0.8;
+      const bonus = combo.quality === 'full' ? 0.8 : 0.5;
+      functions.FN6_cross_ruff.value += bonus;
       functions.FN6_cross_ruff.sources.push(combo.id);
     }
     if (combo.id === 'SR1' || combo.id === 'SR2' || combo.id === 'SF2') {
@@ -228,12 +261,16 @@ export function deriveFunctions(combinations) {
 
 // ============================================================
 // 公開: 実行戦術の候補生成（24戦術）
+// ★ 修正: E3-xを状況依存スコア化、SX1dの影狩り待機を除外
 // ============================================================
 export function generateCombinationTactics(ctx, combinations, functions) {
   const tactics = [];
   const trickNo = ctx?.trickNo ?? 0;
   const phase = trickNo <= 2 ? 'early' : trickNo <= 5 ? 'mid' : trickNo <= 8 ? 'late' : 'final';
   const trickValue = (ctx?.trick || []).filter(t => t.card && FACE.includes(t.card.rank)).length;
+  const currentNapPoints = ctx?.currentNapPoints ?? 0;
+  const contractNum = ctx?.contract?.num ?? 13;
+  const pointsNeeded = Math.max(0, contractNum - currentNapPoints);
 
   // ─────────────────────────────────────
   // FN1: 確定Nトリック系（6戦術）
@@ -281,16 +318,30 @@ export function generateCombinationTactics(ctx, combinations, functions) {
 
   // ─────────────────────────────────────
   // FN3: 影狩り体制系（3戦術）
+  // ★ 修正: 状況依存スコア、SX1dは除外済み（FN3=0）
   // ─────────────────────────────────────
   if (functions.FN3_shadow_hunt.value > 0) {
-    const enemyMightyPlayed = (ctx?.playedCards || []).some(c => c.id === '♠A');
-    const enemyMightyInTrick = (ctx?.trick || []).some(t => t.card?.id === '♠A');
-    if (enemyMightyInTrick) {
-      tactics.push({ id: 'E3-2', name: '影狩り発動', score: 3.5, source: 'SX1+trick' });
-    } else if (enemyMightyPlayed) {
+    const playedCards = ctx?.playedCards || [];
+    const trick = ctx?.trick || [];
+    const enemyMightyInTrick = trick.some(t => t.card?.id === '♠A');
+    const enemyMightyPlayed = playedCards.some(c => c.id === '♠A');
+    const shadowInLegal = (ctx?.legal || []).some(c => c.id === '♥Q');
+
+    // E3-2: 影狩り発動（敵♠Aが現在トリックに）
+    if (enemyMightyInTrick && shadowInLegal) {
+      const pointsBonus = trickValue * 0.5;
+      tactics.push({ id: 'E3-2', name: '影狩り発動', score: 3.5 + pointsBonus, source: 'SX1+trick' });
+    }
+    // E3-3: よろめき温存（敵♠Aが場に出た後）
+    else if (enemyMightyPlayed) {
       tactics.push({ id: 'E3-3', name: 'よろめき温存', score: 1.0, source: 'SX1' });
-    } else {
-      tactics.push({ id: 'E3-1', name: '影狩り待機', score: 2.0, source: 'SX1' });
+    }
+    // E3-1: 影狩り待機（敵♠A未出）
+    else {
+      // 終盤で必要点が高いなら温存より先に動く
+      const urgency = pointsNeeded / Math.max(1, 10 - trickNo);
+      const holdScore = urgency >= 1.5 ? 1.2 : 2.0;
+      tactics.push({ id: 'E3-1', name: '影狩り待機', score: holdScore, source: 'SX1' });
     }
   }
 
@@ -366,7 +417,7 @@ function countRemainingTwos(ctx) {
 }
 
 // ============================================================
-// 公開: 統合エントリ（構造検出 + 機能導出 + 戦術生成）
+// 公開: 統合エントリ
 // ============================================================
 export function analyzeCombinations(ctx) {
   const hand = ctx?.hand || [];
@@ -378,7 +429,7 @@ export function analyzeCombinations(ctx) {
 }
 
 // ============================================================
-// 公開: デバッグ用情報
+// 公開: デバッグ用
 // ============================================================
 export function debugCombinations(ctx) {
   const analysis = analyzeCombinations(ctx);
@@ -395,13 +446,14 @@ export function debugCombinations(ctx) {
 }
 
 // ============================================================
-// 公開: 構造・機能・戦術のラベル辞書
+// 公開: ラベル辞書
 // ============================================================
 export const STRUCTURE_LABELS = {
   ST1: 'A-K連続', ST2: 'K-Q連続', ST3: 'A-K-Q連続', ST4: 'A-K-Q-J連続', ST5: 'A-K-Q-J-10連続',
   SN1: 'A-Q非連続', SN2: 'A-J非連続', SN3: 'K-J非連続',
   SR1: 'ダブルA', SR2: 'ダブルK', SR3: 'ダブルQ',
-  SX1: 'マイティ+よろめき', SX2: 'マイティ+正J', SX3: '正J+裏J', SX4: '正J+切札A', SX5: '3役',
+  SX1: '影狩り体制（敵マイティ狩り）', SX1d: '影狩り防御（両制御）',
+  SX2: 'マイティ+正J', SX3: '正J+裏J', SX4: '正J+切札A', SX5: '3役',
   SF1: 'A+2（セイム2ガード）', SF2: 'A+2+K', SF3: 'クロスラフ体制', SF4: 'ロングスート育成',
   SP1: '点札集中（同スート3+）', SP2: '点札分散（複数スート）',
 };
