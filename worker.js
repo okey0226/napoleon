@@ -19,6 +19,9 @@ function safeJsonParse(str, fallback = null) {
 }
 
 export const schema = [
+  // ============================================================
+  // 既存テーブル（変更なし）
+  // ============================================================
   "CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, player_id TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS player_stats (user_id TEXT PRIMARY KEY, exact_wins INTEGER NOT NULL DEFAULT 0, bold_exact_wins INTEGER NOT NULL DEFAULT 0, solo_wins INTEGER NOT NULL DEFAULT 0, dramatic_plays INTEGER NOT NULL DEFAULT 0)",
@@ -50,6 +53,26 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS ai_hall_of_fame (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, params TEXT NOT NULL, avg_rating_delta REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)",
+
+  // ============================================================
+  // ★ 新規: MECE戦術エンジン用テーブル（5個）
+  // ============================================================
+  "CREATE TABLE IF NOT EXISTS ai_tactic_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, tactic_id TEXT NOT NULL, situation_hash TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ai_tactic_exp_key ON ai_tactic_experience(tactic_id, situation_hash)",
+  "CREATE INDEX IF NOT EXISTS ai_tactic_exp_tactic ON ai_tactic_experience(tactic_id, wins DESC)",
+  "CREATE TABLE IF NOT EXISTS ai_bid_tactic_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, bid_tactic_id TEXT NOT NULL, situation_hash TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, same_two_risk REAL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ai_bid_tactic_exp_key ON ai_bid_tactic_experience(bid_tactic_id, situation_hash)",
+  "CREATE TABLE IF NOT EXISTS ai_same_two_events (id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT NOT NULL, round INTEGER NOT NULL, trick_no INTEGER NOT NULL, holder_seat INTEGER NOT NULL, target_rank TEXT NOT NULL, target_suit TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS ai_same_two_match ON ai_same_two_events(match_id, round)",
+  "CREATE INDEX IF NOT EXISTS ai_same_two_holder ON ai_same_two_events(holder_seat, result)",
+  "CREATE TABLE IF NOT EXISTS ai_uncovered_situations (id INTEGER PRIMARY KEY AUTOINCREMENT, situation_hash TEXT NOT NULL, situation_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS ai_uncovered_hash ON ai_uncovered_situations(situation_hash)",
+  "CREATE TABLE IF NOT EXISTS ai_tactic_history (id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT NOT NULL, round INTEGER NOT NULL, trick_no INTEGER NOT NULL, situation_hash TEXT NOT NULL, selected_tactic_id TEXT NOT NULL, ev REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS ai_tactic_history_match ON ai_tactic_history(match_id, round, trick_no)",
+
+  // ============================================================
+  // 既存カラム追加
+  // ============================================================
   "ALTER TABLE players ADD COLUMN dorm_period INTEGER DEFAULT 310",
   "ALTER TABLE players ADD COLUMN favorite_song TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
@@ -69,6 +92,19 @@ export const schema = [
   "ALTER TABLE ai_strategy_log ADD COLUMN deputy_signal_success_rate REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN avg_stage_count REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN role_accuracy REAL DEFAULT 0",
+
+  // ============================================================
+  // ★ 新規: ai_play_experience に戦術列を追加
+  // ============================================================
+  "ALTER TABLE ai_play_experience ADD COLUMN tactic_id TEXT DEFAULT 'UNKNOWN'",
+  "ALTER TABLE ai_play_experience ADD COLUMN situation_hash TEXT DEFAULT ''",
+  "ALTER TABLE ai_play_experience ADD COLUMN intent_category TEXT DEFAULT 'UNKNOWN'",
+  "ALTER TABLE ai_bid_experience ADD COLUMN bid_tactic_id TEXT DEFAULT 'UNKNOWN'",
+  "ALTER TABLE ai_bid_experience ADD COLUMN same_two_risk REAL DEFAULT 0",
+
+  // ============================================================
+  // COM戦専用（既存）
+  // ============================================================
   "CREATE TABLE IF NOT EXISTS player_com_match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after REAL NOT NULL, placement INTEGER NOT NULL, tie_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS player_com_match_history_user ON player_com_match_history(user_id, id DESC)",
   "CREATE TABLE IF NOT EXISTS player_com_performance (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, declarer_successes INTEGER NOT NULL DEFAULT 0, deputy_attempts INTEGER NOT NULL DEFAULT 0, deputy_successes INTEGER NOT NULL DEFAULT 0)",
@@ -76,8 +112,16 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS player_com_ally_feed (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0, streak_current INTEGER NOT NULL DEFAULT 0, streak_best INTEGER NOT NULL DEFAULT 0)",
+
+  // ============================================================
+  // NAPプランラボ（既存）
+  // ============================================================
   "CREATE TABLE IF NOT EXISTS nap_lab_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, seed INTEGER, record_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS nap_lab_sessions_user ON nap_lab_sessions(user_id, id DESC)",
+
+  // ============================================================
+  // quiz-api スキーマ
+  // ============================================================
   ...quizSchema
 ];
 
@@ -104,18 +148,21 @@ async function loadBotStrategy(env) {
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
-  const map = { bids: {}, calls: {}, plays: {}, stateCache: {} };
+  const map = { bids: {}, calls: {}, plays: {}, stateCache: {}, tactics: {} };
   try {
-    const [bids, calls, plays, states] = await Promise.all([
+    const [bids, calls, plays, states, tactics] = await Promise.all([
       env.DB.prepare("SELECT strength_key, trump_type, num, wins, samples FROM ai_bid_experience WHERE samples > 0").all(),
       env.DB.prepare("SELECT call_id, trump_suit, wins, samples FROM ai_call_experience WHERE samples > 0").all(),
       env.DB.prepare("SELECT role, phase, points_tier, rank_tier, wins, samples FROM ai_play_experience WHERE samples > 0").all(),
-      env.DB.prepare("SELECT state_hash, card_win_rates, samples FROM ai_state_experience ORDER BY updated_at DESC LIMIT 2000").all()
+      env.DB.prepare("SELECT state_hash, card_win_rates, samples FROM ai_state_experience ORDER BY updated_at DESC LIMIT 2000").all(),
+      // ★ 新規: 戦術経験をロード
+      env.DB.prepare("SELECT tactic_id, situation_hash, wins, samples FROM ai_tactic_experience WHERE samples > 0 ORDER BY updated_at DESC LIMIT 5000").all()
     ]);
     for (const r of (bids.results || [])) map.bids[`${r.strength_key}:${r.trump_type}:${r.num}`] = { wins: r.wins, samples: r.samples };
     for (const r of (calls.results || [])) map.calls[`${r.call_id}:${r.trump_suit}`] = { wins: r.wins, samples: r.samples };
     for (const r of (plays.results || [])) map.plays[`${r.role}:${r.phase}:${r.points_tier}:${r.rank_tier}`] = { wins: r.wins, samples: r.samples };
     for (const r of (states.results || [])) map.stateCache[r.state_hash] = { card_win_rates: r.card_win_rates, samples: r.samples };
+    for (const r of (tactics.results || [])) map.tactics[`${r.tactic_id}:${r.situation_hash}`] = { wins: r.wins, samples: r.samples };
   } catch (e) { console.warn("experience load failed", e); }
   __cachedExperience = map;
   __cachedExperienceTime = Date.now();
@@ -176,7 +223,13 @@ export default {
             env.DB.prepare("DELETE FROM ai_state_experience"),
             env.DB.prepare("DELETE FROM ai_hall_of_fame"),
             env.DB.prepare("DELETE FROM quiz_candidates"),
-            env.DB.prepare("DELETE FROM ai_discard_metrics")
+            env.DB.prepare("DELETE FROM ai_discard_metrics"),
+            // ★ 新規: 戦術エンジン関連も削除
+            env.DB.prepare("DELETE FROM ai_tactic_experience"),
+            env.DB.prepare("DELETE FROM ai_bid_tactic_experience"),
+            env.DB.prepare("DELETE FROM ai_same_two_events"),
+            env.DB.prepare("DELETE FROM ai_uncovered_situations"),
+            env.DB.prepare("DELETE FROM ai_tactic_history")
           ]);
           __cachedBotStrategy = null; __cachedBotStrategyTime = 0;
           __cachedExperience = null; __cachedExperienceTime = 0;
@@ -195,7 +248,7 @@ export default {
       }
 
       // ============================================================
-      // ★ NAPプランラボ セッション保存 & AI学習反映
+      // NAPプランラボ セッション保存 & AI学習反映（既存）
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/nap-lab/save") {
         const token = request.headers.get("x-session-token");
@@ -205,15 +258,12 @@ export default {
         let body;
         try { body = await request.json(); } catch { return response({ error: "invalid" }, { status: 400 }); }
         try {
-          // 1. セッション保存
           await env.DB.prepare(
             "INSERT INTO nap_lab_sessions(user_id, seed, record_json) VALUES(?,?,?)"
           ).bind(userId, Number(body.seed) || 0, JSON.stringify(body)).run();
 
-          // 2. ★ 人間の切り順（状態経験）をAIに学習させる
           const statements = [];
           const stateExperiences = body.stateExperiences || [];
-          
           for (const exp of stateExperiences) {
             if (!exp.hash || !exp.rates) continue;
             statements.push(
@@ -229,7 +279,6 @@ export default {
             );
           }
 
-          // 3. ★ プレイ判断（役割・フェーズ等）をAIに学習させる
           const playDecisions = body.playDecisions || [];
           if (playDecisions.length > 0) {
             const agg = {};
@@ -253,7 +302,6 @@ export default {
 
           if (statements.length > 0) {
             await env.DB.batch(statements);
-            // キャッシュを無効化して、次回のマッチから最新の学習結果を使うようにする
             __cachedExperience = null;
             __cachedExperienceTime = 0;
           }
@@ -266,7 +314,7 @@ export default {
       }
 
       // ============================================================
-      // ★ NAPプランラボ 学習統計取得（フロントの進捗バー用）
+      // NAPプランラボ 学習統計取得（既存）
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/nap-lab/learning-stats") {
         const token = request.headers.get("x-session-token");
@@ -287,6 +335,104 @@ export default {
             } catch {}
           }
           return response({ approved, revised, total: approved + revised });
+        } catch (e) {
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ 新規: 戦術経験の取得
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/ai/tactic-experience") {
+        try {
+          const tacticId = url.searchParams.get("tacticId");
+          if (tacticId) {
+            const { results } = await env.DB.prepare(
+              "SELECT * FROM ai_tactic_experience WHERE tactic_id=? ORDER BY samples DESC LIMIT 100"
+            ).bind(tacticId).all();
+            return response(results || []);
+          }
+          const { results } = await env.DB.prepare(
+            "SELECT tactic_id, SUM(wins) AS wins, SUM(samples) AS samples FROM ai_tactic_experience GROUP BY tactic_id ORDER BY samples DESC LIMIT 200"
+          ).all();
+          return response(results || []);
+        } catch (e) {
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ 新規: 戦術別統計（勝率付き）
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/ai/tactic-stats") {
+        try {
+          const { results } = await env.DB.prepare(
+            `SELECT tactic_id, 
+                    SUM(wins) AS wins, 
+                    SUM(samples) AS samples,
+                    (SUM(wins) * 1.0 / MAX(SUM(samples), 1)) AS win_rate
+             FROM ai_tactic_experience 
+             WHERE samples >= 5
+             GROUP BY tactic_id 
+             ORDER BY win_rate DESC, samples DESC 
+             LIMIT 200`
+          ).all();
+          return response(results || []);
+        } catch (e) {
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ 新規: セイム2イベント取得
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/ai/same-two-events") {
+        try {
+          const matchId = url.searchParams.get("matchId");
+          if (matchId) {
+            const { results } = await env.DB.prepare(
+              "SELECT * FROM ai_same_two_events WHERE match_id=? ORDER BY round, trick_no"
+            ).bind(matchId).all();
+            return response(results || []);
+          }
+          const { results } = await env.DB.prepare(
+            `SELECT target_rank, target_suit, result, COUNT(*) AS count 
+             FROM ai_same_two_events 
+             GROUP BY target_rank, target_suit, result 
+             ORDER BY count DESC`
+          ).all();
+          return response(results || []);
+        } catch (e) {
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ 新規: 未カバー状況の取得（開発用）
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/ai/uncovered-situations") {
+        try {
+          const limit = parseInt(url.searchParams.get("limit")) || 50;
+          const { results } = await env.DB.prepare(
+            "SELECT * FROM ai_uncovered_situations ORDER BY created_at DESC LIMIT ?"
+          ).bind(limit).all();
+          return response(results || []);
+        } catch (e) {
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ 新規: 戦術履歴の取得
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/ai/tactic-history") {
+        try {
+          const matchId = url.searchParams.get("matchId");
+          if (!matchId) return response({ error: 'matchId required' }, { status: 400 });
+          const { results } = await env.DB.prepare(
+            "SELECT * FROM ai_tactic_history WHERE match_id=? ORDER BY round, trick_no"
+          ).bind(matchId).all();
+          return response(results || []);
         } catch (e) {
           return response({ error: e.message }, { status: 500 });
         }
@@ -425,10 +571,9 @@ export default {
           history: historyPage.results
         });
       }
-// ===== [worker.js 前半 終了。後半へ続く] =====
-// ===== [worker.js 後半 開始] =====
+
       // ============================================================
-      // /api/match/finish（レート戦 マッチ結果永続化）
+      // /api/match/finish
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/match/finish") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -491,7 +636,7 @@ export default {
       }
 
       // ============================================================
-      // /api/com-match/finish（COM戦専用・非公開）
+      // /api/com-match/finish
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/com-match/finish") {
         const token = request.headers.get("x-session-token");
@@ -552,7 +697,7 @@ export default {
       }
 
       // ============================================================
-      // /api/account/me/com（COM戦専用プロフィール）
+      // /api/account/me/com
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me/com") {
         const token = request.headers.get("x-session-token");
@@ -589,7 +734,7 @@ export default {
       }
 
       // ============================================================
-      // /api/ai/learn（詳細版）
+      // /api/ai/learn
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/learn") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -639,7 +784,7 @@ export default {
       }
 
       // ============================================================
-      // /api/ai/report（詳細版）
+      // /api/ai/report
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/report") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -702,7 +847,7 @@ export default {
       }
 
       // ============================================================
-      // AI戦略系
+      // AI戦略系（既存）
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") {
         const limit = parseInt(url.searchParams.get("limit")) || 10;
@@ -764,8 +909,8 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-
-// ===== [worker.js 後半（WebSocketロジック）] =====
+// ===== [worker.js 前半 終了] =====
+// ===== [worker.js 後半 開始] =====
 
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
@@ -1584,7 +1729,8 @@ function buildBotContext(m, seat) {
   const p = m.seats[seat];
   const legal = legalCards(m, seat);
   const contract = { ...m.contract };
-  const params = { ...(m.botStrategy || defaultStrategy()), maxThinkTimeMs: 2000 };
+  // ★ MECE戦術エンジンを明示的に有効化
+  const params = { ...(m.botStrategy || defaultStrategy()), maxThinkTimeMs: 2000, enableTacticEngine: true };
   return {
     hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract,
     playedCards: m.playedCards, voids: m.voids, seat, deputy: m.contract.deputy,
@@ -1601,7 +1747,8 @@ function buildBotContext(m, seat) {
     points: m.seats.map(s => s.points || 0),
     allianceKittyPoints: m.allianceKittyPoints || 0,
     bidHistory: m.bidHistory || [],
-    matchScores: m.matchScores || [0,0,0,0,0],
+    matchScores: m.matchScores || [0, 0, 0, 0, 0],
+    round: m.round || 1,
     players: m.seats.map(s => ({ handCount: s.hand.length }))
   };
 }
@@ -2149,4 +2296,4 @@ export const room = {
   }
 };
 // ===== [worker.js 完成] =====
-    
+
