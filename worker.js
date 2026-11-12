@@ -1,4 +1,8 @@
 // ===== [worker.js 前半 開始] =====
+// worker.js (MECE戦術エンジン統合版・不具合修正版)
+// 修正⑦: /api/ai/learn /api/ai/report で tactic_id/situation_hash/intent_category/bid_tactic_id/same_two_risk をバインド
+// 修正⑧: loadExperience で各テーブル個別 try/catch
+
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard,
@@ -19,9 +23,6 @@ function safeJsonParse(str, fallback = null) {
 }
 
 export const schema = [
-  // ============================================================
-  // 既存テーブル（変更なし）
-  // ============================================================
   "CREATE TABLE IF NOT EXISTS players (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, player_id TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS player_stats (user_id TEXT PRIMARY KEY, exact_wins INTEGER NOT NULL DEFAULT 0, bold_exact_wins INTEGER NOT NULL DEFAULT 0, solo_wins INTEGER NOT NULL DEFAULT 0, dramatic_plays INTEGER NOT NULL DEFAULT 0)",
@@ -54,9 +55,7 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)",
 
-  // ============================================================
-  // ★ 新規: MECE戦術エンジン用テーブル（5個）
-  // ============================================================
+  // MECE戦術エンジン用テーブル
   "CREATE TABLE IF NOT EXISTS ai_tactic_experience (id INTEGER PRIMARY KEY AUTOINCREMENT, tactic_id TEXT NOT NULL, situation_hash TEXT NOT NULL, wins INTEGER NOT NULL DEFAULT 0, samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS ai_tactic_exp_key ON ai_tactic_experience(tactic_id, situation_hash)",
   "CREATE INDEX IF NOT EXISTS ai_tactic_exp_tactic ON ai_tactic_experience(tactic_id, wins DESC)",
@@ -70,9 +69,7 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS ai_tactic_history (id INTEGER PRIMARY KEY AUTOINCREMENT, match_id TEXT NOT NULL, round INTEGER NOT NULL, trick_no INTEGER NOT NULL, situation_hash TEXT NOT NULL, selected_tactic_id TEXT NOT NULL, ev REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS ai_tactic_history_match ON ai_tactic_history(match_id, round, trick_no)",
 
-  // ============================================================
-  // 既存カラム追加
-  // ============================================================
+  // カラム追加
   "ALTER TABLE players ADD COLUMN dorm_period INTEGER DEFAULT 310",
   "ALTER TABLE players ADD COLUMN favorite_song TEXT DEFAULT ''",
   "ALTER TABLE players ADD COLUMN career TEXT DEFAULT ''",
@@ -93,18 +90,15 @@ export const schema = [
   "ALTER TABLE ai_strategy_log ADD COLUMN avg_stage_count REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN role_accuracy REAL DEFAULT 0",
 
-  // ============================================================
-  // ★ 新規: ai_play_experience に戦術列を追加
-  // ============================================================
+  // ★ 修正⑦: ai_play_experience に戦術列
   "ALTER TABLE ai_play_experience ADD COLUMN tactic_id TEXT DEFAULT 'UNKNOWN'",
   "ALTER TABLE ai_play_experience ADD COLUMN situation_hash TEXT DEFAULT ''",
   "ALTER TABLE ai_play_experience ADD COLUMN intent_category TEXT DEFAULT 'UNKNOWN'",
+  // ★ 修正⑦: ai_bid_experience に競り戦術列
   "ALTER TABLE ai_bid_experience ADD COLUMN bid_tactic_id TEXT DEFAULT 'UNKNOWN'",
   "ALTER TABLE ai_bid_experience ADD COLUMN same_two_risk REAL DEFAULT 0",
 
-  // ============================================================
-  // COM戦専用（既存）
-  // ============================================================
+  // COM戦専用
   "CREATE TABLE IF NOT EXISTS player_com_match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after REAL NOT NULL, placement INTEGER NOT NULL, tie_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS player_com_match_history_user ON player_com_match_history(user_id, id DESC)",
   "CREATE TABLE IF NOT EXISTS player_com_performance (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, declarer_successes INTEGER NOT NULL DEFAULT 0, deputy_attempts INTEGER NOT NULL DEFAULT 0, deputy_successes INTEGER NOT NULL DEFAULT 0)",
@@ -113,15 +107,10 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS player_com_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0, streak_current INTEGER NOT NULL DEFAULT 0, streak_best INTEGER NOT NULL DEFAULT 0)",
 
-  // ============================================================
-  // NAPプランラボ（既存）
-  // ============================================================
+  // NAPプランラボ
   "CREATE TABLE IF NOT EXISTS nap_lab_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, seed INTEGER, record_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS nap_lab_sessions_user ON nap_lab_sessions(user_id, id DESC)",
 
-  // ============================================================
-  // quiz-api スキーマ
-  // ============================================================
   ...quizSchema
 ];
 
@@ -145,25 +134,37 @@ async function loadBotStrategy(env) {
   return defaultStrategy();
 }
 
+// ★ 修正⑧: 各テーブルを個別に try/catch（テーブル不在でも全体が壊れない）
 let __cachedExperience = null, __cachedExperienceTime = 0;
 async function loadExperience(env) {
   if (__cachedExperience && Date.now() - __cachedExperienceTime < 60000) return __cachedExperience;
   const map = { bids: {}, calls: {}, plays: {}, stateCache: {}, tactics: {} };
+
   try {
-    const [bids, calls, plays, states, tactics] = await Promise.all([
-      env.DB.prepare("SELECT strength_key, trump_type, num, wins, samples FROM ai_bid_experience WHERE samples > 0").all(),
-      env.DB.prepare("SELECT call_id, trump_suit, wins, samples FROM ai_call_experience WHERE samples > 0").all(),
-      env.DB.prepare("SELECT role, phase, points_tier, rank_tier, wins, samples FROM ai_play_experience WHERE samples > 0").all(),
-      env.DB.prepare("SELECT state_hash, card_win_rates, samples FROM ai_state_experience ORDER BY updated_at DESC LIMIT 2000").all(),
-      // ★ 新規: 戦術経験をロード
-      env.DB.prepare("SELECT tactic_id, situation_hash, wins, samples FROM ai_tactic_experience WHERE samples > 0 ORDER BY updated_at DESC LIMIT 5000").all()
-    ]);
-    for (const r of (bids.results || [])) map.bids[`${r.strength_key}:${r.trump_type}:${r.num}`] = { wins: r.wins, samples: r.samples };
-    for (const r of (calls.results || [])) map.calls[`${r.call_id}:${r.trump_suit}`] = { wins: r.wins, samples: r.samples };
-    for (const r of (plays.results || [])) map.plays[`${r.role}:${r.phase}:${r.points_tier}:${r.rank_tier}`] = { wins: r.wins, samples: r.samples };
-    for (const r of (states.results || [])) map.stateCache[r.state_hash] = { card_win_rates: r.card_win_rates, samples: r.samples };
-    for (const r of (tactics.results || [])) map.tactics[`${r.tactic_id}:${r.situation_hash}`] = { wins: r.wins, samples: r.samples };
-  } catch (e) { console.warn("experience load failed", e); }
+    const { results } = await env.DB.prepare("SELECT strength_key, trump_type, num, wins, samples FROM ai_bid_experience WHERE samples > 0").all();
+    for (const r of (results || [])) map.bids[`${r.strength_key}:${r.trump_type}:${r.num}`] = { wins: r.wins, samples: r.samples };
+  } catch (e) { console.warn("ai_bid_experience load failed (may not exist)", e.message); }
+
+  try {
+    const { results } = await env.DB.prepare("SELECT call_id, trump_suit, wins, samples FROM ai_call_experience WHERE samples > 0").all();
+    for (const r of (results || [])) map.calls[`${r.call_id}:${r.trump_suit}`] = { wins: r.wins, samples: r.samples };
+  } catch (e) { console.warn("ai_call_experience load failed", e.message); }
+
+  try {
+    const { results } = await env.DB.prepare("SELECT role, phase, points_tier, rank_tier, wins, samples FROM ai_play_experience WHERE samples > 0").all();
+    for (const r of (results || [])) map.plays[`${r.role}:${r.phase}:${r.points_tier}:${r.rank_tier}`] = { wins: r.wins, samples: r.samples };
+  } catch (e) { console.warn("ai_play_experience load failed", e.message); }
+
+  try {
+    const { results } = await env.DB.prepare("SELECT state_hash, card_win_rates, samples FROM ai_state_experience ORDER BY updated_at DESC LIMIT 2000").all();
+    for (const r of (results || [])) map.stateCache[r.state_hash] = { card_win_rates: r.card_win_rates, samples: r.samples };
+  } catch (e) { console.warn("ai_state_experience load failed", e.message); }
+
+  try {
+    const { results } = await env.DB.prepare("SELECT tactic_id, situation_hash, wins, samples FROM ai_tactic_experience WHERE samples > 0 ORDER BY updated_at DESC LIMIT 5000").all();
+    for (const r of (results || [])) map.tactics[`${r.tactic_id}:${r.situation_hash}`] = { wins: r.wins, samples: r.samples };
+  } catch (e) { console.warn("ai_tactic_experience load failed (may not exist in old DB)", e.message); }
+
   __cachedExperience = map;
   __cachedExperienceTime = Date.now();
   return map;
@@ -224,7 +225,6 @@ export default {
             env.DB.prepare("DELETE FROM ai_hall_of_fame"),
             env.DB.prepare("DELETE FROM quiz_candidates"),
             env.DB.prepare("DELETE FROM ai_discard_metrics"),
-            // ★ 新規: 戦術エンジン関連も削除
             env.DB.prepare("DELETE FROM ai_tactic_experience"),
             env.DB.prepare("DELETE FROM ai_bid_tactic_experience"),
             env.DB.prepare("DELETE FROM ai_same_two_events"),
@@ -248,7 +248,7 @@ export default {
       }
 
       // ============================================================
-      // NAPプランラボ セッション保存 & AI学習反映（既存）
+      // NAPプランラボ セッション保存 & AI学習反映
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/nap-lab/save") {
         const token = request.headers.get("x-session-token");
@@ -258,9 +258,8 @@ export default {
         let body;
         try { body = await request.json(); } catch { return response({ error: "invalid" }, { status: 400 }); }
         try {
-          await env.DB.prepare(
-            "INSERT INTO nap_lab_sessions(user_id, seed, record_json) VALUES(?,?,?)"
-          ).bind(userId, Number(body.seed) || 0, JSON.stringify(body)).run();
+          await env.DB.prepare("INSERT INTO nap_lab_sessions(user_id, seed, record_json) VALUES(?,?,?)")
+            .bind(userId, Number(body.seed) || 0, JSON.stringify(body)).run();
 
           const statements = [];
           const stateExperiences = body.stateExperiences || [];
@@ -286,16 +285,19 @@ export default {
               if (d.won === null || d.won === undefined) continue;
               if (!d.role || !d.phase || !d.pointsTier || !d.rankTier) continue;
               const key = `${d.role}:${d.phase}:${d.pointsTier}:${d.rankTier}`;
-              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0 };
+              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0, tacticId: 'UNKNOWN', situationHash: '', intentCategory: 'UNKNOWN' };
               agg[key].wins += d.won ? 1 : 0;
               agg[key].total += 1;
+              if (d.tacticId && d.tacticId !== 'UNKNOWN') agg[key].tacticId = d.tacticId;
+              if (d.situationHash) agg[key].situationHash = d.situationHash;
+              if (d.intentCategory) agg[key].intentCategory = d.intentCategory;
             }
             for (const k of Object.keys(agg)) {
               const a = agg[k];
               statements.push(
                 env.DB.prepare(
-                  "INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples) VALUES(?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP"
-                ).bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total)
+                  "INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples,tactic_id,situation_hash,intent_category) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,tactic_id=CASE WHEN excluded.tactic_id!='UNKNOWN' THEN excluded.tactic_id ELSE tactic_id END,situation_hash=CASE WHEN excluded.situation_hash!='' THEN excluded.situation_hash ELSE situation_hash END,intent_category=CASE WHEN excluded.intent_category!='UNKNOWN' THEN excluded.intent_category ELSE intent_category END,updated_at=CURRENT_TIMESTAMP"
+                ).bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total, a.tacticId, a.situationHash, a.intentCategory)
               );
             }
           }
@@ -313,19 +315,12 @@ export default {
         }
       }
 
-      // ============================================================
-      // NAPプランラボ 学習統計取得（既存）
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/nap-lab/learning-stats") {
         const token = request.headers.get("x-session-token");
         const userId = token ? await getUserIdByToken(env, token) : null;
         if (!userId) return response({ error: "auth required" }, { status: 401 });
-
         try {
-          const { results } = await env.DB.prepare(
-            "SELECT record_json FROM nap_lab_sessions WHERE user_id=? ORDER BY id DESC LIMIT 100"
-          ).bind(userId).all();
-
+          const { results } = await env.DB.prepare("SELECT record_json FROM nap_lab_sessions WHERE user_id=? ORDER BY id DESC LIMIT 100").bind(userId).all();
           let approved = 0, revised = 0;
           for (const row of (results || [])) {
             try {
@@ -335,107 +330,63 @@ export default {
             } catch {}
           }
           return response({ approved, revised, total: approved + revised });
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
       // ============================================================
-      // ★ 新規: 戦術経験の取得
+      // 戦術経験 API
       // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/tactic-experience") {
         try {
           const tacticId = url.searchParams.get("tacticId");
           if (tacticId) {
-            const { results } = await env.DB.prepare(
-              "SELECT * FROM ai_tactic_experience WHERE tactic_id=? ORDER BY samples DESC LIMIT 100"
-            ).bind(tacticId).all();
+            const { results } = await env.DB.prepare("SELECT * FROM ai_tactic_experience WHERE tactic_id=? ORDER BY samples DESC LIMIT 100").bind(tacticId).all();
             return response(results || []);
           }
-          const { results } = await env.DB.prepare(
-            "SELECT tactic_id, SUM(wins) AS wins, SUM(samples) AS samples FROM ai_tactic_experience GROUP BY tactic_id ORDER BY samples DESC LIMIT 200"
-          ).all();
+          const { results } = await env.DB.prepare("SELECT tactic_id, SUM(wins) AS wins, SUM(samples) AS samples FROM ai_tactic_experience GROUP BY tactic_id ORDER BY samples DESC LIMIT 200").all();
           return response(results || []);
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
-      // ============================================================
-      // ★ 新規: 戦術別統計（勝率付き）
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/tactic-stats") {
         try {
           const { results } = await env.DB.prepare(
-            `SELECT tactic_id, 
-                    SUM(wins) AS wins, 
-                    SUM(samples) AS samples,
-                    (SUM(wins) * 1.0 / MAX(SUM(samples), 1)) AS win_rate
-             FROM ai_tactic_experience 
-             WHERE samples >= 5
-             GROUP BY tactic_id 
-             ORDER BY win_rate DESC, samples DESC 
-             LIMIT 200`
+            `SELECT tactic_id, SUM(wins) AS wins, SUM(samples) AS samples, (SUM(wins) * 1.0 / MAX(SUM(samples), 1)) AS win_rate
+             FROM ai_tactic_experience WHERE samples >= 5 GROUP BY tactic_id ORDER BY win_rate DESC, samples DESC LIMIT 200`
           ).all();
           return response(results || []);
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
-      // ============================================================
-      // ★ 新規: セイム2イベント取得
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/same-two-events") {
         try {
           const matchId = url.searchParams.get("matchId");
           if (matchId) {
-            const { results } = await env.DB.prepare(
-              "SELECT * FROM ai_same_two_events WHERE match_id=? ORDER BY round, trick_no"
-            ).bind(matchId).all();
+            const { results } = await env.DB.prepare("SELECT * FROM ai_same_two_events WHERE match_id=? ORDER BY round, trick_no").bind(matchId).all();
             return response(results || []);
           }
           const { results } = await env.DB.prepare(
-            `SELECT target_rank, target_suit, result, COUNT(*) AS count 
-             FROM ai_same_two_events 
-             GROUP BY target_rank, target_suit, result 
-             ORDER BY count DESC`
+            `SELECT target_rank, target_suit, result, COUNT(*) AS count FROM ai_same_two_events GROUP BY target_rank, target_suit, result ORDER BY count DESC`
           ).all();
           return response(results || []);
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
-      // ============================================================
-      // ★ 新規: 未カバー状況の取得（開発用）
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/uncovered-situations") {
         try {
           const limit = parseInt(url.searchParams.get("limit")) || 50;
-          const { results } = await env.DB.prepare(
-            "SELECT * FROM ai_uncovered_situations ORDER BY created_at DESC LIMIT ?"
-          ).bind(limit).all();
+          const { results } = await env.DB.prepare("SELECT * FROM ai_uncovered_situations ORDER BY created_at DESC LIMIT ?").bind(limit).all();
           return response(results || []);
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
-      // ============================================================
-      // ★ 新規: 戦術履歴の取得
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/tactic-history") {
         try {
           const matchId = url.searchParams.get("matchId");
           if (!matchId) return response({ error: 'matchId required' }, { status: 400 });
-          const { results } = await env.DB.prepare(
-            "SELECT * FROM ai_tactic_history WHERE match_id=? ORDER BY round, trick_no"
-          ).bind(matchId).all();
+          const { results } = await env.DB.prepare("SELECT * FROM ai_tactic_history WHERE match_id=? ORDER BY round, trick_no").bind(matchId).all();
           return response(results || []);
-        } catch (e) {
-          return response({ error: e.message }, { status: 500 });
-        }
+        } catch (e) { return response({ error: e.message }, { status: 500 }); }
       }
 
       // ============================================================
@@ -487,23 +438,14 @@ export default {
         return response({ ...player, sessionToken: token });
       }
 
-      // ============================================================
-      // 寮プロフィール更新
-      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/account/update-dorm") {
         const token = request.headers.get("x-session-token");
         const userId = await getUserIdByToken(env, token);
         if (!userId) return response({ error: "認証情報が必要です" }, 401);
         let body; try { body = await request.json(); } catch { return response({ error: "invalid" }, 400); }
-        const dormPeriod = Number(body.dormPeriod) || 310;
-        const favoriteSong = String(body.favoriteSong || "").slice(0, 100);
-        const career = String(body.career || "").slice(0, 200);
-        const scarySenior = String(body.scarySenior || "").slice(0, 50);
-        const infiniteFood = String(body.infiniteFood || "").slice(0, 100);
-        const favoriteStanding = String(body.favoriteStanding || "").slice(0, 50);
         try {
           await env.DB.prepare("UPDATE players SET dorm_period=?, favorite_song=?, career=?, scary_senior=?, infinite_food=?, favorite_standing=? WHERE user_id=?")
-            .bind(dormPeriod, favoriteSong, career, scarySenior, infiniteFood, favoriteStanding, userId).run();
+            .bind(Number(body.dormPeriod) || 310, String(body.favoriteSong || "").slice(0, 100), String(body.career || "").slice(0, 200), String(body.scarySenior || "").slice(0, 50), String(body.infiniteFood || "").slice(0, 100), String(body.favoriteStanding || "").slice(0, 50), userId).run();
           return response({ ok: true });
         } catch (e) { return response({ error: e.message }, 500); }
       }
@@ -523,9 +465,6 @@ export default {
         return response({ error: "invalid" }, 400);
       }
 
-      // ============================================================
-      // /api/account/me
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me") {
         const token = request.headers.get("x-session-token");
         let userId = await getUserIdByToken(env, token);
@@ -561,25 +500,13 @@ export default {
           ])
         ]);
         const performanceRanks = { bid: performanceRankValues[0], deputy: performanceRankValues[1], exact: performanceRankValues[2], solo: performanceRankValues[3], artPlay: performanceRankValues[4], allyFeed: performanceRankValues[5], boldBid: performanceRankValues[6] };
-        return response({
-          ...p,
-          internalUserId: userId,
-          performance, precision, artRate, allyFeed, boldBid,
-          ranks: { rating: ratingRank.ahead + 1 },
-          performanceRanks,
-          matchStats,
-          history: historyPage.results
-        });
+        return response({ ...p, internalUserId: userId, performance, precision, artRate, allyFeed, boldBid, ranks: { rating: ratingRank.ahead + 1 }, performanceRanks, matchStats, history: historyPage.results });
       }
 
-      // ============================================================
-      // /api/match/finish
-      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/match/finish") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
         const { matchId, seats } = body;
         if (!Array.isArray(seats) || !seats.length) return response({ error: 'no seats' }, 400);
-
         const verified = [];
         for (const s of seats) {
           const delta = Number(s.delta);
@@ -592,7 +519,6 @@ export default {
           verified.push({ ...s, delta, placement });
         }
         if (!verified.length) return response({ error: 'no valid sessions' }, 401);
-
         const statements = [];
         const updates = [];
         try {
@@ -600,7 +526,6 @@ export default {
           const ph = userIds.map(() => '?').join(',');
           const profRes = await env.DB.prepare("SELECT user_id,username,rating FROM players WHERE user_id IN (" + ph + ")").bind(...userIds).all();
           const byId = new Map(profRes.results.map(r => [r.user_id, r]));
-
           for (const v of verified) {
             const profile = byId.get(v.userId);
             if (!profile) continue;
@@ -608,22 +533,14 @@ export default {
             const roundedDelta = Math.round(v.delta * 10) / 10;
             const outcome = v.outcome || 'loss';
             const stat = v.stats || {};
-
             statements.push(
-              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?")
-                .bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
-              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)")
-                .bind(v.userId, profile.username, outcome, roundedDelta, newRating),
+              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?").bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
+              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(v.userId, profile.username, outcome, roundedDelta, newRating),
               env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(v.userId),
-              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?")
-                .bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
-              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes")
-                .bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
-              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes")
-                .bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
-              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5")
-                .bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1,
-                  v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
+              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?").bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
+              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes").bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
+              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes").bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
+              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
             );
             updates.push({ userId: v.userId, rating: newRating, delta: roundedDelta, outcome, placement: v.placement });
           }
@@ -635,14 +552,10 @@ export default {
         }
       }
 
-      // ============================================================
-      // /api/com-match/finish
-      // ============================================================
       if (request.method === "POST" && url.pathname === "/api/com-match/finish") {
         const token = request.headers.get("x-session-token");
         const userId = await getUserIdByToken(env, token);
         if (!userId) return response({ error: 'auth required' }, 401);
-
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
         const delta = Number(body.delta);
         const placement = Number(body.placement);
@@ -651,14 +564,12 @@ export default {
         const outcome = body.outcome || (placement === 1 ? 'win' : (placement >= 2 && placement <= 3 ? 'draw' : 'loss'));
         const stat = body.stats || {};
         const tie = body.tie ? JSON.stringify(body.tie) : null;
-
         try {
           const profile = await env.DB.prepare("SELECT username,com_rating FROM players WHERE user_id=?").bind(userId).first();
           if (!profile) return response({ error: 'player not found' }, 404);
           const prev = Number(profile.com_rating) || 1000;
           const newComRating = Math.max(100, Math.round(prev + delta));
           const roundedDelta = Math.round(delta * 10) / 10;
-
           const msRow = await env.DB.prepare("SELECT streak_current, streak_best FROM player_com_match_stats WHERE user_id=?").bind(userId).first();
           const prevStreak = msRow?.streak_current ?? 0;
           const prevBest = msRow?.streak_best ?? 0;
@@ -666,28 +577,19 @@ export default {
           if (outcome === 'win') newStreak = prevStreak >= 0 ? prevStreak + 1 : 1;
           else newStreak = prevStreak <= 0 ? prevStreak - 1 : -1;
           const newBest = Math.max(prevBest, newStreak);
-
           await env.DB.batch([
             env.DB.prepare("UPDATE players SET com_rating=? WHERE user_id=?").bind(newComRating, userId),
-            env.DB.prepare("INSERT INTO player_com_match_history(user_id,username,result,delta,rating_after,placement,tie_json) VALUES(?,?,?,?,?,?,?)")
-              .bind(userId, profile.username, outcome, roundedDelta, newComRating, placement, tie),
+            env.DB.prepare("INSERT INTO player_com_match_history(user_id,username,result,delta,rating_after,placement,tie_json) VALUES(?,?,?,?,?,?,?)").bind(userId, profile.username, outcome, roundedDelta, newComRating, placement, tie),
             env.DB.prepare("INSERT OR IGNORE INTO player_com_performance(user_id) VALUES(?)").bind(userId),
-            env.DB.prepare("UPDATE player_com_performance SET declarer_attempts=declarer_attempts+?,declarer_successes=declarer_successes+?,deputy_attempts=deputy_attempts+?,deputy_successes=deputy_successes+? WHERE user_id=?")
-              .bind(stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0, userId),
+            env.DB.prepare("UPDATE player_com_performance SET declarer_attempts=declarer_attempts+?,declarer_successes=declarer_successes+?,deputy_attempts=deputy_attempts+?,deputy_successes=deputy_successes+? WHERE user_id=?").bind(stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0, userId),
             env.DB.prepare("INSERT OR IGNORE INTO player_com_precision(user_id) VALUES(?)").bind(userId),
-            env.DB.prepare("UPDATE player_com_precision SET exact_attempts=exact_attempts+?,exact_successes=exact_successes+?,solo_attempts=solo_attempts+?,solo_successes=solo_successes+? WHERE user_id=?")
-              .bind(stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0, userId),
+            env.DB.prepare("UPDATE player_com_precision SET exact_attempts=exact_attempts+?,exact_successes=exact_successes+?,solo_attempts=solo_attempts+?,solo_successes=solo_successes+? WHERE user_id=?").bind(stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0, userId),
             env.DB.prepare("INSERT OR IGNORE INTO player_com_ally_feed(user_id) VALUES(?)").bind(userId),
-            env.DB.prepare("UPDATE player_com_ally_feed SET attempts=attempts+?,successes=successes+? WHERE user_id=?")
-              .bind(stat.allyFeedAttempts || 0, stat.allyFeedSuccesses || 0, userId),
+            env.DB.prepare("UPDATE player_com_ally_feed SET attempts=attempts+?,successes=successes+? WHERE user_id=?").bind(stat.allyFeedAttempts || 0, stat.allyFeedSuccesses || 0, userId),
             env.DB.prepare("INSERT OR IGNORE INTO player_com_bold_bid_rate(user_id) VALUES(?)").bind(userId),
-            env.DB.prepare("UPDATE player_com_bold_bid_rate SET attempts=attempts+?,successes=successes+? WHERE user_id=?")
-              .bind(stat.boldAttempts || 0, stat.boldSuccesses || 0, userId),
+            env.DB.prepare("UPDATE player_com_bold_bid_rate SET attempts=attempts+?,successes=successes+? WHERE user_id=?").bind(stat.boldAttempts || 0, stat.boldSuccesses || 0, userId),
             env.DB.prepare("INSERT OR IGNORE INTO player_com_match_stats(user_id) VALUES(?)").bind(userId),
-            env.DB.prepare("UPDATE player_com_match_stats SET declarer_attempts=declarer_attempts+?,bid_total=bid_total+?,nt_bids=nt_bids+?,color_bids=color_bids+?,match_count=match_count+1,rank_1=rank_1+?,rank_2=rank_2+?,rank_3=rank_3+?,rank_4=rank_4+?,rank_5=rank_5+?,streak_current=?,streak_best=? WHERE user_id=?")
-              .bind(stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0,
-                placement === 1 ? 1 : 0, placement === 2 ? 1 : 0, placement === 3 ? 1 : 0, placement === 4 ? 1 : 0, placement === 5 ? 1 : 0,
-                newStreak, newBest, userId)
+            env.DB.prepare("UPDATE player_com_match_stats SET declarer_attempts=declarer_attempts+?,bid_total=bid_total+?,nt_bids=nt_bids+?,color_bids=color_bids+?,match_count=match_count+1,rank_1=rank_1+?,rank_2=rank_2+?,rank_3=rank_3+?,rank_4=rank_4+?,rank_5=rank_5+?,streak_current=?,streak_best=? WHERE user_id=?").bind(stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, placement === 1 ? 1 : 0, placement === 2 ? 1 : 0, placement === 3 ? 1 : 0, placement === 4 ? 1 : 0, placement === 5 ? 1 : 0, newStreak, newBest, userId)
           ]);
           return response({ ok: true, comRating: newComRating, delta: roundedDelta, placement, streak: newStreak, bestStreak: newBest });
         } catch (e) {
@@ -696,14 +598,10 @@ export default {
         }
       }
 
-      // ============================================================
-      // /api/account/me/com
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/account/me/com") {
         const token = request.headers.get("x-session-token");
         const userId = await getUserIdByToken(env, token);
         if (!userId) return response({ error: 'auth required' }, 401);
-
         try {
           const [playerRow, perfRow, precRow, feedRow, boldRow, matchStatsRow, historyPage] = await Promise.all([
             env.DB.prepare("SELECT player_id AS id,username,com_rating FROM players WHERE user_id=?").bind(userId).first(),
@@ -728,13 +626,11 @@ export default {
               return { result: r.result, delta: r.delta, rating_after: r.rating_after, placement: r.placement, tie, created_at: r.created_at };
             })
           });
-        } catch (e) {
-          return response({ error: e.message }, 500);
-        }
+        } catch (e) { return response({ error: e.message }, 500); }
       }
 
       // ============================================================
-      // /api/ai/learn
+      // ★ 修正⑦: /api/ai/learn — tactic_id / bid_tactic_id / same_two_risk バインド
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/learn") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -744,9 +640,12 @@ export default {
           if (bid && Number.isFinite(bid.strengthKey) && bid.trumpType && Number.isFinite(bid.num)) {
             const sk = Math.round(bid.strengthKey * 2) / 2;
             const won = body.wonRound ? 1 : 0;
+            const bidTacticId = bid.bidTacticId || 'UNKNOWN';
+            const sameTwoRisk = Number.isFinite(bid.sameTwoRisk) ? bid.sameTwoRisk : 0;
             statements.push(
-              env.DB.prepare("INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,1) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+1,updated_at=CURRENT_TIMESTAMP")
-                .bind(sk, bid.trumpType, bid.num, won)
+              env.DB.prepare(
+                "INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples,bid_tactic_id,same_two_risk) VALUES(?,?,?,?,1,?,?) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+1,bid_tactic_id=CASE WHEN excluded.bid_tactic_id!='UNKNOWN' THEN excluded.bid_tactic_id ELSE bid_tactic_id END,same_two_risk=CASE WHEN excluded.same_two_risk>0 THEN excluded.same_two_risk ELSE same_two_risk END,updated_at=CURRENT_TIMESTAMP"
+              ).bind(sk, bid.trumpType, bid.num, won, bidTacticId, sameTwoRisk)
             );
           }
           if (call && call.callId && call.trumpSuit) {
@@ -762,15 +661,19 @@ export default {
               if (d.won === null || d.won === undefined) continue;
               if (!d.role || !d.phase || !d.pointsTier || !d.rankTier) continue;
               const key = `${d.role}:${d.phase}:${d.pointsTier}:${d.rankTier}`;
-              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0 };
+              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0, tacticId: 'UNKNOWN', situationHash: '', intentCategory: 'UNKNOWN' };
               agg[key].wins += d.won ? 1 : 0;
               agg[key].total += 1;
+              if (d.tacticId && d.tacticId !== 'UNKNOWN') agg[key].tacticId = d.tacticId;
+              if (d.situationHash) agg[key].situationHash = d.situationHash;
+              if (d.intentCategory) agg[key].intentCategory = d.intentCategory;
             }
             for (const k of Object.keys(agg)) {
               const a = agg[k];
               statements.push(
-                env.DB.prepare("INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples) VALUES(?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP")
-                  .bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total)
+                env.DB.prepare(
+                  "INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples,tactic_id,situation_hash,intent_category) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,tactic_id=CASE WHEN excluded.tactic_id!='UNKNOWN' THEN excluded.tactic_id ELSE tactic_id END,situation_hash=CASE WHEN excluded.situation_hash!='' THEN excluded.situation_hash ELSE situation_hash END,intent_category=CASE WHEN excluded.intent_category!='UNKNOWN' THEN excluded.intent_category ELSE intent_category END,updated_at=CURRENT_TIMESTAMP"
+                ).bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total, a.tacticId, a.situationHash, a.intentCategory)
               );
             }
           }
@@ -784,7 +687,7 @@ export default {
       }
 
       // ============================================================
-      // /api/ai/report
+      // ★ 修正⑦: /api/ai/report — bid_tactic_id / same_two_risk バインド
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/ai/report") {
         let body; try { body = await request.json(); } catch { return response({ error: 'invalid' }, 400); }
@@ -800,15 +703,17 @@ export default {
             const sk = Math.round(c.strengthAtBid * 2) / 2;
             const tt = c.suit === 'NT' ? 'NT' : 'color';
             const k = `${sk}:${tt}:${c.num}`;
-            if (!bidAgg[k]) bidAgg[k] = { sk, tt, num: c.num, wins: 0, total: 0 };
+            if (!bidAgg[k]) bidAgg[k] = { sk, tt, num: c.num, wins: 0, total: 0, bidTacticId: c.winningBidTacticId || 'UNKNOWN', sameTwoRisk: Number.isFinite(c.sameTwoRisk) ? c.sameTwoRisk : 0 };
             bidAgg[k].wins += c.napWin ? 1 : 0;
             bidAgg[k].total += 1;
+            if (c.winningBidTacticId && c.winningBidTacticId !== 'UNKNOWN') bidAgg[k].bidTacticId = c.winningBidTacticId;
           }
           for (const k of Object.keys(bidAgg)) {
             const a = bidAgg[k];
             statements.push(
-              env.DB.prepare("INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples) VALUES(?,?,?,?,?) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP")
-                .bind(a.sk, a.tt, a.num, a.wins, a.total)
+              env.DB.prepare(
+                "INSERT INTO ai_bid_experience(strength_key,trump_type,num,wins,samples,bid_tactic_id,same_two_risk) VALUES(?,?,?,?,?,?,?) ON CONFLICT(strength_key,trump_type,num) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,bid_tactic_id=CASE WHEN excluded.bid_tactic_id!='UNKNOWN' THEN excluded.bid_tactic_id ELSE bid_tactic_id END,same_two_risk=CASE WHEN excluded.same_two_risk>0 THEN excluded.same_two_risk ELSE same_two_risk END,updated_at=CURRENT_TIMESTAMP"
+              ).bind(a.sk, a.tt, a.num, a.wins, a.total, a.bidTacticId, a.sameTwoRisk)
             );
           }
 
@@ -817,12 +722,7 @@ export default {
             const aiSnapshot = body.aiWeights ? JSON.stringify(body.aiWeights) : null;
             statements.push(
               env.DB.prepare("INSERT INTO human_win_patterns(user_id,player_id,rank,won_as_nap,won_as_deputy,won_as_ally,avg_bid,exact_wins,solo_wins,match_rating_delta,contracts_json,ai_weights_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(
-                  userId, body.playerId || null, Number(body.playerRank) || 0,
-                  Number(body.playerWonAsNap) || 0, Number(body.playerWonAsDeputy) || 0, Number(body.playerWonAsAlly) || 0,
-                  Number(body.avgBid) || 0, Number(body.exactWins) || 0, Number(body.soloWins) || 0,
-                  Number(body.matchRatingDelta) || 0, contractsJson, aiSnapshot
-                )
+                .bind(userId, body.playerId || null, Number(body.playerRank) || 0, Number(body.playerWonAsNap) || 0, Number(body.playerWonAsDeputy) || 0, Number(body.playerWonAsAlly) || 0, Number(body.avgBid) || 0, Number(body.exactWins) || 0, Number(body.soloWins) || 0, Number(body.matchRatingDelta) || 0, contractsJson, aiSnapshot)
             );
           }
 
@@ -838,17 +738,11 @@ export default {
         }
       }
 
-      // ============================================================
-      // ランキング
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/rating/top") {
         const { results } = await env.DB.prepare("SELECT p.player_id AS id, p.username, p.rating, p.wins, p.losses, p.games FROM players p ORDER BY p.rating DESC, p.games DESC LIMIT 50").all();
         return response(results);
       }
 
-      // ============================================================
-      // AI戦略系（既存）
-      // ============================================================
       if (request.method === "GET" && url.pathname === "/api/ai/strategies") {
         const limit = parseInt(url.searchParams.get("limit")) || 10;
         const { results } = await env.DB.prepare("SELECT * FROM ai_strategy_log ORDER BY avg_rating_delta DESC, id DESC LIMIT ?").bind(limit).all();
@@ -863,12 +757,7 @@ export default {
 
       if (request.method === "GET" && url.pathname === "/api/ai/generations") {
         const { results } = await env.DB.prepare(`
-          SELECT generation,
-                 AVG(nap_win_rate) as nap,
-                 AVG(alliance_win_rate) as ally,
-                 AVG(avg_value_loss) as avg_vl,
-                 COUNT(*) as count,
-                 MAX(created_at) as time
+          SELECT generation, AVG(nap_win_rate) as nap, AVG(alliance_win_rate) as ally, AVG(avg_value_loss) as avg_vl, COUNT(*) as count, MAX(created_at) as time
           FROM ai_strategy_log GROUP BY generation ORDER BY generation ASC LIMIT 20
         `).all();
         return response(results || []);
@@ -1312,10 +1201,7 @@ function auctionDone(m, seat, room, skipProperRaise = false) {
 
   const params = m.botStrategy || defaultStrategy();
   if (!m.properRecomputed) {
-    const proper = computeProperBid(
-      m.seats[seat].hand, m.auction.high.suit, params,
-      seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory, m.round
-    );
+    const proper = computeProperBid(m.seats[seat].hand, m.auction.high.suit, params, seat, m.seats[seat].bidSignals, m.matchScores, m.openKitty || [], m.playedCards, m.voids, m.bidHistory, m.round);
     m.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
     m.properPlans[seat] = proper.plan;
     m.properRecomputed = true;
@@ -1514,20 +1400,13 @@ async function finish(m, room, env) {
             const outcome = v.outcome || 'loss';
             const stat = v.stats || {};
             statements.push(
-              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?")
-                .bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
-              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)")
-                .bind(v.userId, profile.username, outcome, roundedDelta, newRating),
+              env.DB.prepare("UPDATE players SET rating=?, wins=wins+?, losses=losses+?, games=games+1 WHERE user_id=?").bind(newRating, outcome === 'win' ? 1 : 0, outcome === 'loss' ? 1 : 0, v.userId),
+              env.DB.prepare("INSERT INTO match_history(user_id,username,result,delta,rating_after) VALUES(?,?,?,?,?)").bind(v.userId, profile.username, outcome, roundedDelta, newRating),
               env.DB.prepare("INSERT OR IGNORE INTO player_stats(user_id) VALUES(?)").bind(v.userId),
-              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?")
-                .bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
-              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes")
-                .bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
-              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes")
-                .bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
-              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5")
-                .bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1,
-                  v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
+              env.DB.prepare("UPDATE player_stats SET exact_wins=exact_wins+?,bold_exact_wins=bold_exact_wins+?,solo_wins=solo_wins+?,dramatic_plays=dramatic_plays+? WHERE user_id=?").bind(stat.exactWins || 0, stat.boldExactWins || 0, stat.soloWins || 0, stat.dramaticPlays || 0, v.userId),
+              env.DB.prepare("INSERT INTO player_performance(user_id,declarer_attempts,declarer_successes,deputy_attempts,deputy_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,declarer_successes=declarer_successes+excluded.declarer_successes,deputy_attempts=deputy_attempts+excluded.deputy_attempts,deputy_successes=deputy_successes+excluded.deputy_successes").bind(v.userId, stat.declarerAttempts || 0, stat.declarerSuccesses || 0, stat.deputyAttempts || 0, stat.deputySuccesses || 0),
+              env.DB.prepare("INSERT INTO player_precision(user_id,exact_attempts,exact_successes,solo_attempts,solo_successes) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET exact_attempts=exact_attempts+excluded.exact_attempts,exact_successes=exact_successes+excluded.exact_successes,solo_attempts=solo_attempts+excluded.solo_attempts,solo_successes=solo_successes+excluded.solo_successes").bind(v.userId, stat.exactAttempts || 0, stat.exactSuccesses || 0, stat.soloAttempts || 0, stat.soloSuccesses || 0),
+              env.DB.prepare("INSERT INTO player_match_stats(user_id,declarer_attempts,bid_total,nt_bids,color_bids,match_count,rank_1,rank_2,rank_3,rank_4,rank_5) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET declarer_attempts=declarer_attempts+excluded.declarer_attempts,bid_total=bid_total+excluded.bid_total,nt_bids=nt_bids+excluded.nt_bids,color_bids=color_bids+excluded.color_bids,match_count=match_count+1,rank_1=rank_1+excluded.rank_1,rank_2=rank_2+excluded.rank_2,rank_3=rank_3+excluded.rank_3,rank_4=rank_4+excluded.rank_4,rank_5=rank_5+excluded.rank_5").bind(v.userId, stat.declarerAttempts || 0, stat.bidTotal || 0, stat.ntBids || 0, stat.colorBids || 0, 1, v.placement === 1 ? 1 : 0, v.placement === 2 ? 1 : 0, v.placement === 3 ? 1 : 0, v.placement === 4 ? 1 : 0, v.placement === 5 ? 1 : 0)
             );
             updates.push({ userId: v.userId, rating: newRating, delta: roundedDelta, outcome, placement: v.placement });
           }
@@ -1535,10 +1414,7 @@ async function finish(m, room, env) {
           for (const update of updates) {
             const seat = m.seats.findIndex(s => (s.player?.userId || s.originalUserId) === update.userId);
             if (seat >= 0 && m.seats[seat].connId && conns.has(m.seats[seat].connId)) {
-              sendSafe(conns.get(m.seats[seat].connId), {
-                type: "rating-updated", result: update.outcome, delta: update.delta,
-                rating: update.rating, placement: update.placement
-              });
+              sendSafe(conns.get(m.seats[seat].connId), { type: "rating-updated", result: update.outcome, delta: update.delta, rating: update.rating, placement: update.placement });
             }
           }
         } catch (e) {
@@ -1715,10 +1591,7 @@ async function requestHostBotCompute(m, seat, room) {
         }
       }, 8000)
     };
-    sendSafe(hostConn, {
-      type: 'compute-bot-turn', requestId, seat,
-      encrypted: { iv: hex(iv), ciphertext: hex(encrypted) }
-    });
+    sendSafe(hostConn, { type: 'compute-bot-turn', requestId, seat, encrypted: { iv: hex(iv), ciphertext: hex(encrypted) } });
   } catch (e) {
     console.warn('requestHostBotCompute failed', e);
     serverBotAction(m, seat, room);
@@ -1729,7 +1602,6 @@ function buildBotContext(m, seat) {
   const p = m.seats[seat];
   const legal = legalCards(m, seat);
   const contract = { ...m.contract };
-  // ★ MECE戦術エンジンを明示的に有効化
   const params = { ...(m.botStrategy || defaultStrategy()), maxThinkTimeMs: 2000, enableTacticEngine: true };
   return {
     hand: p.hand, legal, trick: m.trick, trickNo: m.trickNo, contract,
@@ -1749,6 +1621,8 @@ function buildBotContext(m, seat) {
     bidHistory: m.bidHistory || [],
     matchScores: m.matchScores || [0, 0, 0, 0, 0],
     round: m.round || 1,
+    playoff: m.playoff === true,
+    playoffCount: m.playoffCount || 0,
     players: m.seats.map(s => ({ handCount: s.hand.length }))
   };
 }
@@ -1852,10 +1726,7 @@ async function processAction(conn, msg, room, env) {
       currentNapPoints,
     };
     if (canDeclareWin(ctx)) {
-      m.winDeclaration = {
-        seat, hand: [...m.seats[seat].hand],
-        declaredAt: Date.now(), expiresAt: Date.now() + 5000,
-      };
+      m.winDeclaration = { seat, hand: [...m.seats[seat].hand], declaredAt: Date.now(), expiresAt: Date.now() + 5000 };
       m.phase = "win-declaration"; m.deadline = Date.now() + 5000;
       m.notice = (m.seats[seat].originalPlayerName || m.seats[seat].player.username) + " が上がり宣言！手札を確認してください。";
       publish(m, room);
