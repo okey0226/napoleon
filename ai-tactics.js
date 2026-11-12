@@ -1,6 +1,7 @@
 // ===== [ai-tactics.js 前半 開始] =====
-// ai-tactics.js (MECE戦術エンジン統合版・完全修正版)
-// 修正: Math.random() 除去、ロールアウト時エンジン無効化、executeTactic完全化
+// ai-tactics.js (MECE戦術エンジン統合版・不具合修正版)
+// 修正: _selectedTacticId/_prior を UNIVERSAL 時もセット、executeOvertrump 修正、温存系の意図反映
+
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 import { classifySituation, hashSituation, deriveSeedFromSituation } from './situation.js';
 import { evaluateSameTwo, shouldAvoidACut, generateSameTwoTactics } from './same-two.js';
@@ -8,7 +9,7 @@ import { analyzeCombinations, detectCombinations, deriveFunctions, generateCombi
 import { selectTactic, scoreAllTactics, TACTIC_CATALOG } from './tactics.js';
 
 // ============================================================
-// ★ 新規: 決定論rngヘルパー（A5修正の基礎）
+// 決定論rngヘルパー
 // ============================================================
 function makeRng(seed) {
   let s = (seed >>> 0) || 1;
@@ -21,7 +22,6 @@ function makeRng(seed) {
   };
 }
 
-// ctxから決定論rngを取得（同じ状況なら同じrng）
 function getCtxRng(ctx, salt = 0) {
   if (ctx._rng) return ctx._rng;
   const seed = deriveSeedFromSituation(ctx, salt);
@@ -154,7 +154,7 @@ export function soloAdjustedStrength(hand, trump) {
 }
 
 // ==========================================
-// ベイズ手札推定（A5修正: rng引数必須化）
+// ベイズ手札推定
 // ==========================================
 
 function getSeatArchetype(seat, bidHistory, params) {
@@ -203,10 +203,8 @@ function computeBidSpeedBonus(seat, bidHistory, params) {
   return bonus;
 }
 
-// ★ 修正: rng必須引数化
 function sampleOpponentHands(myHand, bidHistory, mySeat, openKitty, playedCards, voids, params, rng) {
   if (typeof rng !== 'function') {
-    // フォールバック: 決定論的にシード生成
     const seedBase = (myHand || []).map(c => c.id).sort().join('|');
     let h = 2166136261 >>> 0;
     for (let i = 0; i < seedBase.length; i++) { h ^= seedBase.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
@@ -871,32 +869,16 @@ export function chooseSoloCall(hand, trump) {
   return { suit: sorted[0].suit, rank: sorted[0].rank, id: sorted[0].id };
 }
 // ===== [ai-tactics.js 前半 終了。後半へ続く] =====
+
 // ===== [ai-tactics.js 後半 開始] =====
 
 // ==========================================
-// プレイ関数群 (MECE構造 / NT・色分離) ★ 全関数 rng 対応
+// プレイ関数群 ★ 全関数 rng 対応済み
 // ==========================================
 
 function isFace(c) { return FACE.includes(c.rank); }
 function isOnNapSide(ctx) { return ctx.seat === ctx.contract.nap || (!ctx.contract.solo && ctx.contract.deputy === ctx.seat); }
 function countVoidSeats(voids, suit, excludeSeat) { let count = 0; for (let s = 0; s < 5; s++) if (s !== excludeSeat && voids[s]?.[suit]) count++; return count; }
-
-function estimateDeputyProbability(seat, contract, playedCards, ctx) {
-  if (!contract || contract.solo) return 0;
-  if (seat === contract.nap) return 0;
-  if (contract.revealedCall && seat === contract.deputy) return 1.0;
-  let p = 0;
-  const callSuit = contract.call?.suit;
-  const history = ctx?.bidHistory || [];
-  history.forEach(b => {
-    if (b.seat === seat && callSuit && b.suit === callSuit && b.num >= 13) p += (ctx?.params?.deputyBidSuitBonus ?? 0.3);
-  });
-  if (playedCards && callSuit) {
-    const theirLeads = playedCards.filter(c => c.seat === seat && c.suit === callSuit);
-    if (theirLeads.length > 0) p += (ctx?.params?.deputyCallSuitBonus ?? 0.5);
-  }
-  return Math.min(0.95, p);
-}
 
 function enumerateEndgame(ctx, maxCombinations, rng) {
   const myHand = ctx.hand;
@@ -1176,7 +1158,7 @@ function followWhenTeamWinning(legal, contract, call, trick, trickNo, lowXFunc, 
   return lowXFunc(ctx, legal);
 }
 
-// --- NT戦略群 ★ rng対応 ---
+// --- NT戦略群 ---
 function chooseNTNapoleonLead(ctx) {
   const { hand, legal, trickNo, playedCards, voids, seat, params, discardedKitty } = ctx;
   if (!legal || !legal.length) return null;
@@ -1408,7 +1390,7 @@ function chooseNTDeputyPlay(ctx) {
   return lowX(ctx, legal);
 }
 
-// --- 色（スート）戦略群 ★ rng対応 ---
+// --- 色（スート）戦略群 ---
 function chooseColorNapoleonLead(ctx) {
   const { hand, legal, contract, trickNo, playedCards, voids, seat, params, discardedKitty, currentNapPoints } = ctx;
   if (!legal || !legal.length) return null;
@@ -1610,12 +1592,10 @@ export function chooseDeputyCard(ctx) {
 }
 
 // ============================================
-// ★ A1修正: executeTactic の完全マッピング（約68戦術）
+// executeTactic 完全マッピング
 // ============================================
 function executeTactic(tacticId, ctx) {
-  // ─────────────────────────────────────
-  // W 系列（WIN/Cash）14戦術
-  // ─────────────────────────────────────
+  // W 系列（14戦術）
   if (tacticId === 'W1') return executeShadowHunt(ctx);
   if (tacticId === 'W1b') return executeShadowSuppress(ctx);
   if (tacticId === 'W2') return executeAbsoluteWin(ctx, '♠A');
@@ -1629,83 +1609,75 @@ function executeTactic(tacticId, ctx) {
   if (tacticId === 'W12') return executeShadowHunt(ctx);
   if (tacticId === 'W13' || tacticId === 'W14') return executeWinnerBest(ctx);
 
-  // ─────────────────────────────────────
-  // C 系列（Challenge）8戦術
-  // ─────────────────────────────────────
+  // C 系列（8戦術）
   if (tacticId === 'C1') return executeOvertrump(ctx);
   if (tacticId === 'C2' || tacticId === 'C3' || tacticId === 'C8') return executeChallengeWin(ctx);
   if (tacticId === 'C4') return executeSameTwoWin(ctx);
   if (tacticId === 'C5') return executeSafeAceCash(ctx);
 
-  // ─────────────────────────────────────
-  // D 系列（Duck）15戦術
-  // ─────────────────────────────────────
+  // D 系列（15戦術）
   if (tacticId === 'D1' || tacticId === 'D8' || tacticId === 'D13' || tacticId === 'D15') return lowX(ctx, ctx.legal);
   if (tacticId === 'D2' || tacticId === 'D6' || tacticId === 'D9') return executeDuckNoPoints(ctx);
-  if (tacticId === 'D3' || tacticId === 'D4' || tacticId === 'D5' || tacticId === 'D7') return lowX(ctx, ctx.legal);
+  if (tacticId === 'D3') return executeHoldMightyDuck(ctx);
+  if (tacticId === 'D4') return executeHoldTrumpDuck(ctx);
+  if (tacticId === 'D5') return executeHoldAceDuck(ctx);
+  if (tacticId === 'D7') return executeVoidCreateDiscard(ctx);
   if (tacticId === 'D10' || tacticId === 'D11' || tacticId === 'D14') return lowX(ctx, ctx.legal);
   if (tacticId === 'D12') return executeDuckNoPoints(ctx);
 
-  // ─────────────────────────────────────
-  // S 系列（Sacrifice）8戦術
-  // ─────────────────────────────────────
+  // S 系列（8戦術）
   if (tacticId.startsWith('S') && /^S\d/.test(tacticId)) return executeSacrifice(ctx);
 
-  // ─────────────────────────────────────
-  // AT 系列（AllTakeAvoid）5戦術
-  // ─────────────────────────────────────
+  // AT 系列（5戦術）
   if (tacticId === 'AT1' || tacticId === 'AT2' || tacticId === 'AT5') return executeAllTakeAvoid(ctx);
   if (tacticId === 'AT3' || tacticId === 'AT4') return lowX(ctx, ctx.legal);
 
-  // ─────────────────────────────────────
-  // G 系列（Feed）10戦術
-  // ─────────────────────────────────────
+  // G 系列（10戦術）
   if (tacticId.startsWith('G') && /^G\d/.test(tacticId)) {
     if (tacticId === 'G3') return lowX(ctx, ctx.legal);
     return executeFeed(ctx);
   }
 
-  // ─────────────────────────────────────
-  // OV 系列（OvertakeAvoid）6戦術
-  // ─────────────────────────────────────
+  // OV 系列（6戦術）
   if (tacticId.startsWith('OV')) return executeOvertakeAvoid(ctx);
 
-  // ─────────────────────────────────────
-  // H 系列（HOLD）12戦術
-  // ─────────────────────────────────────
-  if (tacticId.startsWith('H') && /^H\d/.test(tacticId)) return executeHold(ctx);
+  // H 系列（12戦術）★ 修正: 温存対象を除外
+  if (tacticId === 'H1') return executeHoldMighty(ctx);
+  if (tacticId === 'H2') return executeHoldTrumpJ(ctx);
+  if (tacticId === 'H3') return executeHoldSameColorJ(ctx);
+  if (tacticId === 'H4') return executeHoldTrumpA(ctx);
+  if (tacticId === 'H5') return executeHoldSideAce(ctx);
+  if (tacticId === 'H6') return executeHoldSameTwo(ctx);
+  if (tacticId === 'H7') return executeHoldPoints(ctx);
+  if (tacticId === 'H8') return executeHoldTrump(ctx);
+  if (tacticId === 'H9') return executeHoldMidTrump(ctx);
+  if (tacticId === 'H10') return executeHoldShadow(ctx);
+  if (tacticId === 'H11') return lowX(ctx, ctx.legal);
+  if (tacticId === 'H12') return lowX(ctx, ctx.legal);
 
-  // ─────────────────────────────────────
-  // PR 系列（Probe）6戦術
-  // ─────────────────────────────────────
+  // PR 系列（6戦術）
   if (tacticId.startsWith('PR')) return executeProbe(ctx);
 
-  // ─────────────────────────────────────
-  // P 系列（特殊）8戦術
-  // ─────────────────────────────────────
+  // P 系列（8戦術）
   if (tacticId === 'P1') return null;
   if (tacticId === 'P3' || tacticId === 'P4' || tacticId === 'P5' || tacticId === 'P6' || tacticId === 'P7') {
     return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
   }
 
-  // ─────────────────────────────────────
-  // Q1-Q4（セイム2）17戦術
-  // ─────────────────────────────────────
+  // Q1-Q4（17戦術）
   if (tacticId === 'Q1-0' || tacticId === 'Q1-1' || tacticId === 'Q1-3' || tacticId === 'Q1-5' || tacticId === 'Q2-2') return executeHoldSameTwo(ctx);
   if (tacticId === 'Q1-2' || tacticId === 'Q1-4') return executeSameTwoWin(ctx);
   if (tacticId === 'Q2-1' || tacticId === 'Q2-3') return executeFeed(ctx);
   if (tacticId === 'Q3-1') return executeSafeAceCash(ctx);
   if (tacticId === 'Q3-2') return executeVoidThenAce(ctx);
   if (tacticId === 'Q3-3') return executeConsumeTwo(ctx);
-  if (tacticId === 'Q3-4') return executeDuckNoPoints(ctx);
+  if (tacticId === 'Q3-4') return executeHoldAceDuck(ctx);
   if (tacticId === 'Q3-5') return executeAvoidDangerSuit(ctx);
   if (tacticId === 'Q3-6') return executeCutDangerSuit(ctx);
   if (tacticId === 'Q3-7') return executeSafeAceCash(ctx);
   if (tacticId === 'Q4-1') return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
 
-  // ─────────────────────────────────────
-  // E 系列（組み合わせ）24戦術
-  // ─────────────────────────────────────
+  // E 系列（24戦術）
   if (tacticId === 'E1-1') return executeConsecutiveCash(ctx);
   if (tacticId === 'E1-2') return executeConsecutiveHold(ctx);
   if (tacticId === 'E1-3') return executeSplitAK(ctx);
@@ -1731,9 +1703,7 @@ function executeTactic(tacticId, ctx) {
   if (tacticId === 'E7-2') return executeDominantSuitHold(ctx);
   if (tacticId === 'E8-1') return executePointConcentration(ctx);
 
-  // ─────────────────────────────────────
-  // SS 系列（スート選択）7戦術
-  // ─────────────────────────────────────
+  // SS 系列（7戦術）
   if (tacticId === 'SS1') return executeWeakSuitLead(ctx);
   if (tacticId === 'SS2') return executeSafeSuitLead(ctx);
   if (tacticId === 'SS3') return executeTrumpSuitLead(ctx);
@@ -1742,17 +1712,12 @@ function executeTactic(tacticId, ctx) {
   if (tacticId === 'SS6') return executeExploitAllyVoid(ctx);
   if (tacticId === 'SS7') return executeLongSuitDevelop(ctx);
 
-  // ─────────────────────────────────────
-  // PS 系列（手番別）5戦術
-  // ─────────────────────────────────────
+  // PS 系列（5戦術）
   if (tacticId === 'PS1' || tacticId === 'PS2' || tacticId === 'PS3') return executePositionPlay(ctx);
   if (tacticId === 'PS4') return executeOvertakeAvoid(ctx);
   if (tacticId === 'PS5') return executeDuckNoPoints(ctx);
 
-  // ─────────────────────────────────────
-  // BS/SC/MM/EV/RC/TS/AI 系列（メタ戦術）29戦術
-  // ★ 修正: メタ戦術は既存の役割別ロジックに委譲
-  // ─────────────────────────────────────
+  // メタ系（BS/SC/MM/EV/RC/TS/AI）
   if (tacticId.startsWith('BS') || tacticId.startsWith('SC') || tacticId.startsWith('MM')
       || tacticId.startsWith('EV') || tacticId.startsWith('RC') || tacticId.startsWith('TS')
       || tacticId.startsWith('AI')) {
@@ -1764,20 +1729,14 @@ function executeTactic(tacticId, ctx) {
     return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
   }
 
-  // ─────────────────────────────────────
-  // M 系列（複合）12戦術
-  // ─────────────────────────────────────
+  // M 系列（12戦術）
   if (tacticId.startsWith('M') && /^M\d/.test(tacticId)) {
     return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
   }
 
-  // デフォルト
   return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
 }
 
-// ============================================
-// 役割に応じたリード/フォロー
-// ============================================
 function chooseLeadByRole(ctx) {
   if (ctx.contract.suit === 'NT') {
     if (ctx.seat === ctx.contract.nap) return chooseNTNapoleonLead(ctx);
@@ -1803,7 +1762,7 @@ function chooseFollowByRole(ctx) {
 }
 
 // ============================================
-// 戦術実行ヘルパー（A1修正: 全戦術実装）
+// ★ 修正: 戦術実行ヘルパー（不具合④⑤⑨⑩修正）
 // ============================================
 
 function executeShadowHunt(ctx) {
@@ -1813,7 +1772,6 @@ function executeShadowHunt(ctx) {
 }
 
 function executeShadowSuppress(ctx) {
-  // ♥Qを温存、他のカードを切る
   const nonShadow = ctx.legal.filter(c => c.id !== '♥Q');
   if (nonShadow.length) return lowX(ctx, nonShadow);
   return lowX(ctx, ctx.legal);
@@ -1876,7 +1834,6 @@ function executeMidTrumpWin(ctx) {
 }
 
 function executeWinnerBest(ctx) {
-  // 絶対勝ち札のうち、最も価値の高いものを選ぶ（点札優先）
   const legal = ctx.legal || [];
   const pointWinners = legal.filter(c => isFace(c) && isAbsoluteWinner(c, ctx.contract, ctx.trick, ctx.playedCards));
   if (pointWinners.length) return pointWinners[0];
@@ -1885,15 +1842,33 @@ function executeWinnerBest(ctx) {
   return executeHighFollow(ctx);
 }
 
+// ★ 修正④: オーバートランプ = 現在勝者を上回る最小の切札
 function executeOvertrump(ctx) {
   if (!ctx.contract || ctx.contract.suit === 'NT') return executeHighFollow(ctx);
   const ledSuit = ctx.trick?.[0]?.card?.suit;
   const selfVoid = ctx.voids?.[ctx.seat]?.[ledSuit];
-  if (selfVoid) {
-    const trumps = ctx.legal.filter(c => c.suit === ctx.contract.suit);
-    if (trumps.length) return trumps.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+  if (!selfVoid) return executeHighFollow(ctx);
+
+  const trumps = ctx.legal.filter(c => c.suit === ctx.contract.suit);
+  if (!trumps.length) return executeHighFollow(ctx);
+
+  // 現在の勝者を取得
+  const currentWinner = ctx.trick.length > 0 ? winningEntry(ctx.contract, ctx.trickNo, ctx.trick.map(t => ({ seat: t.player ?? t.seat, card: t.card }))) : null;
+  if (!currentWinner) return trumps.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+
+  const winnerPower = cardPower(ctx.contract, ctx.trickNo, currentWinner.card, ctx.trick);
+
+  // 勝者を上回る最小切札を選ぶ
+  const beatingTrumps = trumps.filter(c => {
+    const testTrick = [...ctx.trick, { seat: ctx.seat, card: c }];
+    return cardPower(ctx.contract, ctx.trickNo, c, testTrick) > winnerPower;
+  });
+
+  if (beatingTrumps.length) {
+    return beatingTrumps.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
   }
-  return executeHighFollow(ctx);
+  // 上回れない場合は最強切札（あれば）
+  return trumps.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
 }
 
 function executeChallengeWin(ctx) {
@@ -1929,10 +1904,6 @@ function executeOvertakeAvoid(ctx) {
   return lowX(ctx, ctx.legal);
 }
 
-function executeHold(ctx) {
-  return lowX(ctx, ctx.legal);
-}
-
 function executeProbe(ctx) {
   const legal = ctx.legal || [];
   if (legal.length === 0) return null;
@@ -1941,6 +1912,7 @@ function executeProbe(ctx) {
   return lowX(ctx, legal);
 }
 
+// ★ 修正: セイム2温存 = 2を避けて低札
 function executeHoldSameTwo(ctx) {
   const nonTwos = ctx.legal.filter(c => c.rank !== '2');
   if (nonTwos.length) return lowX(ctx, nonTwos);
@@ -1948,7 +1920,6 @@ function executeHoldSameTwo(ctx) {
 }
 
 function executeVoidThenAce(ctx) {
-  // ボイドできた瞬間にAを切る
   const safeAces = ctx.legal.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== ctx.contract?.suit);
   if (safeAces.length) return safeAces[0];
   return lowX(ctx, ctx.legal);
@@ -1961,7 +1932,6 @@ function executeConsumeTwo(ctx) {
 }
 
 function executeAvoidDangerSuit(ctx) {
-  // 危険suitのAを切らない → 他のカードを選ぶ
   const danger = ['♣', '♦', '♥', '♠'].filter(s => s !== ctx.contract?.suit && ctx.legal.some(c => c.suit === s && c.rank === 'A'));
   const safeCards = ctx.legal.filter(c => !(c.rank === 'A' && danger.includes(c.suit)));
   if (safeCards.length) return lowX(ctx, safeCards);
@@ -1969,7 +1939,6 @@ function executeAvoidDangerSuit(ctx) {
 }
 
 function executeCutDangerSuit(ctx) {
-  // 危険suitをリードしてフォロー崩し
   if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
   const trumps = ctx.legal.filter(c => c.suit === ctx.contract.suit);
   if (trumps.length) return trumps[0];
@@ -1995,8 +1964,12 @@ function executeSplitAK(ctx) {
   return lowX(ctx, ctx.legal);
 }
 
+// ★ 修正⑩: 切札Kは温存対象外、サイドK/Qのみ除外
 function executeHoldKQ(ctx) {
-  const nonKQ = ctx.legal.filter(c => !['K', 'Q'].includes(c.rank));
+  const nonKQ = ctx.legal.filter(c => {
+    if (c.suit === ctx.contract?.suit) return true; // 切札K/Qは温存対象外
+    return !['K', 'Q'].includes(c.rank);
+  });
   if (nonKQ.length) return lowX(ctx, nonKQ);
   return lowX(ctx, ctx.legal);
 }
@@ -2011,10 +1984,13 @@ function executeLongRunFull(ctx) {
   return executeHighFollow(ctx);
 }
 
+// ★ 修正⑨: フィネス = Q優先
 function executeFinesse(ctx) {
-  // フィネス: 中札を出して相手のKを誘う
-  const midCards = ctx.legal.filter(c => ['Q', 'J', '10'].includes(c.rank));
-  if (midCards.length) return midCards[0];
+  const priority = ['Q', 'J', '10'];
+  for (const rank of priority) {
+    const midCards = ctx.legal.filter(c => c.rank === rank);
+    if (midCards.length) return midCards[0];
+  }
   return executeHighFollow(ctx);
 }
 
@@ -2033,7 +2009,6 @@ function executeCrossFinesse(ctx) {
 }
 
 function executeShadowWait(ctx) {
-  // 影狩り待機: ♥Qを温存、他を切る
   return executeShadowSuppress(ctx);
 }
 
@@ -2056,18 +2031,29 @@ function executeSameColorJFirst(ctx) {
   return lowX(ctx, ctx.legal);
 }
 
+// ★ 修正⑤: 二段温存 = 正J/裏Jを除外
 function executeTwoStageHold(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const trumpJId = ctx.contract.suit + 'J';
+  const scjId = sameColorSuitOf(ctx.contract.suit) + 'J';
+  const nonRoleJ = ctx.legal.filter(c => c.id !== trumpJId && c.id !== scjId);
+  if (nonRoleJ.length) return lowX(ctx, nonRoleJ);
   return lowX(ctx, ctx.legal);
 }
 
 function executeHoldAceGuard(ctx) {
+  const aRisk = shouldAvoidACut(ctx, classifySituation(ctx), ctx.params || {});
+  if (aRisk.avoid) {
+    // Aを避けて低札
+    const nonAces = ctx.legal.filter(c => c.rank !== 'A' || c.suit === ctx.contract?.suit);
+    if (nonAces.length) return lowX(ctx, nonAces);
+  }
   const safeAces = ctx.legal.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== ctx.contract?.suit);
-  if (safeAces.length && !shouldAvoidACut(ctx, classifySituation(ctx), ctx.params || {}).avoid) return safeAces[0];
+  if (safeAces.length) return safeAces[0];
   return lowX(ctx, ctx.legal);
 }
 
 function executeCrossRuffPrepare(ctx) {
-  // ボイド作成: 短スートを捨てる
   const shortSuitCards = ctx.legal.filter(c => {
     const suitCount = (ctx.hand || []).filter(h => h.suit === c.suit).length;
     return suitCount <= 2 && c.suit !== ctx.contract?.suit;
@@ -2084,7 +2070,6 @@ function executeCrossRuffActivate(ctx) {
 }
 
 function executeDominantSuitAttack(ctx) {
-  // 支配suitで攻める
   const aces = ctx.legal.filter(c => c.rank === 'A');
   if (aces.length) return aces[0];
   return executeHighFollow(ctx);
@@ -2095,7 +2080,6 @@ function executeDominantSuitHold(ctx) {
 }
 
 function executePointConcentration(ctx) {
-  // 点札集中回収: 点札を切る
   const points = ctx.legal.filter(c => isFace(c));
   if (points.length) return points.sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
   return lowX(ctx, ctx.legal);
@@ -2181,7 +2165,6 @@ function executePositionPlay(ctx) {
 }
 
 function executeFirstTrickLead(ctx) {
-  // 1トリック目では2をリードしない
   const nonTwos = ctx.legal.filter(c => c.rank !== '2');
   if (nonTwos.length) return lowX(ctx, nonTwos);
   return lowX(ctx, ctx.legal);
@@ -2195,28 +2178,137 @@ function executeAttackToHold(ctx) {
   return lowX(ctx, ctx.legal);
 }
 
+// ★ 新規追加: 温存系ヘルパー（不具合⑤修正）
+function executeHoldMighty(ctx) {
+  const nonMighty = ctx.legal.filter(c => c.id !== '♠A');
+  if (nonMighty.length) return lowX(ctx, nonMighty);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldTrumpJ(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const tjId = ctx.contract.suit + 'J';
+  const non = ctx.legal.filter(c => c.id !== tjId);
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldSameColorJ(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const scjId = sameColorSuitOf(ctx.contract.suit) + 'J';
+  const non = ctx.legal.filter(c => c.id !== scjId);
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldTrumpA(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const trumpAId = ctx.contract.suit + 'A';
+  const non = ctx.legal.filter(c => c.id !== trumpAId);
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldSideAce(ctx) {
+  const sideAces = ctx.legal.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== ctx.contract?.suit);
+  const non = ctx.legal.filter(c => !sideAces.includes(c));
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldPoints(ctx) {
+  const non = ctx.legal.filter(c => !isFace(c));
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldTrump(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const trumps = ctx.legal.filter(c => c.suit === ctx.contract.suit);
+  const non = ctx.legal.filter(c => !trumps.includes(c));
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldMidTrump(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const midTrumps = ctx.legal.filter(c => c.suit === ctx.contract.suit && !['A', 'K', 'J'].includes(c.rank));
+  const non = ctx.legal.filter(c => !midTrumps.includes(c));
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldMightyDuck(ctx) {
+  const nonMighty = ctx.legal.filter(c => c.id !== '♠A');
+  if (nonMighty.length) return lowX(ctx, nonMighty);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldTrumpDuck(ctx) {
+  if (!ctx.contract || ctx.contract.suit === 'NT') return lowX(ctx, ctx.legal);
+  const trumps = ctx.legal.filter(c => c.suit === ctx.contract.suit);
+  const non = ctx.legal.filter(c => !trumps.includes(c));
+  if (non.length) return lowX(ctx, non);
+  return lowX(ctx, ctx.legal);
+}
+
+function executeHoldAceDuck(ctx) {
+  const aRisk = shouldAvoidACut(ctx, classifySituation(ctx), ctx.params || {});
+  if (aRisk.avoid) {
+    const nonAces = ctx.legal.filter(c => !(c.rank === 'A' && c.id !== '♠A' && c.suit !== ctx.contract?.suit));
+    if (nonAces.length) return lowX(ctx, nonAces);
+  }
+  return lowX(ctx, ctx.legal);
+}
+
+function executeVoidCreateDiscard(ctx) {
+  const shortSuits = SUITS.filter(s => s !== ctx.contract?.suit).sort((a, b) => (ctx.hand || []).filter(c => c.suit === a).length - (ctx.hand || []).filter(c => c.suit === b).length);
+  for (const s of shortSuits) {
+    const cards = ctx.legal.filter(c => c.suit === s);
+    if (cards.length && cards.length <= 2) {
+      return cards.sort((a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank))[0];
+    }
+  }
+  return lowX(ctx, ctx.legal);
+}
+
 // ==========================================
-// ★ A4修正: メインエントリーポイント（ロールアウトで戦術無効）
+// ★ 修正②③: メインエントリーポイント（UNIVERSAL時も ctx に情報セット）
 // ==========================================
 export function chooseCardToPlay(ctx) {
   const { seat, contract, legal, hand } = ctx;
   if (!legal || !legal.length) return null;
 
-  // 1. ゲーム結果確定済みなら即座に低札
+  // 1. ゲーム結果確定済み
   const outcome = detectGameOutcome(ctx);
   if (outcome !== 'ongoing') {
     const fast = chooseCardAfterOutcome(ctx, outcome);
-    if (fast) return fast;
+    if (fast) {
+      ctx._selectedTacticId = 'GAME_END';
+      ctx._situationHash = 'END';
+      ctx._prior = 0;
+      return fast;
+    }
   }
 
   // 2. オープニングブック
   const bookCard = lookupOpeningBook(ctx);
-  if (bookCard) return bookCard;
+  if (bookCard) {
+    ctx._selectedTacticId = 'OPENING_BOOK';
+    ctx._situationHash = 'OB';
+    ctx._prior = 0;
+    return bookCard;
+  }
 
   // 3. セイム2トラップ回避
   if (ctx.trickNo > 0 && isSameTwoTrap(ctx) && !isOnNapSide(ctx)) {
     const safe = chooseSafeFollowForSameTwo(ctx);
-    if (safe) return safe;
+    if (safe) {
+      ctx._selectedTacticId = 'SAME_TWO_TRAP';
+      ctx._situationHash = 'TRAP';
+      ctx._prior = 0;
+      return safe;
+    }
   }
 
   // 4. 終盤完全探索
@@ -2224,34 +2316,52 @@ export function chooseCardToPlay(ctx) {
   if (ctx.trickNo >= (10 - (ctx.params?.endgameTrickThreshold ?? 3))) {
     try {
       const endgameResult = enumerateEndgame(ctx, ctx.params?.endgameMaxCombinations ?? 100000, rng);
-      if (endgameResult && endgameResult.bestCard) return endgameResult.bestCard;
+      if (endgameResult && endgameResult.bestCard) {
+        ctx._selectedTacticId = 'ENDGAME_SEARCH';
+        ctx._situationHash = 'ENDGAME';
+        ctx._prior = 0;
+        return endgameResult.bestCard;
+      }
     } catch (e) { /* fallback */ }
   }
 
-  // 5. MECE戦術エンジン（enableTacticEngine が true の場合のみ）
+  // 5. MECE戦術エンジン
   const engineEnabled = ctx.params?.enableTacticEngine !== false;
   if (engineEnabled) {
     try {
       const selection = selectTactic(ctx, ctx.params, ctx.experience);
-      if (selection && selection.tactic && selection.tactic.id !== 'UNIVERSAL') {
-        const chosen = executeTactic(selection.tactic.id, ctx);
-        if (chosen && legal.some(c => c.id === chosen.id)) {
-          ctx._selectedTacticId = selection.tactic.id;
-          ctx._situationHash = selection.situationHash || hashSituation(ctx);
-          return chosen;
+      if (selection) {
+        // ★ 修正②: UNIVERSAL時も記録
+        ctx._selectedTacticId = selection.tactic?.id || 'UNIVERSAL';
+        ctx._situationHash = selection.situationHash || hashSituation(ctx);
+        // ★ 修正③: prior をセット
+        ctx._prior = Number.isFinite(selection.prior) ? selection.prior : 0;
+
+        if (selection.tactic && selection.tactic.id !== 'UNIVERSAL') {
+          const chosen = executeTactic(selection.tactic.id, ctx);
+          if (chosen && legal.some(c => c.id === chosen.id)) {
+            return chosen;
+          }
         }
       }
     } catch (e) {
-      // フォールバック
+      ctx._selectedTacticId = 'ENGINE_ERROR';
+      ctx._situationHash = 'ERR';
+      ctx._prior = 0;
     }
   }
 
-  // 6. フォールバック: 既存の役割別ロジック
+  // 6. フォールバック
+  if (!ctx._selectedTacticId) {
+    ctx._selectedTacticId = 'FALLBACK';
+    ctx._situationHash = 'FB';
+    ctx._prior = 0;
+  }
   return ctx.trick.length === 0 ? chooseLeadByRole(ctx) : chooseFollowByRole(ctx);
 }
 
 // ==========================================
-// ★ 決定論MCTS（A5修正）
+// 決定論MCTS
 // ==========================================
 function determinizeState(ctx, rng) {
   const unseen = [];
@@ -2437,7 +2547,7 @@ export function getMCTSStats(ctx) {
     if (!bestCard) bestCard = legal[0];
 
     const hands = determinizeState(ctx, rng);
-    let trick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
+    let trick = ctx.trick.map(t => ({ seat: t.seat ?? t.player, card: t.card }));
     hands[ctx.seat] = hands[ctx.seat].filter(c => c.id !== bestCard.id);
     trick.push({ seat: ctx.seat, card: bestCard });
     let active = (ctx.seat + 1) % 5;
@@ -2612,7 +2722,7 @@ function oracleMCTS(ctx, hands, timeMs, rng, params) {
     if (!bestCard) bestCard = legal[0];
     const simHands = hands.map(h => h.slice());
     simHands[ctx.seat] = simHands[ctx.seat].filter(c => c.id !== bestCard.id);
-    const simTrick = ctx.trick.map(t => ({ seat: t.seat, card: t.card }));
+    const simTrick = ctx.trick.map(t => ({ seat: t.seat ?? t.player, card: t.card }));
     simTrick.push({ seat: ctx.seat, card: bestCard });
     const simActive = (ctx.seat + 1) % 5;
     const win = simulateWithPolicyCompleteInfo(
@@ -3135,4 +3245,4 @@ export function canSendSignal(hand, currentHigh, seat, bidSignals, params, match
   if (!currentHigh || currentHigh.num < 13) return { intent: 'NONE', reason: '競り未開始' };
   return decideNextBid(hand, currentHigh, myRole, params, bidSignals?.received || []);
 }
-
+// ===== [ai-tactics.js 完成] =====
