@@ -1,6 +1,5 @@
 // situation.js — MECE状況分類層（20次元 + 決定論ハッシュ）
-// 新規ファイル: AIの意思決定に必要な局面情報を20次元で構造化する
-// 純関数のみ。副作用なし。乱数なし（決定論保証）。
+// 既存ファイル修正: セイム2精度向上、プレーオフ対応、ハッシュ整合性強化
 
 import { SUITS, RANKS, FACE, sameColorSuitOf } from './constants.js';
 
@@ -23,98 +22,69 @@ export function classifySituation(ctx) {
   const points = Array.isArray(ctx.points) ? ctx.points : [0, 0, 0, 0, 0];
   const trickNo = Number.isInteger(ctx.trickNo) ? ctx.trickNo : 0;
   const round = Number.isInteger(ctx.round) ? ctx.round : 1;
+  const isPlayoff = ctx.playoff === true;
 
-  // ─────────────────────────────────────
   // 次元1: 役割
-  // ─────────────────────────────────────
   const role = classifyRole(seat, contract, hand);
 
-  // ─────────────────────────────────────
   // 次元2: フェーズ
-  // ─────────────────────────────────────
   const phase = classifyPhase(trickNo);
 
-  // ─────────────────────────────────────
   // 次元3: 手番位置
-  // ─────────────────────────────────────
   const turn = classifyTurn(trick, seat, contract);
 
-  // ─────────────────────────────────────
   // 次元4: 場の点札
-  // ─────────────────────────────────────
   const trickValue = classifyTrickValue(trick);
 
-  // ─────────────────────────────────────
-  // 次元5: 敵切札残
-  // 次元6: 自切札残
-  // ─────────────────────────────────────
+  // 次元5-6: 切札残
   const isNT = contract.suit === 'NT';
   const trumpInfo = isNT ? { enemy: 'nt', self: 'nt' } : classifyTrumpResidual(hand, playedCards, contract);
 
-  // ─────────────────────────────────────
-  // 次元7-9: 役札所在（マイティ/正J/裏J）
-  // ─────────────────────────────────────
+  // 次元7-9: 役札所在
   const mightyLocation = classifyCardLocation('♠A', hand, playedCards, discardedKitty, trick, contract, seat);
   const trumpJLocation = isNT ? 'nt' : classifyCardLocation(contract.suit + 'J', hand, playedCards, discardedKitty, trick, contract, seat);
   const sameColorJLocation = isNT ? 'nt' : classifyCardLocation(sameColorSuitOf(contract.suit) + 'J', hand, playedCards, discardedKitty, trick, contract, seat);
 
-  // ─────────────────────────────────────
   // 次元10: セイム2状態
-  // ─────────────────────────────────────
   const sameTwoStatus = classifySameTwoStatus(hand, trick, trickNo, contract, voids, seat);
 
-  // ─────────────────────────────────────
   // 次元11: ボイド状態
-  // ─────────────────────────────────────
   const voidStatus = classifyVoidStatus(voids, seat, contract);
 
-  // ─────────────────────────────────────
   // 次元12: 得点差
-  // ─────────────────────────────────────
   const scoreState = classifyScoreState(points, contract, seat, trickNo);
 
-  // ─────────────────────────────────────
   // 次元13: 全部取りリスク
-  // ─────────────────────────────────────
   const allTakeRisk = classifyAllTakeRisk(points, contract, seat, trickNo);
 
-  // ─────────────────────────────────────
   // 次元14: オーバーキル状況
-  // ─────────────────────────────────────
   const overkillStatus = classifyOverkillStatus(trick, seat, contract);
 
-  // ─────────────────────────────────────
   // 次元15: ラウンド
-  // ─────────────────────────────────────
-  const roundCategory = classifyRound(round, ctx.playoff === true);
+  const roundCategory = classifyRound(round, isPlayoff, ctx.playoffCount);
 
-  // ─────────────────────────────────────
-  // 次元16: 自セイム2保有
+  // 次元16: 自セイム2保有（★ 修正: 切札/サイド区別）
+  const selfHasSameTwo = detectSelfSameTwo(hand, trickNo, contract);
+
   // 次元17: 敵セイム2保有推定
+  const enemySameTwoEstimate = estimateEnemySameTwo(playedCards, discardedKitty, hand, contract, seat);
+
   // 次元18: セイム2残存2の数
-  // ─────────────────────────────────────
-  const selfHasSameTwo = detectSelfSameTwo(hand, trickNo);
-  const enemySameTwoEstimate = estimateEnemySameTwo(playedCards, discardedKitty, contract, seat);
   const sameTwoRemaining = countRemainingTwos(playedCards, discardedKitty, hand);
 
-  // ─────────────────────────────────────
-  // 次元19: 全員フォロー可否（セイム2成立可否）
-  // ─────────────────────────────────────
+  // 次元19: 全員フォロー可否
   const followFeasibility = classifyFollowFeasibility(trick, voids, trickNo);
 
-  // ─────────────────────────────────────
   // 次元20: A切りリスク
-  // ─────────────────────────────────────
   const aCutRisk = classifyACutRisk(hand, playedCards, discardedKitty, voids, trickNo, contract, seat);
 
-  // 補助情報（次元には含めないが、prior計算等で使う）
+  // 補助情報
   const legalCount = legal.length;
   const handSize = hand.length;
   const isLastSeat = trick.length === 4;
   const trickPointCount = trick.filter(t => t.card && FACE.includes(t.card.rank)).length;
 
   return {
-    // 20次元
     role, phase, turn, trickValue,
     enemyTrump: trumpInfo.enemy, selfTrump: trumpInfo.self,
     mightyLocation, trumpJLocation, sameColorJLocation,
@@ -127,15 +97,13 @@ export function classifySituation(ctx) {
     selfHasSameTwo, enemySameTwoEstimate, sameTwoRemaining,
     followFeasibility,
     aCutRisk,
-
-    // 補助情報
     legalCount, handSize, isLastSeat, trickPointCount,
     seat, trickNo,
   };
 }
 
 // ============================================================
-// 決定論ハッシュ: 状況 + 手札 + 場 + 履歴から固定文字列を生成
+// 決定論ハッシュ
 // ============================================================
 export function hashSituation(ctx) {
   const s = classifySituation(ctx);
@@ -175,9 +143,6 @@ function fnv1a(str) {
   return h.toString(16).padStart(8, '0');
 }
 
-// ============================================================
-// 決定論シード: 状況ハッシュから 32bit 整数を生成
-// ============================================================
 export function deriveSeedFromSituation(ctx, salt = 0) {
   const h = hashSituation(ctx);
   const seed = (parseInt(h, 16) ^ (salt >>> 0)) >>> 0;
@@ -205,7 +170,6 @@ function classifyRole(seat, contract, hand) {
   if (seat === contract.nap) return 'nap';
   if (contract.solo) return 'alliance';
   if (contract.revealedCall && seat === contract.deputy) return 'deputy_revealed';
-  // 未公開副官の判定: 手札に指名カードがある
   if (!contract.revealedCall && contract.call && hand.some(c => c.id === contract.call.id)) {
     return 'deputy_hidden';
   }
@@ -221,13 +185,11 @@ function classifyPhase(trickNo) {
 
 function classifyTurn(trick, seat, contract) {
   if (!trick || trick.length === 0) return 'lead';
-  // 現在の勝者を判定（簡易: 最強カードを推定せず、暫定でカード強度推定）
   const currentWinner = estimateCurrentWinner(trick, contract);
   if (!currentWinner) return 'follow_enemy_win';
-  const isWinnerAlly = currentWinner === seat
-    || (contract && currentWinner === contract.nap)
-    || (contract && !contract.solo && currentWinner === contract.deputy);
   if (currentWinner === seat) return 'follow_self_win';
+  const isWinnerAlly = (contract && currentWinner === contract.nap)
+    || (contract && !contract.solo && currentWinner === contract.deputy);
   return isWinnerAlly ? 'follow_ally_win' : 'follow_enemy_win';
 }
 
@@ -287,28 +249,20 @@ function classifyCardLocation(cardId, hand, playedCards, discardedKitty, trick, 
   if (trick.some(t => t.card?.id === cardId)) return 'played';
   if (playedCards.some(c => c.id === cardId)) return 'played';
   if (discardedKitty.some(c => c.id === cardId)) return 'played';
-  // 味方の可能性を推定: NAP視点で副官判明済みなら副官、連合軍視点でNAP軍が味方
   if (contract) {
     const isNap = seat === contract.nap;
     const isDeputy = contract.revealedCall && seat === contract.deputy;
-    if (isNap && contract.revealedCall) return 'enemy'; // 副官以外は敵
-    if (isDeputy) return 'enemy'; // NAP軍から見て残りは敵
-    if (!isNap && !isDeputy) {
-      // 連合軍視点: NAP軍（NAP+副官）が敵
-      return 'enemy';
-    }
+    if (isNap && contract.revealedCall) return 'enemy';
+    if (isDeputy) return 'enemy';
+    if (!isNap && !isDeputy) return 'enemy';
   }
   return 'unknown';
 }
 
 function classifySameTwoStatus(hand, trick, trickNo, contract, voids, seat) {
-  if (trickNo === 0) return 'used'; // 1トリック目は無効
+  if (trickNo === 0) return 'used';
   const selfHas = hand.some(c => c.rank === '2');
-  if (!selfHas) {
-    // 自分に2がない → 敵か味方が保有
-    return 'enemy_capable';
-  }
-  // 場の状況から成立可否を判定
+  if (!selfHas) return 'enemy_capable';
   const allFollow = trick.length === 0 || trick.every(t => t.card?.suit === trick[0].card?.suit);
   if (trick.length === 0) return 'self_capable';
   if (allFollow) return 'self_capable';
@@ -321,14 +275,12 @@ function classifyVoidStatus(voids, seat, contract) {
   const isNap = seat === contract.nap;
   const isDeputy = contract.revealedCall && seat === contract.deputy;
   if (isNap || isDeputy) {
-    // 敵（連合軍）のボイドを確認
     for (let s = 0; s < 5; s++) {
       if (s === seat || s === contract.nap || (!contract.solo && s === contract.deputy)) continue;
       if (Object.keys(voids[s] || {}).some(v => voids[s][v])) return 'enemy_void';
     }
     return 'none';
   }
-  // 連合軍視点: 味方連合軍のボイド確認
   for (let s = 0; s < 5; s++) {
     if (s === seat || s === contract.nap) continue;
     if (!contract.solo && s === contract.deputy) continue;
@@ -373,33 +325,49 @@ function classifyOverkillStatus(trick, seat, contract) {
     || (!contract.solo && currentWinner === contract.deputy);
   const amIAlly = seat !== contract.nap && (contract.solo || seat !== contract.deputy);
   if (isWinnerAlly && amIAlly) return 'ally_winning';
-  if (!isWinnerAlly && !amIAlly) return 'ally_winning'; // 連合軍同士
+  if (!isWinnerAlly && !amIAlly) return 'ally_winning';
   return 'none';
 }
 
-function classifyRound(round, isPlayoff) {
-  if (isPlayoff) return 'playoff';
+function classifyRound(round, isPlayoff, playoffCount) {
+  // ★ 修正: プレーオフを最優先で判定
+  if (isPlayoff === true) return 'playoff';
   if (round >= 10) return 'all_last';
   if (round === 9) return 'last_prev';
   return 'normal';
 }
 
-function detectSelfSameTwo(hand, trickNo) {
+// ★ 修正: 切札2とサイド2を区別
+function detectSelfSameTwo(hand, trickNo, contract) {
   if (trickNo === 0) return 'none';
-  const sideTwos = hand.filter(c => c.rank === '2' && c.suit !== '♠' && c.suit !== 'NT');
-  if (sideTwos.length === 0) return 'none';
-  const trumpTwo = hand.find(c => c.rank === '2' && c.suit !== '♠' && c.suit !== 'NT' && c.suit !== '♣' && c.suit !== '♦' && c.suit !== '♥' && c.suit !== '♠');
-  // 切札2の判定は contract に依存するため簡略化。ここではサイド2のみ判定
-  return sideTwos.length > 0 ? 'side' : 'none';
+  if (!contract) return 'none';
+  const isNT = contract.suit === 'NT';
+  const trumpSuit = isNT ? null : contract.suit;
+
+  // 切札2の判定（NTの場合は切札2なし）
+  if (trumpSuit && hand.some(c => c.rank === '2' && c.suit === trumpSuit)) {
+    return 'trump';
+  }
+  // サイド2の判定
+  const sideTwos = hand.filter(c => c.rank === '2' && (!trumpSuit || c.suit !== trumpSuit));
+  if (sideTwos.length > 0) return 'side';
+  return 'none';
 }
 
-function estimateEnemySameTwo(playedCards, discardedKitty, contract, seat) {
+// ★ 修正: 自分の手札の2も考慮
+function estimateEnemySameTwo(playedCards, discardedKitty, hand, contract, seat) {
   const played2Ids = new Set([
     ...playedCards.filter(c => c.rank === '2').map(c => c.id),
     ...discardedKitty.filter(c => c.rank === '2').map(c => c.id),
+    ...hand.filter(c => c.rank === '2').map(c => c.id),
   ]);
   const remaining = ['♣2', '♦2', '♥2', '♠2'].filter(id => !played2Ids.has(id));
   if (remaining.length === 0) return 'none';
+
+  // 切札2が残っているか
+  const trumpSuit = contract && contract.suit !== 'NT' ? contract.suit : null;
+  if (trumpSuit && remaining.some(id => id === trumpSuit + '2')) return 'trump';
+
   if (remaining.length >= 3) return 'unknown';
   return 'side';
 }
@@ -426,16 +394,14 @@ function classifyFollowFeasibility(trick, voids, trickNo) {
 function classifyACutRisk(hand, playedCards, discardedKitty, voids, trickNo, contract, seat) {
   const selfAces = hand.filter(c => c.rank === 'A' && c.suit !== contract.suit);
   if (selfAces.length === 0) return 'low';
-  if (trickNo === 0) return 'low'; // 1トリック目はセイム2無効
+  if (trickNo === 0) return 'low';
 
-  // 各Aの安全度を評価
   let maxRisk = 0;
   for (const ace of selfAces) {
     const suit = ace.suit;
     const twoId = suit + '2';
     const twoPlayed = playedCards.some(c => c.id === twoId) || discardedKitty.some(c => c.id === twoId);
     if (twoPlayed) continue;
-    // 敵ボイド確認
     const enemyVoids = [0, 1, 2, 3, 4].filter(s => {
       if (s === seat) return false;
       if (s === contract.nap) return false;
@@ -443,7 +409,7 @@ function classifyACutRisk(hand, playedCards, discardedKitty, voids, trickNo, con
       return voids[s] && voids[s][suit];
     }).length;
     let risk = 0.5;
-    if (enemyVoids > 0) risk = 0.1; // 敵ボイドあり = セイム2不成立
+    if (enemyVoids > 0) risk = 0.1;
     if (enemyVoids === 0) risk = 0.6;
     maxRisk = Math.max(maxRisk, risk);
   }
@@ -454,7 +420,7 @@ function classifyACutRisk(hand, playedCards, discardedKitty, voids, trickNo, con
 }
 
 // ============================================================
-// 次元値の言語化（デバッグ・ログ用）
+// 次元値の言語化
 // ============================================================
 export const DIMENSION_LABELS = {
   role: { nap: 'ナポレオン', deputy_revealed: '副官(公開)', deputy_hidden: '副官(未公開)', alliance: '連合軍' },
@@ -489,9 +455,6 @@ export function describeSituation(situation) {
   return parts.join(' / ');
 }
 
-// ============================================================
-// デバッグ用: 全次元を展開
-// ============================================================
 export function debugSituation(ctx) {
   const s = classifySituation(ctx);
   return {
@@ -500,4 +463,3 @@ export function debugSituation(ctx) {
     description: describeSituation(s),
   };
 }
-
