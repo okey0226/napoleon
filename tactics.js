@@ -1,6 +1,5 @@
-// tactics.js — MECE戦術カタログ層（208戦術の統合・prior計算・決定論的選択）
-// 新規ファイル: 全戦術の定義、状況→戦術の候補生成、prior計算、argmax選択
-// 純関数のみ。乱数なし（決定論保証）。
+// tactics.js — MECE戦術カタログ層（既存ファイル修正）
+// 修正: 経験DBキー整合、CB1-CB6削除、ロールアウト無効化、カバレッジ統計
 
 import {
   SUITS, RANKS, FACE, SV, sameColorSuitOf,
@@ -17,7 +16,7 @@ import {
 } from './combinations.js';
 
 // ============================================================
-// 公開: 208戦術の統合カタログ
+// 公開: 静的戦術カタログ（152戦術）
 // ============================================================
 export const TACTIC_CATALOG = buildCatalog();
 
@@ -26,19 +25,32 @@ export const TACTIC_CATALOG = buildCatalog();
 // ============================================================
 export function selectTactic(ctx, params, experience) {
   const p = params || defaultStrategy();
+
+  // ★ 修正: ロールアウト時は戦術エンジンを無効化（性能劣化防止）
+  if (p.enableTacticEngine === false) {
+    return {
+      tactic: UNIVERSAL_FALLBACK,
+      prior: -Infinity,
+      situation: null,
+      candidates: [],
+      disabled: true,
+    };
+  }
+
   const situation = classifySituation(ctx);
+  const situationHash = hashSituation(ctx);
 
   // 1. 候補生成
-  const candidates = generateCandidates(ctx, situation, p);
+  const candidates = generateCandidates(ctx, situation, p, situationHash);
 
   // 2. prior計算
   const scored = candidates.map(t => ({
     ...t,
-    prior: calculatePrior(t, situation, ctx, p, experience),
+    prior: calculatePrior(t, situation, ctx, p, experience, situationHash),
   }));
 
   if (scored.length === 0) {
-    return { tactic: UNIVERSAL_FALLBACK, prior: -Infinity, situation, candidates: [] };
+    return { tactic: UNIVERSAL_FALLBACK, prior: -Infinity, situation, situationHash, candidates: [] };
   }
 
   // 3. argmax（同値はtactic.idの辞書順）
@@ -51,6 +63,7 @@ export function selectTactic(ctx, params, experience) {
     tactic: scored[0],
     prior: scored[0].prior,
     situation,
+    situationHash,
     candidates: scored,
   };
 }
@@ -61,39 +74,38 @@ export function selectTactic(ctx, params, experience) {
 export function scoreAllTactics(ctx, params, experience) {
   const p = params || defaultStrategy();
   const situation = classifySituation(ctx);
-  const candidates = generateCandidates(ctx, situation, p);
+  const situationHash = hashSituation(ctx);
+  const candidates = generateCandidates(ctx, situation, p, situationHash);
   return candidates.map(t => ({
     id: t.id,
     name: t.name,
     category: t.category,
-    prior: calculatePrior(t, situation, ctx, p, experience),
+    prior: calculatePrior(t, situation, ctx, p, experience, situationHash),
     analyticEV: estimateAnalyticEV(t, situation, ctx, p),
   })).sort((a, b) => b.prior - a.prior);
 }
 
 // ============================================================
-// 内部: 候補生成（各戦術の前提条件を満たすものだけ）
+// 内部: 候補生成
 // ============================================================
-function generateCandidates(ctx, situation, p) {
+function generateCandidates(ctx, situation, p, situationHash) {
   const candidates = [];
 
-  // プリミティブ戦術（90）: 状況に応じてフィルタ
+  // 静的戦術（プリミティブ + 選択 + 複合 + メタ）
   for (const t of PRIMITIVE_CATALOG) {
     if (matchesPreconditions(t, situation, ctx)) candidates.push(t);
   }
-  // 選択戦術（20）
   for (const t of SELECTION_CATALOG) {
     if (matchesPreconditions(t, situation, ctx)) candidates.push(t);
   }
-  // 複合戦術（30）
   for (const t of COMPOSITE_CATALOG) {
     if (matchesPreconditions(t, situation, ctx)) candidates.push(t);
   }
-  // メタ戦術（29）
   for (const t of META_CATALOG) {
     if (matchesPreconditions(t, situation, ctx)) candidates.push(t);
   }
-  // セイム2戦術（15）
+
+  // セイム2戦術（動的生成）
   const sameTwoTactics = generateSameTwoTactics(ctx, situation, p);
   for (const st of sameTwoTactics) {
     candidates.push({
@@ -107,7 +119,8 @@ function generateCandidates(ctx, situation, p) {
       phases: ['early', 'mid', 'late', 'final'],
     });
   }
-  // 組み合わせ戦術（24）
+
+  // 組み合わせ戦術（動的生成）
   try {
     const comb = analyzeCombinations(ctx);
     for (const ct of comb.tactics) {
@@ -122,7 +135,7 @@ function generateCandidates(ctx, situation, p) {
         phases: ['early', 'mid', 'late', 'final'],
       });
     }
-  } catch (e) { /* 組み合わせ戦術が取れない場合はスキップ */ }
+  } catch (e) { /* スキップ */ }
 
   // 最終フォールバック
   candidates.push(UNIVERSAL_FALLBACK);
@@ -143,24 +156,17 @@ function matchesPreconditions(t, situation, ctx) {
 }
 
 // ============================================================
-// 内部: prior計算（MECE）
+// ★ 修正: prior計算（experienceBlendRatio を反映）
 // ============================================================
-function calculatePrior(tactic, situation, ctx, p, experience) {
+function calculatePrior(tactic, situation, ctx, p, experience, situationHash) {
   const W_MATCH = p.W_MATCH ?? 2.0;
   const W_ANALYTIC = p.W_ANALYTIC ?? 3.0;
-  const W_EXPERIENCE = p.W_EXPERIENCE ?? 1.5;
+  const W_EXPERIENCE = (p.W_EXPERIENCE ?? 1.5) * (p.experienceBlendRatio ?? 0.4);
   const W_RISK = p.W_RISK ?? 1.5;
 
-  // 1. 前提条件充足度
   const matchScore = evaluateMatchScore(tactic, situation, ctx);
-
-  // 2. 解析的期待値
   const analyticEV = estimateAnalyticEV(tactic, situation, ctx, p);
-
-  // 3. 経験DB
-  const expScore = evaluateExperience(tactic, situation, ctx, experience);
-
-  // 4. リスク
+  const expScore = evaluateExperience(tactic, situation, ctx, experience, situationHash);
   const riskScore = evaluateRisk(tactic, situation, ctx, p);
 
   return matchScore * W_MATCH
@@ -169,23 +175,15 @@ function calculatePrior(tactic, situation, ctx, p, experience) {
        - riskScore * W_RISK;
 }
 
-// ============================================================
-// 内部: 前提条件充足度
-// ============================================================
 function evaluateMatchScore(tactic, situation, ctx) {
   let score = 1.0;
-  // 戦術固有のバイアス
   if (tactic.id.startsWith('W')) score += 0.5;
-  if (tactic.id.startsWith('Q3')) score += 0.3; // セイム2防御は優先高
-  if (tactic.id === 'UNIVERSAL_FALLBACK') score = 0.01;
-  // フェーズ適合
+  if (tactic.id.startsWith('Q3')) score += 0.3;
+  if (tactic.id === 'UNIVERSAL') score = 0.01;
   if (tactic.phases && tactic.phases.includes(situation.phase)) score += 0.2;
   return score;
 }
 
-// ============================================================
-// 内部: 解析的期待値（全208戦術に解析式を持たせる）
-// ============================================================
 function estimateAnalyticEV(tactic, situation, ctx, p) {
   if (typeof tactic.analytic === 'function') {
     try { return Number(tactic.analytic(situation, ctx, p)) || 0; } catch { return 0; }
@@ -194,36 +192,38 @@ function estimateAnalyticEV(tactic, situation, ctx, p) {
 }
 
 // ============================================================
-// 内部: 経験DBスコア
+// ★ 修正: 経験DBスコア（loadExperience と同一キー形式）
 // ============================================================
-function evaluateExperience(tactic, situation, ctx, experience) {
-  if (!experience) return 0;
-  const key = `${tactic.id}:${situation.phase}:${situation.scoreState}:${situation.enemyTrump}`;
-  const exp = experience.tactics?.[key];
+function evaluateExperience(tactic, situation, ctx, experience, situationHash) {
+  if (!experience || !experience.tactics) return 0;
+  // loadExperience と同じキー: `${tacticId}:${situationHash}`
+  const key = `${tactic.id}:${situationHash}`;
+  const exp = experience.tactics[key];
   if (!exp || exp.samples < 3) return 0;
   const winRate = exp.wins / exp.samples;
+  // 勝率 0.5 を基準に -1.0 〜 +1.0 に正規化
   return (winRate - 0.5) * 2.0;
 }
 
-// ============================================================
-// 内部: リスクスコア
-// ============================================================
 function evaluateRisk(tactic, situation, ctx, p) {
   let risk = 0;
-  // A切りリスク戦術のリスク
   if (tactic.id === 'Q3-1' || tactic.id === 'Q3-7') {
     const aRisk = shouldAvoidACut(ctx, situation, p);
     if (aRisk.avoid) risk += aRisk.risk * 2.0;
   }
-  // 全部取りリスク時はリスク大
   if (situation.allTakeRisk === 'urgent') {
     if (tactic.id.startsWith('W')) risk += 2.0;
+  }
+  // ★ 修正: A切り系戦術のリスクも考慮
+  if (tactic.id === 'W7' || tactic.id === 'Q3-7') {
+    const aRisk = shouldAvoidACut(ctx, situation, p);
+    if (aRisk.avoid) risk += aRisk.risk * 1.5;
   }
   return risk;
 }
 
 // ============================================================
-// UNIVERSAL_FALLBACK — 最終フォールバック
+// UNIVERSAL_FALLBACK
 // ============================================================
 const UNIVERSAL_FALLBACK = {
   id: 'UNIVERSAL',
@@ -237,25 +237,30 @@ const UNIVERSAL_FALLBACK = {
 };
 
 // ============================================================
-// プリミティブ戦術カタログ（90戦術: W/C/D/S/AT/G/OV/H/PR/P）
+// プリミティブ戦術カタログ（90戦術）
 // ============================================================
 const PRIMITIVE_CATALOG = [
-  // ─────────────────────────────────────
   // W: WIN/Cash（14戦術）
-  // ─────────────────────────────────────
   { id: 'W1', name: '影狩り', category: 'W', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
     turns: ['follow_enemy_win', 'follow_ally_win', 'follow_self_win'], phases: ['early', 'mid', 'late', 'final'],
     analytic: (s, ctx) => {
       const trick = ctx?.trick || [];
       const hasMightyInTrick = trick.some(t => t.card?.id === '♠A');
-      const selfHasShadow = (ctx?.hand || []).some(c => c.id === '♥Q');
       const legalHasShadow = (ctx?.legal || []).some(c => c.id === '♥Q');
-      if (hasMightyInTrick && selfHasShadow && legalHasShadow) {
+      if (hasMightyInTrick && legalHasShadow) {
         const points = trick.filter(t => t.card && FACE.includes(t.card.rank)).length;
         return 3.0 + points * 0.5;
       }
       return -5.0;
     },
+  },
+  { id: 'W1b', name: '影狩り抑制', category: 'W', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
+    turns: ['follow_ally_win'], phases: ['early', 'mid', 'late', 'final'],
+    extraCheck: (s, ctx) => {
+      const trick = ctx?.trick || [];
+      return trick.some(t => t.card?.id === '♠A') && (ctx?.legal || []).some(c => c.id === '♥Q');
+    },
+    analytic: () => 1.0,
   },
   { id: 'W2', name: 'マイティ確定取り', category: 'W', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['lead', 'follow_ally_win'], phases: ['mid', 'late', 'final'],
@@ -320,8 +325,7 @@ const PRIMITIVE_CATALOG = [
     turns: ['follow_enemy_win'], phases: ['early', 'mid', 'late', 'final'],
     analytic: (s, ctx) => {
       const legal = ctx?.legal || [];
-      const trick = ctx?.trick || [];
-      if (legal.length === 0 || trick.length === 0) return -2.0;
+      if (legal.length === 0) return -2.0;
       const highest = legal.slice().sort((a, b) => RANKS.indexOf(b.rank) - RANKS.indexOf(a.rank))[0];
       return RANKS.indexOf(highest.rank) >= 10 ? 1.0 : -1.0;
     },
@@ -353,16 +357,14 @@ const PRIMITIVE_CATALOG = [
   },
   { id: 'W13', name: '複合絶対勝ち', category: 'W', roles: ['nap'], turns: ['lead'],
     phases: ['mid', 'late', 'final'],
-    analytic: (s, ctx) => 2.0,
+    analytic: () => 2.0,
   },
   { id: 'W14', name: '余裕勝ち', category: 'W', roles: ['nap', 'deputy_revealed'],
     turns: ['lead'], phases: ['mid'],
     analytic: () => 0.8,
   },
 
-  // ─────────────────────────────────────
   // C: WIN/Challenge（8戦術）
-  // ─────────────────────────────────────
   { id: 'C1', name: 'オーバートランプ', category: 'C', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['follow_enemy_win'], phases: ['early', 'mid', 'late', 'final'],
     analytic: (s, ctx) => {
@@ -401,9 +403,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.6,
   },
 
-  // ─────────────────────────────────────
   // D: LOSE/Duck（15戦術）
-  // ─────────────────────────────────────
   { id: 'D1', name: '最弱ダック', category: 'D', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
     turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late'],
     analytic: (s) => s.trickValue === 'zero' ? 0.5 : -1.0,
@@ -478,9 +478,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.3,
   },
 
-  // ─────────────────────────────────────
   // S: LOSE/Sacrifice（8戦術）
-  // ─────────────────────────────────────
   { id: 'S1', name: '高札誘導犠牲', category: 'S', roles: ['alliance', 'deputy_hidden', 'nap'],
     turns: ['follow_enemy_win'], phases: ['early', 'mid'],
     analytic: (s) => s.trickValue === 'low' ? 0.6 : -0.5,
@@ -517,9 +515,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.5,
   },
 
-  // ─────────────────────────────────────
   // AT: LOSE/AllTakeAvoid（5戦術）
-  // ─────────────────────────────────────
   { id: 'AT1', name: '意図的失点', category: 'AT', roles: ['nap', 'deputy_revealed'],
     turns: ['lead', 'follow_ally_win', 'follow_enemy_win'], phases: ['late', 'final'],
     extraCheck: (s) => s.allTakeRisk === 'urgent' || s.allTakeRisk === 'warning',
@@ -544,9 +540,7 @@ const PRIMITIVE_CATALOG = [
     analytic: (s) => s.allTakeRisk === 'urgent' ? 3.0 : -10.0,
   },
 
-  // ─────────────────────────────────────
   // G: GIVE/Feed（10戦術）
-  // ─────────────────────────────────────
   { id: 'G1', name: '副官フィード', category: 'G', roles: ['nap'],
     turns: ['follow_ally_win'], phases: ['early', 'mid', 'late'],
     analytic: (s, ctx) => {
@@ -592,9 +586,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.6,
   },
 
-  // ─────────────────────────────────────
   // OV: GIVE/OvertakeAvoid（6戦術）
-  // ─────────────────────────────────────
   { id: 'OV1', name: '味方勝ち保護', category: 'OV', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['follow_ally_win'], phases: ['early', 'mid', 'late', 'final'],
     analytic: (s) => s.overkillStatus === 'ally_winning' ? 2.0 : 0.3,
@@ -621,9 +613,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 1.5,
   },
 
-  // ─────────────────────────────────────
   // H: HOLD（12戦術）
-  // ─────────────────────────────────────
   { id: 'H1', name: 'マイティ温存', category: 'H', roles: ['nap', 'deputy_revealed'],
     turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid'],
     analytic: (s, ctx) => (ctx?.hand || []).some(c => c.id === '♠A') ? 1.2 : 0,
@@ -680,9 +670,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.4,
   },
 
-  // ─────────────────────────────────────
   // PR: PROBE（6戦術）
-  // ─────────────────────────────────────
   { id: 'PR1', name: '弱点スート探り', category: 'PR', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['lead'], phases: ['early', 'mid'],
     analytic: () => 0.7,
@@ -708,9 +696,7 @@ const PRIMITIVE_CATALOG = [
     analytic: () => 0.4,
   },
 
-  // ─────────────────────────────────────
   // P: 特殊（8戦術）
-  // ─────────────────────────────────────
   { id: 'P1', name: '上がり宣言', category: 'P', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['lead'], phases: ['late', 'final'],
     extraCheck: (s, ctx) => canDeclareWinTactic(ctx),
@@ -750,10 +736,9 @@ const PRIMITIVE_CATALOG = [
 ];
 
 // ============================================================
-// 選択戦術カタログ（20戦術: SS/PS）
+// 選択戦術カタログ（20戦術）
 // ============================================================
 const SELECTION_CATALOG = [
-  // SS: スート選択（7戦術）
   { id: 'SS1', name: '弱点スート選択', category: 'SS', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.8 },
   { id: 'SS2', name: '安全スート選択', category: 'SS', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['mid', 'late'], analytic: () => 0.7 },
   { id: 'SS3', name: '切札スート選択', category: 'SS', roles: ['nap'], turns: ['lead'], phases: ['mid'], analytic: () => 0.8 },
@@ -762,7 +747,6 @@ const SELECTION_CATALOG = [
   { id: 'SS6', name: '味方ボイド活用', category: 'SS', roles: ['nap'], turns: ['lead'], phases: ['mid', 'late'], analytic: (s) => s.voidStatus === 'ally_void' ? 1.0 : 0 },
   { id: 'SS7', name: 'ロングスート育成', category: 'SS', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.6 },
 
-  // PS: 手番別（5戦術）
   { id: 'PS1', name: '最終手番最適化', category: 'PS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s, ctx) => (ctx?.trick || []).length === 4, analytic: () => 1.0 },
   { id: 'PS2', name: '2番手情報活用', category: 'PS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late'], extraCheck: (s, ctx) => (ctx?.trick || []).length === 1, analytic: () => 0.6 },
   { id: 'PS3', name: '3番手逆転判断', category: 'PS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['follow_enemy_win'], phases: ['mid', 'late'], extraCheck: (s, ctx) => (ctx?.trick || []).length === 2, analytic: () => 0.7 },
@@ -771,10 +755,9 @@ const SELECTION_CATALOG = [
 ];
 
 // ============================================================
-// 複合戦術カタログ（30戦術: M/CB）
+// ★ 修正: 複合戦術カタログ（12戦術、CB1-CB6を削除）
 // ============================================================
 const COMPOSITE_CATALOG = [
-  // M: 複合計画（12戦術）
   { id: 'M1', name: 'スクイーズ', category: 'M', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['late', 'final'], analytic: (s) => s.phase === 'late' ? 1.2 : 0.3 },
   { id: 'M2', name: 'エンドプレイ', category: 'M', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['final'], analytic: () => 1.5 },
   { id: 'M3', name: 'クロスラフ', category: 'M', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['mid', 'late'], analytic: () => 0.8 },
@@ -787,58 +770,43 @@ const COMPOSITE_CATALOG = [
   { id: 'M10', name: 'デュアルスクイーズ', category: 'M', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['final'], analytic: () => 1.0 },
   { id: 'M11', name: 'リード誘導', category: 'M', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['lead'], phases: ['mid', 'late'], analytic: () => 0.5 },
   { id: 'M12', name: 'パスアンドバック', category: 'M', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['mid'], analytic: () => 0.5 },
-
-  // CB: カード組み合わせ（18戦術 - combinations.js と統合。ここではIDのプレースホルダのみ）
-  { id: 'CB1', name: 'ダブルA連続', category: 'CB', roles: ['nap'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 1.0 },
-  { id: 'CB2', name: 'A+Kペア', category: 'CB', roles: ['nap'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.8 },
-  { id: 'CB3', name: 'J+Qペア', category: 'CB', roles: ['nap'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.6 },
-  { id: 'CB4', name: '2枚ボイド', category: 'CB', roles: ['nap'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.7 },
-  { id: 'CB5', name: 'マイティ+正J', category: 'CB', roles: ['nap'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 1.2 },
-  { id: 'CB6', name: 'よろめき+マイティ', category: 'CB', roles: ['nap'], turns: ['follow_enemy_win'], phases: ['mid', 'late'], analytic: () => 1.5 },
 ];
 
 // ============================================================
-// メタ戦術カタログ（29戦術: BS/SC/MM/EV/RC/TS/AI）
+// メタ戦術カタログ（29戦術）
 // ============================================================
 const META_CATALOG = [
-  // BS: 宣言枚数別（5戦術）
   { id: 'BS1', name: '低宣言確実取り', category: 'BS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s, ctx) => (ctx?.contract?.num ?? 0) <= 14, analytic: (s, ctx) => (ctx?.contract?.num ?? 0) <= 14 ? 1.0 : 0 },
   { id: 'BS2', name: '中宣言バランス', category: 'BS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s, ctx) => { const n = ctx?.contract?.num ?? 0; return n >= 15 && n <= 16; }, analytic: () => 0.5 },
   { id: 'BS3', name: '高宣言攻め', category: 'BS', roles: ['nap', 'deputy_revealed'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s, ctx) => { const n = ctx?.contract?.num ?? 0; return n >= 17 && n <= 18; }, analytic: () => 0.8 },
   { id: 'BS4', name: '最高宣言全力', category: 'BS', roles: ['nap', 'deputy_revealed'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s, ctx) => (ctx?.contract?.num ?? 0) >= 19, analytic: () => 1.5 },
   { id: 'BS5', name: '宣言ちょうど狙い', category: 'BS', roles: ['nap', 'deputy_revealed'], turns: ['lead', 'follow_ally_win'], phases: ['mid', 'late', 'final'], analytic: () => 0.6 },
 
-  // SC: 得点差別（5戦術）
   { id: 'SC1', name: 'ビハインド攻勢', category: 'SC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s) => s.scoreState === 'massive_behind' || s.scoreState === 'behind', analytic: (s) => s.scoreState === 'massive_behind' ? 1.5 : (s.scoreState === 'behind' ? 0.8 : 0) },
   { id: 'SC2', name: 'リード安全策', category: 'SC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s) => s.scoreState === 'massive_ahead' || s.scoreState === 'ahead', analytic: (s) => s.scoreState === 'massive_ahead' ? 1.2 : (s.scoreState === 'ahead' ? 0.6 : 0) },
   { id: 'SC3', name: '大量リード流し', category: 'SC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_ally_win'], phases: ['mid', 'late'], extraCheck: (s) => s.scoreState === 'massive_ahead', analytic: (s) => s.scoreState === 'massive_ahead' ? 1.0 : 0 },
   { id: 'SC4', name: '僅差最適化', category: 'SC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['late', 'final'], extraCheck: (s) => s.scoreState === 'even', analytic: (s) => s.scoreState === 'even' ? 1.2 : 0 },
   { id: 'SC5', name: '終盤得点計算', category: 'SC', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['final'], analytic: () => 1.0 },
 
-  // MM: マッチ全体（5戦術）
   { id: 'MM1', name: '順位逆算', category: 'MM', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead'], phases: ['early', 'mid', 'late', 'final'], analytic: () => 0.5 },
   { id: 'MM2', name: '局目標設定', category: 'MM', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['early'], analytic: () => 0.5 },
   { id: 'MM3', name: 'ラス前戦略', category: 'MM', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s) => s.roundCategory === 'last_prev', analytic: (s) => s.roundCategory === 'last_prev' ? 1.0 : -10.0 },
   { id: 'MM4', name: 'オールラスト戦略', category: 'MM', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s) => s.roundCategory === 'all_last', analytic: (s) => s.roundCategory === 'all_last' ? 1.5 : -10.0 },
   { id: 'MM5', name: 'プレーオフ戦略', category: 'MM', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid', 'late', 'final'], extraCheck: (s) => s.roundCategory === 'playoff', analytic: (s) => s.roundCategory === 'playoff' ? 1.2 : -10.0 },
 
-  // EV: 情報公開イベント（4戦術）
   { id: 'EV1', name: '副官判明再計算', category: 'EV', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['early', 'mid'], analytic: () => 0.5 },
   { id: 'EV2', name: '捨て札公開活用', category: 'EV', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['early', 'mid'], analytic: () => 0.5 },
   { id: 'EV3', name: '上がり宣言対応', category: 'EV', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead', 'follow_enemy_win', 'follow_ally_win'], phases: ['final'], analytic: () => 0.8 },
   { id: 'EV4', name: 'プレーオフ突入準備', category: 'EV', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead'], phases: ['final'], analytic: () => 0.5 },
 
-  // RC: リード制約（3戦術）
   { id: 'RC1', name: '初手最適リード', category: 'RC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead'], phases: ['early'], extraCheck: (s, ctx) => (ctx?.trickNo ?? 0) === 0, analytic: () => 1.0 },
   { id: 'RC2', name: '2リード禁止対応', category: 'RC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead'], phases: ['early'], extraCheck: (s, ctx) => (ctx?.trickNo ?? 0) === 0, analytic: () => 0.8 },
   { id: 'RC3', name: 'マストフォロー最適', category: 'RC', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['follow_enemy_win', 'follow_ally_win', 'follow_self_win'], phases: ['early', 'mid', 'late', 'final'], analytic: () => 0.3 },
 
-  // TS: タイミング切替（3戦術）
   { id: 'TS1', name: '温存→攻撃切替', category: 'TS', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'], turns: ['lead'], phases: ['late', 'final'], analytic: () => 0.8 },
   { id: 'TS2', name: '攻撃→温存切替', category: 'TS', roles: ['nap', 'deputy_revealed'], turns: ['lead'], phases: ['mid', 'late'], extraCheck: (s) => s.scoreState === 'massive_ahead', analytic: (s) => s.scoreState === 'massive_ahead' ? 0.8 : 0 },
   { id: 'TS3', name: '勝負どころ見極め', category: 'TS', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['lead', 'follow_enemy_win'], phases: ['late'], analytic: () => 0.6 },
 
-  // AI: 味方意図読み（3戦術）
   { id: 'AI1', name: '味方意図読み', category: 'AI', roles: ['nap', 'deputy_revealed', 'alliance'], turns: ['follow_ally_win'], phases: ['mid', 'late'], analytic: () => 0.5 },
   { id: 'AI2', name: '味方弱点補完', category: 'AI', roles: ['nap', 'deputy_revealed'], turns: ['lead', 'follow_enemy_win'], phases: ['mid', 'late'], analytic: () => 0.6 },
   { id: 'AI3', name: '味方役割分担', category: 'AI', roles: ['nap'], turns: ['lead'], phases: ['mid'], analytic: () => 0.5 },
@@ -864,15 +832,14 @@ function canDeclareWinTactic(ctx) {
   const hand = ctx?.hand || [];
   if (!hand.length) return false;
   if ((ctx?.trick || []).length > 0) return false;
-  // 簡易判定: 手札のうちマイティ・正J・裏Jを除く高札が未登場ならば上がり可能
   const allUnseen = hand.every(c => {
-    const power = simpleCardPower(c, ctx?.contract, [], ctx?.playedCards || []);
+    const power = simpleCardPower(c, ctx?.contract);
     return power >= 5000;
   });
   return allUnseen && hand.length <= 3;
 }
 
-function simpleCardPower(card, contract, trick, playedCards) {
+function simpleCardPower(card, contract) {
   if (!card) return 0;
   const isNT = contract?.suit === 'NT';
   const trump = isNT ? null : contract?.suit;
@@ -885,21 +852,58 @@ function simpleCardPower(card, contract, trick, playedCards) {
 }
 
 // ============================================================
-// 公開: カテゴリ別統計（デバッグ・カバレッジ確認用）
+// ★ 修正: カタログ統計（静的戦術のみ）
 // ============================================================
 export function getCatalogStats() {
   const stats = {};
   for (const t of TACTIC_CATALOG) {
+    if (t.id === 'UNIVERSAL') continue;
     stats[t.category] = (stats[t.category] || 0) + 1;
   }
   return {
-    total: TACTIC_CATALOG.length,
+    total: TACTIC_CATALOG.length - 1,  // UNIVERSAL除く
     byCategory: stats,
   };
 }
 
 // ============================================================
-// 公開: デバッグ用 — 戦術選択の詳細展開
+// ★ 新規: カバレッジテスト用の完全リスト（静的 + 動的）
+// ============================================================
+export function getFullCatalogForStats() {
+  const staticIds = new Set();
+  for (const t of TACTIC_CATALOG) {
+    if (t.id === 'UNIVERSAL') continue;
+    staticIds.add(t.id);
+  }
+
+  const dynamicIds = new Set([
+    // Q1-Q4（same-two.js）
+    'Q1-0', 'Q1-1', 'Q1-2', 'Q1-3', 'Q1-4', 'Q1-5',
+    'Q2-1', 'Q2-2', 'Q2-3',
+    'Q3-1', 'Q3-2', 'Q3-3', 'Q3-4', 'Q3-5', 'Q3-6', 'Q3-7',
+    'Q4-1',
+    // E1-E8（combinations.js）
+    'E1-1', 'E1-2', 'E1-3', 'E1-4', 'E1-5', 'E1-6',
+    'E2-1', 'E2-2', 'E2-3', 'E2-4',
+    'E3-1', 'E3-2', 'E3-3',
+    'E4-1', 'E4-2', 'E4-3',
+    'E5-1', 'E5-2', 'E5-3',
+    'E6-1', 'E6-2',
+    'E7-1', 'E7-2',
+    'E8-1',
+  ]);
+
+  return {
+    staticIds: [...staticIds],
+    dynamicIds: [...dynamicIds],
+    staticCount: staticIds.size,
+    dynamicCount: dynamicIds.size,
+    totalCount: staticIds.size + dynamicIds.size,
+  };
+}
+
+// ============================================================
+// 公開: デバッグ用
 // ============================================================
 export function debugSelectTactic(ctx, params, experience) {
   const result = selectTactic(ctx, params, experience);
@@ -907,8 +911,10 @@ export function debugSelectTactic(ctx, params, experience) {
   return {
     selected: { id: result.tactic.id, name: result.tactic.name, prior: result.prior },
     situation: result.situation,
+    situationHash: result.situationHash,
     top10: allScores.slice(0, 10),
     candidateCount: result.candidates.length,
     fallbackUsed: result.tactic.id === 'UNIVERSAL',
+    disabled: result.disabled === true,
   };
 }
