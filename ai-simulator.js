@@ -1,6 +1,6 @@
-// ai-simulator.js (MECE戦術エンジン統合版)
-// 自己対戦・オラクルB・プレイ品質計測・クイズ抽出・上がり宣言・競りシグナル
-// 戦術ID学習・セイム2イベント記録を追加
+// ai-simulator.js (MECE戦術エンジン統合版・完全修正版)
+// 修正: tactic_id/situation_hash/intent_category を学習DBへ、ai_uncovered_situations/ai_tactic_history 書き込み、bid_tactic_id/same_two_risk 記録
+
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardToPlay, chooseDeputyCard,
@@ -16,7 +16,7 @@ import {
 import { classifySituation, hashSituation } from './situation.js';
 import { evaluateSameTwo, shouldAvoidACut } from './same-two.js';
 import { analyzeCombinations } from './combinations.js';
-import { selectTactic, TACTIC_CATALOG, getCatalogStats } from './tactics.js';
+import { selectTactic, TACTIC_CATALOG, getCatalogStats, getFullCatalogForStats } from './tactics.js';
 
 function safeJsonParse(str, fallback = null) {
   try { if (!str || typeof str !== 'string' || !str.trim()) return fallback; return JSON.parse(str); }
@@ -65,9 +65,7 @@ function computeRoundRating(strengthAtBid, num, won, solo, params, pointsOverBid
 function evaluateDiscardQuality(hand, trump, chosenCards, context, params) {
   const analysis = analyzeDiscardOptions(hand, trump, context, params);
   const { options } = analysis;
-
   if (!options.length) return { evLoss: 0, rank: 1, isOptimal: true, type: 'unknown', ev: 0 };
-
   const chosenIds = new Set(chosenCards.map(c => c.id));
   let chosenOption = options.find(opt => {
     const optIds = new Set(opt.cards.map(c => c.id));
@@ -75,37 +73,28 @@ function evaluateDiscardQuality(hand, trump, chosenCards, context, params) {
     for (const id of chosenIds) if (!optIds.has(id)) return false;
     return true;
   });
-
   if (!chosenOption) {
     const bestEv = options[0].ev;
     return { evLoss: Math.max(0, bestEv - 0), rank: options.length + 1, isOptimal: false, type: 'weak', ev: 0 };
   }
-
   const sorted = options.slice().sort((a, b) => b.ev - a.ev);
   const bestEv = sorted[0].ev;
   const chosenEv = chosenOption.ev;
   const evLoss = Math.max(0, bestEv - chosenEv);
   const rank = sorted.findIndex(opt => opt === chosenOption) + 1;
-
   return {
-    evLoss,
-    rank,
-    isOptimal: rank === 1,
-    type: chosenOption.type,
-    ev: chosenEv,
-    bestEv,
+    evLoss, rank, isOptimal: rank === 1, type: chosenOption.type, ev: chosenEv, bestEv,
     isVoidChoice: chosenOption.type === 'void',
     isCloseCall: sorted.length >= 2 && Math.abs(sorted[0].ev - sorted[1].ev) < 0.3
   };
 }
 
 // ==========================================
-// クイズ候補抽出ロジック
+// クイズ候補抽出
 // ==========================================
 
 let quizCandidateQueue = [];
 const MAX_QUIZ_CANDIDATES_PER_MATCH = 3;
-const MAX_DISCARD_QUIZ_CANDIDATES_PER_MATCH = 2;
 
 function detectQuizCandidate(ctx) {
   const { legal, trick, trickNo, contract, hand, points, allianceKittyPoints } = ctx;
@@ -113,7 +102,6 @@ function detectQuizCandidate(ctx) {
   const allNonFace = legal.every(c => !['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
   const allSameSuit = legal.every(c => c.suit === legal[0].suit);
   if (allNonFace && allSameSuit) return null;
-
   const reasons = [];
   const heuristicBest = chooseCardToPlay(ctx);
   const legalScores = legal.map(c => {
@@ -124,7 +112,6 @@ function detectQuizCandidate(ctx) {
     if (c.rank === 'J' && contract.suit !== 'NT' && isSameColorSuit(c.suit, contract.suit)) score += 40;
     return { c, score };
   }).sort((a, b) => b.score - a.score);
-
   if (legalScores.length >= 2 && legalScores[0].score - legalScores[1].score <= 10) reasons.push('close_call');
   if (heuristicBest && legalScores[0].c.id !== heuristicBest.id) reasons.push('heuristic_mismatch');
   if (contract.suit === 'NT' && trickNo <= 6 && trick.length > 0) {
@@ -136,22 +123,17 @@ function detectQuizCandidate(ctx) {
   const isTeamWinning = current && (current.seat === contract.nap || (!contract.solo && current.seat === contract.deputy));
   if (isTeamWinning && legal.some(c => ['10','J','Q'].includes(c.rank)) && legal.some(c => !['10','J','Q','K','A'].includes(c.rank))) reasons.push('feed_dilemma');
   if (reasons.length === 0) return null;
-
   const options = legal.map((c, i) => ({ index: i, value: c.id, label: c.id }));
   const bestIdx = heuristicBest ? options.findIndex(o => o.value === heuristicBest.id) : 0;
-
   return {
     id: `gen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     category: 'play',
     scenario_json: JSON.stringify({
-      seat: ctx.seat,
-      hand: hand.map(c => c.id),
+      seat: ctx.seat, hand: hand.map(c => c.id),
       trick: trick.map(e => ({ seat: e.seat, card: e.card.id })),
       contract: { nap: contract.nap, num: contract.num, suit: contract.suit, deputy: contract.deputy, solo: contract.solo, revealedCall: contract.revealedCall, call: contract.call },
       playedCards: (ctx.playedCards || []).map(c => ({ seat: c.seat, card: c.id })),
-      points,
-      taken: [],
-      discarded: (ctx.discardedKitty || []).map(c => c.id)
+      points, taken: [], discarded: (ctx.discardedKitty || []).map(c => c.id)
     }),
     options_json: JSON.stringify(options),
     ai_answer_index: bestIdx >= 0 ? bestIdx : 0,
@@ -164,51 +146,33 @@ function detectQuizCandidate(ctx) {
 function detectDiscardQuizCandidate(hand, trump, contract, discardAnalysis, params) {
   const { options } = discardAnalysis;
   if (options.length < 2) return null;
-
   const sorted = options.slice().sort((a, b) => b.ev - a.ev);
-  const top = sorted[0];
-  const second = sorted[1];
-  const evDiff = Math.abs(top.ev - second.ev);
-
+  const evDiff = Math.abs(sorted[0].ev - sorted[1].ev);
   const isCloseCall = evDiff < 0.5;
-  const isConflict = top.type !== second.type;
-
+  const isConflict = sorted[0].type !== sorted[1].type;
   if (!isCloseCall && !isConflict) return null;
-
   const reasons = [];
   if (isCloseCall) reasons.push('close_ev');
   if (isConflict) reasons.push('void_vs_safe');
   if (contract.suit === 'NT') reasons.push('nt_context');
   if (contract.num >= 17) reasons.push('high_bid');
   if (contract.num <= 14) reasons.push('low_bid');
-
   const choiceOptions = [];
   const seenSets = new Set();
   for (const opt of sorted.slice(0, 3)) {
     const key = opt.cards.map(c => c.id).sort().join(',');
     if (seenSets.has(key)) continue;
     seenSets.add(key);
-    choiceOptions.push({
-      index: choiceOptions.length,
-      value: key,
-      label: opt.cards.map(c => c.id).join(' '),
-      type: opt.type,
-      ev: opt.ev
-    });
+    choiceOptions.push({ index: choiceOptions.length, value: key, label: opt.cards.map(c => c.id).join(' '), type: opt.type, ev: opt.ev });
   }
-
   if (choiceOptions.length < 2) return null;
-
   return {
     id: `gen-discard-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     category: 'discard',
     scenario_json: JSON.stringify({
-      seat: contract.nap,
-      hand: hand.map(c => c.id),
+      seat: contract.nap, hand: hand.map(c => c.id),
       contract: { nap: contract.nap, num: contract.num, suit: contract.suit, deputy: contract.deputy, solo: contract.solo },
-      discarded: [],
-      points: [0,0,0,0,0],
-      taken: []
+      discarded: [], points: [0,0,0,0,0], taken: []
     }),
     options_json: JSON.stringify(choiceOptions.map((o, i) => ({ index: i, value: o.value, label: o.label }))),
     ai_answer_index: 0,
@@ -235,12 +199,15 @@ export async function flushQuizCandidates(env) {
 }
 
 // ==========================================
-// 経験DB・Hall of Fame 管理
+// ★ 経験DB・Hall of Fame 管理（拡張）
 // ==========================================
 
 let experienceQueue = [];
-let tacticExperienceQueue = [];   // ★ 新規: 戦術別経験
-let sameTwoEvents = [];           // ★ 新規: セイム2イベント
+let tacticExperienceQueue = [];
+let bidTacticExperienceQueue = [];    // ★ 新規: 競り戦術別経験
+let sameTwoEvents = [];
+let uncoveredSituationsQueue = [];    // ★ 新規: 未カバー状況
+let tacticHistoryQueue = [];          // ★ 新規: 戦術選択履歴
 let hallOfFame = [];
 
 export async function loadHallOfFame(env) {
@@ -251,73 +218,102 @@ export async function loadHallOfFame(env) {
 }
 
 export async function flushExperience(env) {
-  // 1. 既存の状態経験を保存
+  // 1. 状態経験
   if (experienceQueue.length > 0) {
-    const statements = [];
-    for (const q of experienceQueue) {
-      statements.push(
-        env.DB.prepare(
-          `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
-           VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
-           ON CONFLICT(state_hash) DO UPDATE SET 
-             card_win_rates = excluded.card_win_rates,
-             samples = samples + excluded.samples,
-             generation = MAX(generation, excluded.generation),
-             updated_at = CURRENT_TIMESTAMP`
-        ).bind(q.hash, q.rates, q.samples, q.gen)
-      );
-    }
-    const CHUNK_SIZE = 50;
+    const stmts = experienceQueue.map(q =>
+      env.DB.prepare(
+        `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
+         VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
+         ON CONFLICT(state_hash) DO UPDATE SET 
+           card_win_rates = excluded.card_win_rates,
+           samples = samples + excluded.samples,
+           generation = MAX(generation, excluded.generation),
+           updated_at = CURRENT_TIMESTAMP`
+      ).bind(q.hash, q.rates, q.samples, q.gen)
+    );
     try {
-      for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
-        await env.DB.batch(statements.slice(i, i + CHUNK_SIZE));
-      }
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
     } catch (e) { console.warn("exp flush failed", e); }
     experienceQueue = [];
   }
 
-  // 2. ★ 新規: 戦術別経験を保存
+  // 2. ★ 戦術別経験（tactic_id × situation_hash）
   if (tacticExperienceQueue.length > 0) {
-    const tacticStatements = [];
-    for (const q of tacticExperienceQueue) {
-      tacticStatements.push(
-        env.DB.prepare(
-          `INSERT INTO ai_tactic_experience(tactic_id, situation_hash, wins, samples, updated_at) 
-           VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
-           ON CONFLICT(tactic_id, situation_hash) DO UPDATE SET 
-             wins = wins + excluded.wins,
-             samples = samples + excluded.samples,
-             updated_at = CURRENT_TIMESTAMP`
-        ).bind(q.tacticId, q.situationHash, q.wins, q.samples)
-      );
-    }
-    const CHUNK_SIZE = 50;
+    const stmts = tacticExperienceQueue.map(q =>
+      env.DB.prepare(
+        `INSERT INTO ai_tactic_experience(tactic_id, situation_hash, wins, samples, updated_at) 
+         VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
+         ON CONFLICT(tactic_id, situation_hash) DO UPDATE SET 
+           wins = wins + excluded.wins,
+           samples = samples + excluded.samples,
+           updated_at = CURRENT_TIMESTAMP`
+      ).bind(q.tacticId, q.situationHash, q.wins, q.samples)
+    );
     try {
-      for (let i = 0; i < tacticStatements.length; i += CHUNK_SIZE) {
-        await env.DB.batch(tacticStatements.slice(i, i + CHUNK_SIZE));
-      }
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
     } catch (e) { console.warn("tactic exp flush failed", e); }
     tacticExperienceQueue = [];
   }
 
-  // 3. ★ 新規: セイム2イベントを保存
-  if (sameTwoEvents.length > 0) {
-    const eventStatements = [];
-    for (const ev of sameTwoEvents) {
-      eventStatements.push(
-        env.DB.prepare(
-          `INSERT INTO ai_same_two_events(match_id, round, trick_no, holder_seat, target_rank, target_suit, result, created_at) 
-           VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
-        ).bind(ev.matchId, ev.round, ev.trickNo, ev.holderSeat, ev.targetRank, ev.targetSuit, ev.result)
-      );
-    }
-    const CHUNK_SIZE = 50;
+  // 3. ★ 競り戦術別経験（bid_tactic_id × situation_hash）
+  if (bidTacticExperienceQueue.length > 0) {
+    const stmts = bidTacticExperienceQueue.map(q =>
+      env.DB.prepare(
+        `INSERT INTO ai_bid_tactic_experience(bid_tactic_id, situation_hash, wins, samples, same_two_risk, updated_at) 
+         VALUES(?,?,?,?,?,CURRENT_TIMESTAMP) 
+         ON CONFLICT(bid_tactic_id, situation_hash) DO UPDATE SET 
+           wins = wins + excluded.wins,
+           samples = samples + excluded.samples,
+           same_two_risk = (same_two_risk * samples + excluded.same_two_risk * excluded.samples) / (samples + excluded.samples),
+           updated_at = CURRENT_TIMESTAMP`
+      ).bind(q.bidTacticId, q.situationHash, q.wins, q.samples, q.sameTwoRisk || 0)
+    );
     try {
-      for (let i = 0; i < eventStatements.length; i += CHUNK_SIZE) {
-        await env.DB.batch(eventStatements.slice(i, i + CHUNK_SIZE));
-      }
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+    } catch (e) { console.warn("bid tactic exp flush failed", e); }
+    bidTacticExperienceQueue = [];
+  }
+
+  // 4. ★ セイム2イベント
+  if (sameTwoEvents.length > 0) {
+    const stmts = sameTwoEvents.map(ev =>
+      env.DB.prepare(
+        `INSERT INTO ai_same_two_events(match_id, round, trick_no, holder_seat, target_rank, target_suit, result, created_at) 
+         VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`
+      ).bind(ev.matchId, ev.round, ev.trickNo, ev.holderSeat, ev.targetRank, ev.targetSuit, ev.result)
+    );
+    try {
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
     } catch (e) { console.warn("sameTwo event flush failed", e); }
     sameTwoEvents = [];
+  }
+
+  // 5. ★ 未カバー状況（UNIVERSALのみが選択された状況）
+  if (uncoveredSituationsQueue.length > 0) {
+    const stmts = uncoveredSituationsQueue.map(u =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO ai_uncovered_situations(situation_hash, situation_json, created_at) 
+         VALUES(?,?,CURRENT_TIMESTAMP)`
+      ).bind(u.hash, u.json)
+    );
+    try {
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+    } catch (e) { console.warn("uncovered flush failed", e); }
+    uncoveredSituationsQueue = [];
+  }
+
+  // 6. ★ 戦術選択履歴（match_id × round × trick_no）
+  if (tacticHistoryQueue.length > 0) {
+    const stmts = tacticHistoryQueue.map(h =>
+      env.DB.prepare(
+        `INSERT INTO ai_tactic_history(match_id, round, trick_no, situation_hash, selected_tactic_id, ev, created_at) 
+         VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)`
+      ).bind(h.matchId, h.round, h.trickNo, h.situationHash, h.selectedTacticId, h.ev)
+    );
+    try {
+      for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+    } catch (e) { console.warn("tactic history flush failed", e); }
+    tacticHistoryQueue = [];
   }
 }
 
@@ -331,7 +327,7 @@ function computeCardWinRates(legal, chosenCard, ctx) {
 }
 
 // ==========================================
-// オラクルBによる価値損失計算
+// オラクルB による価値損失
 // ==========================================
 
 function computeValueLossRate(ctx, actualCard, matchId, round, trickNo, decisionIndex, params) {
@@ -362,39 +358,53 @@ function categorizeDecision(ctx) {
 }
 
 // ==========================================
+// 意図カテゴリ抽出
+// ==========================================
+function getIntentCategory(tacticId) {
+  if (!tacticId || tacticId === 'UNKNOWN' || tacticId === 'UNIVERSAL') return 'UNKNOWN';
+  if (tacticId.startsWith('W') || tacticId.startsWith('C')) return 'WIN';
+  if (tacticId.startsWith('D') || tacticId.startsWith('S') || tacticId.startsWith('AT')) return 'LOSE';
+  if (tacticId.startsWith('G') || tacticId.startsWith('OV')) return 'GIVE';
+  if (tacticId.startsWith('H')) return 'HOLD';
+  if (tacticId.startsWith('PR')) return 'PROBE';
+  if (tacticId.startsWith('P') && !tacticId.startsWith('PS')) return 'SPECIAL';
+  if (tacticId.startsWith('Q1')) return 'WIN';
+  if (tacticId.startsWith('Q2')) return 'GIVE';
+  if (tacticId.startsWith('Q3')) return 'LOSE';
+  if (tacticId.startsWith('Q')) return 'UNKNOWN';
+  if (tacticId.startsWith('E')) return 'WIN';
+  if (tacticId.startsWith('M')) return 'WIN';
+  if (tacticId.startsWith('SS') || tacticId.startsWith('PS')) return 'META';
+  if (tacticId.startsWith('BS') || tacticId.startsWith('SC') || tacticId.startsWith('MM')
+      || tacticId.startsWith('EV') || tacticId.startsWith('RC') || tacticId.startsWith('TS')
+      || tacticId.startsWith('AI')) return 'META';
+  return 'UNKNOWN';
+}
+
+// ==========================================
 // セイム2イベント検出
 // ==========================================
 
 function detectSameTwoEvent(matchId, round, trickNo, trick, contract, seat) {
   if (!trick || trick.length < 2) return null;
-  if (trickNo === 0) return null; // 1トリック目は無効
-
+  if (trickNo === 0) return null;
   const ledSuit = trick[0].card?.suit;
   if (!ledSuit) return null;
-  // 全員フォロー確認
   const allFollow = trick.every(t => t.card?.suit === ledSuit);
   if (!allFollow) return null;
-
-  // セイム2保有者を探す
   for (const t of trick) {
     if (t.card?.rank !== '2' || t.card?.suit !== ledSuit) continue;
-    // セイム2を出した → 勝者判定
     const winner = winningEntry(contract, trickNo, trick);
     const isHolderWinner = winner.seat === t.seat;
-    // 狩った対象を探す
     const targetCard = trick.find(x => x.card?.rank === 'A' && x.seat !== t.seat);
     return {
-      matchId,
-      round,
-      trickNo,
+      matchId, round, trickNo,
       holderSeat: t.seat,
       targetRank: targetCard?.card?.rank || 'none',
       targetSuit: targetCard?.card?.suit || ledSuit,
       result: isHolderWinner ? 'win' : 'lose'
     };
   }
-
-  // セイム2を出していないが、Aが切られて狩られたケース（Aが最強でなかった）
   const aceInTrick = trick.find(x => x.card?.rank === 'A');
   if (aceInTrick) {
     const winner = winningEntry(contract, trickNo, trick);
@@ -402,9 +412,7 @@ function detectSameTwoEvent(matchId, round, trickNo, trick, contract, seat) {
     const winningCard = trick.find(t => t.seat === winner.seat);
     if (!aceHolderWon && winningCard?.card?.rank === '2' && winningCard?.card?.suit === ledSuit) {
       return {
-        matchId,
-        round,
-        trickNo,
+        matchId, round, trickNo,
         holderSeat: winner.seat,
         targetRank: 'A',
         targetSuit: aceInTrick.card.suit,
@@ -416,17 +424,17 @@ function detectSameTwoEvent(matchId, round, trickNo, trick, contract, seat) {
 }
 
 // ==========================================
-// 競りシミュレーション（段階上げ＋暗黙シグナル）
+// ★ 競りシミュレーション（bid_tactic_id 記録付き）
 // ==========================================
 
-function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1) {
+function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1, matchId = null) {
   const roles = seatParams.map((p, i) => {
     try { return determineRole(hands[i], p); }
     catch (e) { return { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' }; }
   });
 
   const bidSignals = Array.from({ length: 5 }, () => ({ sent: null, received: [], sameColorCount: 0, lastBidAt: 0 }));
-  let high = { num: 12, suit: '', player: -1, solo: false, plan: null, bidPlan: null };
+  let high = { num: 12, suit: '', player: -1, solo: false, plan: null, bidPlan: null, bidTacticId: 'BID_INIT' };
   const seatState = ['active', 'active', 'active', 'active', 'active'];
 
   let turnSeat = 0;
@@ -466,9 +474,36 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, ro
         }
 
         const prevBid = { ...high };
-        high = { num: decision.num, suit: decision.suit, player: seat, solo: false, plan: role.plan, bidPlan: role.plan };
+        // ★ bid_tactic_id を決定
+        let bidTacticId = 'BID_' + (decision.intent || 'UNKNOWN');
+        if (seat === 0 && decision.num === 13 && prevBid.num < 13) bidTacticId = 'BID_OPEN_13';
+        else if (decision.num === 20 && decision.suit === 'NT') bidTacticId = 'BID_20NT_ALLIN';
+        else if (decision.num >= 17) bidTacticId = 'BID_HIGH_' + decision.num;
+
+        // ★ same_two_risk 計算
+        let sameTwoRisk = 0;
+        try {
+          const situation = classifySituation({
+            seat, hand: hands[seat], legal: hands[seat], trick: [], trickNo: 0,
+            contract: { nap: seat, num: decision.num, suit: decision.suit, deputy: -1, solo: false, revealedCall: false, call: null },
+            playedCards: [], discardedKitty: openKitty, voids: [{},{},{},{},{}],
+            points: [0,0,0,0,0], round,
+          });
+          const stEval = evaluateSameTwo({
+            seat, hand: hands[seat], legal: hands[seat], trick: [], trickNo: 0,
+            contract: { nap: seat, num: decision.num, suit: decision.suit, deputy: -1, solo: false, revealedCall: false, call: null },
+            playedCards: [], discardedKitty: openKitty, voids: [{},{},{},{},{}],
+            points: [0,0,0,0,0],
+          }, situation, p);
+          sameTwoRisk = stEval.threat?.score || 0;
+        } catch (e) { /* ignore */ }
+
+        high = {
+          num: decision.num, suit: decision.suit, player: seat, solo: false,
+          plan: role.plan, bidPlan: role.plan, bidTacticId
+        };
         stageCount++;
-        bidHistoryOut.push({ round, seat, num: decision.num, suit: decision.suit, action: decision.intent });
+        bidHistoryOut.push({ round, seat, num: decision.num, suit: decision.suit, action: decision.intent, bidTacticId, sameTwoRisk });
 
         if (prevBid.player >= 0) {
           const intent = inferIntentFromBid(prevBid, { num: high.num, suit: high.suit, player: seat }, p);
@@ -498,7 +533,7 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, ro
 }
 
 // ==========================================
-// 1ラウンドのシミュレーション
+// ★ 1ラウンドのシミュレーション（戦術ID記録付き）
 // ==========================================
 
 const MAX_EXP_QUEUE_PER_MATCH = 5;
@@ -508,15 +543,39 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
   const bidHistoryLocal = [];
-  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal, round);
+  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal, round, matchId);
 
-  let nap, trump, num, isSoloBid, plan;
+  let nap, trump, num, isSoloBid, plan, winningBidTacticId;
   if (high.player < 0) {
     nap = matchScores.indexOf(Math.min(...matchScores));
     trump = SUITS[0]; num = 13; isSoloBid = false; plan = null;
+    winningBidTacticId = 'BID_FORCED';
   } else {
     nap = high.player; trump = high.suit; num = high.num; isSoloBid = high.solo === true; plan = high.bidPlan || high.plan || null;
+    winningBidTacticId = high.bidTacticId || 'BID_UNKNOWN';
   }
+
+  // ★ 競り戦術経験を記録（NAP視点）
+  const winningBid = bidHistoryLocal.find(b => b.seat === nap && b.action !== 'approve' && b.bidTacticId);
+  if (winningBid) {
+    let bidSituationHash = '';
+    try {
+      bidSituationHash = hashSituation({
+        seat: nap, hand: hands[nap].slice(0, 10), legal: hands[nap].slice(0, 10), trick: [], trickNo: 0,
+        contract: { nap, num, suit: trump, deputy: -1, solo: false, revealedCall: false, call: null },
+        playedCards: [], discardedKitty: kitty, voids: [{},{},{},{},{}],
+        points: [0,0,0,0,0], round,
+      });
+    } catch (e) { /* ignore */ }
+    bidTacticExperienceQueue.push({
+      bidTacticId: winningBid.bidTacticId,
+      situationHash: bidSituationHash,
+      wins: 0, // 後で勝敗が確定したら更新... この時点ではサンプルとして1つカウント（勝敗は別途集計）
+      samples: 1,
+      sameTwoRisk: winningBid.sameTwoRisk || 0,
+    });
+  }
+
   const strengthAtBid = computeBidStrength(hands[nap], trump, params[nap] || defaultStrategy());
   matchBidHistory.push({ round, seat: nap, num, suit: trump, solo: isSoloBid });
   if (matchBidHistory.length > 50) matchBidHistory.shift();
@@ -527,16 +586,13 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     const planForNap = evaluateBidPlan(hands[nap], trump, params[nap] || defaultStrategy(), matchBidHistory, nap, kitty, [], [{},{},{},{},{}]);
     optimalBid = planForNap.bestBidByExpectation || 13;
     pMakeAtFinal = planForNap.pMake?.[num] ?? 0;
-  } catch (e) { /* フォールバック */ }
+  } catch (e) { /* fallback */ }
 
   const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
   hands[nap].push(...kitty); sortHand(hands[nap]);
 
   const discardContext = {
-    num,
-    hasMighty: hands[nap].some(c => c.id === '♠A'),
-    deputyHasMighty: true,
-    protectedCallId: null,
+    num, hasMighty: hands[nap].some(c => c.id === '♠A'), deputyHasMighty: true, protectedCallId: null,
     params: params[nap] || defaultStrategy()
   };
   const discardAnalysis = analyzeDiscardOptions(hands[nap], trump, discardContext, params[nap] || defaultStrategy());
@@ -567,7 +623,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         return null;
       })
       .filter(Boolean);
-
     call = chooseDeputyCall(hands[nap], discard, trump, 3, num, params[nap] || defaultStrategy(), null, napSeatSignals);
     for (let i = 0; i < 5; i++) { if (i !== nap && hands[i].some(c => c.id === call.id)) { deputy = i; break; } }
     if (deputy < 0) { contractBase.solo = true; deputy = nap; call = chooseSoloCall(hands[nap]); }
@@ -582,6 +637,9 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   let matchExpCount = 0;
   const playDecisions = [];
   let decisionIndex = 0;
+
+  // ★ trickNo → 戦術ID・状況ハッシュのマップ（トリック終了後の勝敗記録用）
+  const tacticByTrick = {};
 
   while (trickNo < 10 && hands.some(h => h.length > 0)) {
     const trick = [];
@@ -620,13 +678,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         if (leadSeat === deputy && (i === 4 && seat === nap)) goldenFormationCount++;
       }
 
+      // ★ 修正: enableTacticEngine を明示有効化、round/playoff も渡す
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy,
         params: { ...(params[seat] || defaultStrategy()), enableTacticEngine: true },
         discardedKitty: discard, isMySideNap: isMyTeam, isCurrentNapWinning: isCurrentWinnerMyTeam,
         isRevealed: revealed, isNapLeading: trick.length > 0 && trick[0].seat === nap, lastSeat: trick.length === 4,
         call, bidHistory: matchBidHistory, matchScores: matchScores, points: roundPts, allianceKittyPoints: allianceKittyPts,
-        experience: null
+        experience: null, round, playoff: false,
       };
 
       let chosen;
@@ -634,28 +693,50 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       else chosen = chooseCardToPlay(ctx);
       if (!chosen || !legal.some(c => c.id === chosen.id)) chosen = legal[Math.floor(Math.random() * legal.length)];
 
-      // ★ 新規: 戦術ID・状況ハッシュを記録
+      // ★ 戦術ID・状況ハッシュを記録（chooseCardToPlay 内で ctx にセット済み）
       const selectedTacticId = ctx._selectedTacticId || 'UNKNOWN';
-      const situationHash = ctx._situationHash || hashSituation(ctx);
+      const situationHash = ctx._situationHash || (() => { try { return hashSituation(ctx); } catch (e) { return 'HASH_ERR'; } })();
 
-      // 価値損失計算
+      // ★ 未カバー状況の記録（UNIVERSALが選ばれた場合）
+      if (selectedTacticId === 'UNIVERSAL' || selectedTacticId === 'UNKNOWN') {
+        try {
+          uncoveredSituationsQueue.push({
+            hash: situationHash,
+            json: JSON.stringify({
+              seat, trickNo, role: seat === nap ? 'nap' : (!contractBase.solo && seat === deputy ? 'deputy' : 'ally'),
+              phase: trickNo <= 2 ? 'early' : trickNo <= 6 ? 'mid' : 'late',
+              handSize: hand.length, legalCount: legal.length,
+              contract: { num: contractBase.num, suit: contractBase.suit, solo: contractBase.solo },
+            }),
+          });
+        } catch (e) { /* ignore */ }
+      }
+
+      // ★ 戦術選択履歴を記録
+      tacticHistoryQueue.push({
+        matchId, round, trickNo, situationHash,
+        selectedTacticId, ev: ctx._prior || 0,
+      });
+
+      // ★ 価値損失計算
       let valueLossRate = null;
       if (legal.length >= 2 && trick.length < 5 && (trickNo >= 6 || trickNo === 0)) {
         const cat = categorizeDecision(ctx);
         try {
           const vl = computeValueLossRate(ctx, chosen, matchId, round, trickNo, decisionIndex, params[seat] || defaultStrategy());
           valueLossRate = vl.rate;
-          // ★ 新規: tactic_id / situation_hash / intent_category を追加
           playDecisions.push({
-            seat, trickNo, decisionIndex, valueLossRate, category: cat, chosen: chosen.id, bestCard: vl.bestCard,
-            bestEv: vl.bestEv, actualEv: vl.actualEv,
-            tacticId: selectedTacticId,
-            situationHash,
-            intentCategory: getIntentCategory(selectedTacticId)
+            seat, trickNo, decisionIndex, valueLossRate, category: cat,
+            chosen: chosen.id, bestCard: vl.bestCard, bestEv: vl.bestEv, actualEv: vl.actualEv,
+            tacticId: selectedTacticId, situationHash, intentCategory: getIntentCategory(selectedTacticId),
           });
-        } catch (e) { console.warn('oracleB error:', e.message); }
+        } catch (e) { /* ignore */ }
         decisionIndex++;
       }
+
+      // ★ トリック単位で戦術を記録（勝敗判定用）
+      if (!tacticByTrick[trickNo]) tacticByTrick[trickNo] = [];
+      tacticByTrick[trickNo].push({ seat, tacticId: selectedTacticId, situationHash });
 
       if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_QUIZ_CANDIDATES_PER_MATCH) {
         const candidate = detectQuizCandidate(ctx);
@@ -668,7 +749,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
           const hash = getStateHash(ctx);
           const rates = computeCardWinRates(legal, chosen, ctx);
           experienceQueue.push({ hash, rates, samples: 1, gen: generation });
-          // ★ 新規: 戦術経験も記録（勝敗はこのトリック後に判定）
           matchExpCount++;
         }
       }
@@ -692,26 +772,25 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     }
     if (trick.length < 5) break;
 
-    // ★ 新規: セイム2イベント検出
     const sameTwoEv = detectSameTwoEvent(matchId, round, trickNo, trick, contractBase, active);
     if (sameTwoEv) sameTwoEvents.push(sameTwoEv);
 
     const w = winningEntry(contractBase, trickNo, trick);
     const taken = trick.filter(e => ['10', 'J', 'Q', 'K', 'A'].includes(e.card.rank)).length;
+    const trickWinnerIsNap = w.seat === nap || (!contractBase.solo && w.seat === deputy);
 
-    // ★ 新規: 戦術経験をトリック勝敗で記録
-    for (const pd of playDecisions) {
-      if (pd.trickNo === trickNo && pd.tacticId && pd.tacticId !== 'UNKNOWN') {
-        const trickWinnerIsNap = w.seat === nap || (!contractBase.solo && w.seat === deputy);
-        const seatIsNapSide = pd.seat === nap || (!contractBase.solo && pd.seat === deputy);
-        const won = seatIsNapSide ? trickWinnerIsNap : !trickWinnerIsNap;
-        tacticExperienceQueue.push({
-          tacticId: pd.tacticId,
-          situationHash: pd.situationHash || 'unknown',
-          wins: won ? 1 : 0,
-          samples: 1
-        });
-      }
+    // ★ 戦術経験をトリック勝敗で記録
+    const trickTactics = tacticByTrick[trickNo] || [];
+    for (const t of trickTactics) {
+      if (!t.tacticId || t.tacticId === 'UNKNOWN' || t.tacticId === 'UNIVERSAL') continue;
+      const seatIsNapSide = t.seat === nap || (!contractBase.solo && t.seat === deputy);
+      const won = seatIsNapSide ? trickWinnerIsNap : !trickWinnerIsNap;
+      tacticExperienceQueue.push({
+        tacticId: t.tacticId,
+        situationHash: t.situationHash || 'UNKNOWN',
+        wins: won ? 1 : 0,
+        samples: 1,
+      });
     }
 
     roundPts[w.seat] += taken;
@@ -740,59 +819,27 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   const bidGap = Math.abs(num - optimalBid);
   const bidAccuracy = Math.abs(pMakeAtFinal - (made ? 1 : 0));
   let deputySignalEffectiveness = 0;
-  if (!contractBase.solo && deputy !== nap) {
-    deputySignalEffectiveness = made ? 1 : 0;
-  } else if (contractBase.solo) {
-    deputySignalEffectiveness = 0.5;
-  }
+  if (!contractBase.solo && deputy !== nap) deputySignalEffectiveness = made ? 1 : 0;
+  else if (contractBase.solo) deputySignalEffectiveness = 0.5;
   const roleAccuracy = high.roleAccuracyHits || 0;
 
   return {
     nap, deputy, num, solo: contractBase.solo, made, points: napPts, takenPoints: roundPts,
     strengthAtBid, revealTrickNo, allianceKittyPoints: allianceKittyPts, mult: 1,
     plan, expectedWins: plan?.expectedWins ?? null, actualWins, overkillCount, feedSuccessCount, goldenFormationCount,
-    bidHistory: bidHistoryLocal,
-    playDecisions,
-    discardQuality,
+    bidHistory: bidHistoryLocal, playDecisions, discardQuality,
+    winningBidTacticId,
     auctionQuality: {
-      finalBid: num,
-      optimalBid,
-      bidGap,
-      bidAccuracy,
+      finalBid: num, optimalBid, bidGap, bidAccuracy,
       stageCount: high.stageCount || 0,
-      deputySignalEffectiveness,
-      roleAccuracy
+      deputySignalEffectiveness, roleAccuracy
     },
     rating: computeRoundRating(strengthAtBid, num, made, contractBase.solo, params[nap] || defaultStrategy(), Math.max(0, napPts - num), revealTrickNo, roundPts, nap, deputy, plan, actualWins)
   };
 }
 
 // ==========================================
-// 意図カテゴリ抽出（戦術ID → 4意図）
-// ==========================================
-function getIntentCategory(tacticId) {
-  if (!tacticId || tacticId === 'UNKNOWN' || tacticId === 'UNIVERSAL') return 'UNKNOWN';
-  const prefix = tacticId.split('-')[0].replace(/[0-9]/g, '');
-  if (prefix === 'W' || prefix === 'C') return 'WIN';
-  if (prefix === 'D' || prefix === 'S' || prefix === 'AT') return 'LOSE';
-  if (prefix === 'G' || prefix === 'OV') return 'GIVE';
-  if (prefix === 'H') return 'HOLD';
-  if (prefix === 'PR') return 'PROBE';
-  if (prefix === 'P') return 'SPECIAL';
-  if (prefix === 'Q') {
-    if (tacticId.startsWith('Q1')) return 'WIN';
-    if (tacticId.startsWith('Q2')) return 'GIVE';
-    if (tacticId.startsWith('Q3')) return 'LOSE';
-    return 'UNKNOWN';
-  }
-  if (prefix === 'E') return 'WIN';
-  if (prefix === 'M' || prefix === 'CB') return 'WIN';
-  if (prefix === 'BS' || prefix === 'SC' || prefix === 'MM' || prefix === 'EV' || prefix === 'RC' || prefix === 'TS' || prefix === 'AI') return 'META';
-  return 'UNKNOWN';
-}
-
-// ==========================================
-// 自己対戦バッチ実行
+// 自己対戦バッチ
 // ==========================================
 
 export async function runSelfPlayBatch(env, matchCount = 5) {
@@ -811,6 +858,7 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     const clean = { ...base };
     for (const k of Object.keys(base)) {
       if (k === 'nnWeights') { clean.nnWeights = { ...base.nnWeights, ...(parsed.nnWeights || {}) }; continue; }
+      if (k === 'enableTacticEngine') { clean.enableTacticEngine = parsed.enableTacticEngine !== false; continue; }
       const v = parsed[k]; if (typeof v === 'number' && Number.isFinite(v)) clean[k] = v;
     }
     return clean;
@@ -838,6 +886,7 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     sp.maxThinkTimeMs = Math.min(sp.maxThinkTimeMs || 3000, 50);
     sp.mctsSimulations = Math.min(sp.mctsSimulations || 150, 50);
     sp.mctsNodeBudget = Math.min(sp.mctsNodeBudget || 5000, 500);
+    sp.enableTacticEngine = true;  // 戦術エンジンは有効のまま（ただしロールアウトは無効）
     return sp;
   };
 
@@ -865,17 +914,17 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     stageCountSum: 0, stageCountN: 0,
     deputySignalSum: 0, deputySignalN: 0,
     roleAccuracySum: 0, roleAccuracyN: 0,
-    // ★ 新規: 戦術別統計
-    tacticUsage: {},         // tacticId -> count
-    tacticWins: {},          // tacticId -> wins
-    sameTwoEventsTriggered: 0,
-    sameTwoEventsHunted: 0,
-    sameTwoEventsDefended: 0
+    tacticUsage: {}, tacticWins: {},
+    sameTwoEventsTriggered: 0, sameTwoEventsHunted: 0, sameTwoEventsDefended: 0,
+    bidTacticUsage: {},
   }));
 
   experienceQueue = [];
   tacticExperienceQueue = [];
+  bidTacticExperienceQueue = [];
   sameTwoEvents = [];
+  uncoveredSituationsQueue = [];
+  tacticHistoryQueue = [];
   quizCandidateQueue = [];
 
   for (let i = 0; i < matchCount; i++) {
@@ -913,6 +962,11 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
         totalFeeds += c.feedSuccessCount || 0;
         totalGolden += c.goldenFormationCount || 0;
 
+        // 競り戦術の使用統計
+        if (c.nap === seat && c.winningBidTacticId) {
+          st.bidTacticUsage[c.winningBidTacticId] = (st.bidTacticUsage[c.winningBidTacticId] || 0) + 1;
+        }
+
         if (c.nap === seat && c.discardQuality) {
           const dq = c.discardQuality;
           st.discardEvLossSum += dq.evLoss || 0;
@@ -927,16 +981,11 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
 
         if (c.nap === seat && c.auctionQuality) {
           const aq = c.auctionQuality;
-          st.bidGapSum += aq.bidGap;
-          st.bidGapN++;
-          st.bidAccuracySum += aq.bidAccuracy;
-          st.bidAccuracyN++;
-          st.stageCountSum += aq.stageCount;
-          st.stageCountN++;
-          st.deputySignalSum += aq.deputySignalEffectiveness;
-          st.deputySignalN++;
-          st.roleAccuracySum += aq.roleAccuracy;
-          st.roleAccuracyN++;
+          st.bidGapSum += aq.bidGap; st.bidGapN++;
+          st.bidAccuracySum += aq.bidAccuracy; st.bidAccuracyN++;
+          st.stageCountSum += aq.stageCount; st.stageCountN++;
+          st.deputySignalSum += aq.deputySignalEffectiveness; st.deputySignalN++;
+          st.roleAccuracySum += aq.roleAccuracy; st.roleAccuracyN++;
         }
 
         for (const d of (c.playDecisions || [])) {
@@ -950,7 +999,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
           if (d.category.contract === 'nt') { st.valueLossNT += d.valueLossRate; st.valueLossNTN++; }
           else { st.valueLossColor += d.valueLossRate; st.valueLossColorN++; }
 
-          // ★ 新規: 戦術別使用統計
           if (d.tacticId && d.tacticId !== 'UNKNOWN') {
             st.tacticUsage[d.tacticId] = (st.tacticUsage[d.tacticId] || 0) + 1;
           }
@@ -1001,7 +1049,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
       }
 
       const avgVL = st.valueLossN > 0 ? st.valueLossSum / st.valueLossN : 0;
-
       const wPlayQuality = p.weightPlayQuality ?? 5.0;
       const wFeed = p.weightFeedSuccess ?? 3.0;
       const wSignal = p.weightSignalSuccess ?? 2.0;
@@ -1019,7 +1066,6 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
       matchRating += (st.planAccN > 0 ? st.planAccSum / st.planAccN : 0) * wPlanAcc;
       matchRating += smartPassCount * wBidQuality;
       matchRating += (contracts.filter(c => c.nap === seat).length) * wNapAttempts;
-
       matchRating -= totalOverkills * wOverkill;
       matchRating -= overcallCount * 4.0;
       matchRating -= opportunityLossCount * wOpportunityLoss;
@@ -1098,11 +1144,9 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     const avgVLLate = st.valueLossLateN > 0 ? st.valueLossLate / st.valueLossLateN : 0;
     const avgVLNT = st.valueLossNTN > 0 ? st.valueLossNT / st.valueLossNTN : 0;
     const avgVLColor = st.valueLossColorN > 0 ? st.valueLossColor / st.valueLossColorN : 0;
-
     const avgDiscardEvLoss = st.discardTotalCount > 0 ? st.discardEvLossSum / st.discardTotalCount : 0;
     const discardOptimalRate = st.discardTotalCount > 0 ? st.discardOptimalCount / st.discardTotalCount : 0;
     const discardVoidRate = st.discardTotalCount > 0 ? st.discardVoidChoiceCount / st.discardTotalCount : 0;
-
     const avgBidGap = st.bidGapN > 0 ? st.bidGapSum / st.bidGapN : 0;
     const avgBidAccuracy = st.bidAccuracyN > 0 ? st.bidAccuracySum / st.bidAccuracyN : 0;
     const avgDeputySignal = st.deputySignalN > 0 ? st.deputySignalSum / st.deputySignalN : 0;
@@ -1122,10 +1166,7 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
         avgRating, st.n, avgBid, parentIds[i] || null, avgPlanAcc,
         avgVL, avgVLEarly, avgVLMid, avgVLLate, avgVLNT, avgVLColor,
         avgBidGap, avgBidAccuracy, avgDeputySignal, avgStageCount, avgRoleAccuracy
-      )
-    );
-
-    statements.push(
+      ),
       env.DB.prepare(
         `INSERT INTO ai_discard_metrics(generation, strategy_index, avg_ev_loss, optimal_rate, void_choice_rate, close_call_rate) 
          VALUES(?,?,?,?,?,?)`
@@ -1173,17 +1214,25 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     } catch (e) { console.warn("feedback update failed", e); }
   }
 
-  // ★ 新規: カバレッジテスト用ログ
+  // ★ カバレッジ集計
   try {
-    const catalogStats = getCatalogStats();
-    console.log(`[TacticEngine] Generation ${generation}: catalog=${catalogStats.total} tactics across ${Object.keys(catalogStats.byCategory).length} categories`);
+    const fullCatalog = getFullCatalogForStats();
+    const usedStatic = new Set();
+    const usedDynamic = new Set();
+    for (const st of stats) {
+      for (const tid of Object.keys(st.tacticUsage || {})) {
+        if (fullCatalog.staticIds.includes(tid)) usedStatic.add(tid);
+        else if (fullCatalog.dynamicIds.includes(tid)) usedDynamic.add(tid);
+      }
+    }
+    console.log(`[TacticEngine] Gen ${generation}: 静的 ${usedStatic.size}/${fullCatalog.staticCount}、動的 ${usedDynamic.size}/${fullCatalog.dynamicCount}、未カバー状況 ${uncoveredSituationsQueue.length}`);
   } catch (e) { /* ignore */ }
 
   return { generation, size: pool.length, matches: matchCount };
 }
 
 // ==========================================
-// インサイト生成（API用）
+// インサイト生成
 // ==========================================
 
 export function generateInsights(strategies) {
@@ -1233,7 +1282,6 @@ export function generateInsights(strategies) {
     weightBidGap: 'bid乖離重み', weightBidAccuracy: 'P推定精度重み',
     weightDeputySignal: '副官シグナル重み', weightStageCount: '段階数重み',
     weightRoleAccuracy: '役割判定精度重み',
-    // ★ 新規: MECE戦術エンジン用
     W_WIN: '勝敗確率の重み', W_POINTS: '点札獲得の重み', W_TRICKS: 'トリック獲得の重み', W_ALLTAKE: '全部取りペナルティ',
     W_MATCH: '前提条件充足度の重み', W_ANALYTIC: '解析的期待値の重み', W_EXPERIENCE: '経験DBの重み', W_RISK: 'リスクの重み',
     priorTemperature: 'prior温度', experienceBlendRatio: '経験ブレンド比率',
@@ -1265,60 +1313,33 @@ export function generateInsights(strategies) {
   });
 
   if (strategies[0].avg_plan_accuracy != null) {
-    insights.push({
-      title: '計画精度',
-      detail: `競りで立てた計画と実績の一致率: ${(Number(strategies[0].avg_plan_accuracy || 0) * 100).toFixed(1)}%`
-    });
+    insights.push({ title: '計画精度', detail: `競りで立てた計画と実績の一致率: ${(Number(strategies[0].avg_plan_accuracy || 0) * 100).toFixed(1)}%` });
   }
-
   if (strategies[0].avg_value_loss != null) {
-    insights.push({
-      title: '価値損失率（平均）',
-      detail: `オラクルBとの一致度: ${((1 - Number(strategies[0].avg_value_loss || 0)) * 100).toFixed(1)}%`
-    });
+    insights.push({ title: '価値損失率（平均）', detail: `オラクルBとの一致度: ${((1 - Number(strategies[0].avg_value_loss || 0)) * 100).toFixed(1)}%` });
   }
-
   insights.push({
     title: '捨て札戦略（期待値ベース）',
     detail: `最上位戦略は「ボイド作成」と「全スート維持」を期待値で比較し、宣言枚数・切札枚数・孤立絵札の3変数で判断しています。低宣言時は全スート維持を優先し、高宣言＋孤立絵札持ちの場合はボイド作成を選択する傾向があります。`
   });
-
   if (strategies[0].avg_bid_gap != null) {
-    insights.push({
-      title: '競り精度（bid乖離）',
-      detail: `最適bidとの平均乖離: ${Number(strategies[0].avg_bid_gap || 0).toFixed(2)}枚（小さいほど正確）`
-    });
+    insights.push({ title: '競り精度（bid乖離）', detail: `最適bidとの平均乖離: ${Number(strategies[0].avg_bid_gap || 0).toFixed(2)}枚（小さいほど正確）` });
   }
   if (strategies[0].bid_accuracy != null) {
-    insights.push({
-      title: 'P推定精度',
-      detail: `P(成功)推定誤差: ${Number(strategies[0].bid_accuracy || 0).toFixed(3)}（小さいほど正確）`
-    });
+    insights.push({ title: 'P推定精度', detail: `P(成功)推定誤差: ${Number(strategies[0].bid_accuracy || 0).toFixed(3)}（小さいほど正確）` });
   }
   if (strategies[0].deputy_signal_success_rate != null) {
-    insights.push({
-      title: '副官シグナル成功率',
-      detail: `副官指名→NAP勝利の成功率: ${(Number(strategies[0].deputy_signal_success_rate || 0) * 100).toFixed(1)}%`
-    });
+    insights.push({ title: '副官シグナル成功率', detail: `副官指名→NAP勝利の成功率: ${(Number(strategies[0].deputy_signal_success_rate || 0) * 100).toFixed(1)}%` });
   }
   if (strategies[0].avg_stage_count != null) {
-    insights.push({
-      title: '段階上げ回数',
-      detail: `1局あたりの平均段階上げ回数: ${Number(strategies[0].avg_stage_count || 0).toFixed(1)}回（3回前後が理想）`
-    });
+    insights.push({ title: '段階上げ回数', detail: `1局あたりの平均段階上げ回数: ${Number(strategies[0].avg_stage_count || 0).toFixed(1)}回（3回前後が理想）` });
   }
   if (strategies[0].role_accuracy != null) {
-    insights.push({
-      title: '役割判定精度',
-      detail: `NAP志望者がナポレオンになれた確率: ${(Number(strategies[0].role_accuracy || 0) * 100).toFixed(1)}%`
-    });
+    insights.push({ title: '役割判定精度', detail: `NAP志望者がナポレオンになれた確率: ${(Number(strategies[0].role_accuracy || 0) * 100).toFixed(1)}%` });
   }
 
   const delta = Number(strategies[0].avg_rating_delta || 0);
-  insights.push({
-    title: '平均レート上昇',
-    detail: `1マッチあたり ${delta > 0 ? '+' : ''}${delta.toFixed(2)} pt（${strategies[0].matches}マッチの平均）。`
-  });
+  insights.push({ title: '平均レート上昇', detail: `1マッチあたり ${delta > 0 ? '+' : ''}${delta.toFixed(2)} pt（${strategies[0].matches}マッチの平均）。` });
 
   return insights;
 }
