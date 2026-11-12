@@ -1,4 +1,4 @@
-// constants.js (経験DB・全機能統合版 + 同着平均配分 + 安全学習機構)
+// constants.js (経験DB・全機能統合版 + MECE戦術エンジン対応)
 export const SUITS = ['♣', '♦', '♥', '♠'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 export const SV = { '♣': 1, '♦': 2, '♥': 3, '♠': 4, 'NT': 5 };
@@ -16,16 +16,15 @@ export const ALLY_BLOCK_BONUS = 2;
 // ★ 順位点テーブル（ART廃止版）
 // ============================================================
 export const RATING_BASE = { 1: 25, 2: 5, 3: 0, 4: -5, 5: -25 };
-export const PLAYOFF_MAX_ITERATIONS = 10; // 安全弁：10回連続同着で席番号順タイブレーク
+export const PLAYOFF_MAX_ITERATIONS = 10;
 
-// 後方互換用（既存コードが参照している可能性）
 export const RANK_1_BONUS = 25;
 export const RANK_2_BONUS = 5;
 export const RANK_4_PENALTY = -5;
 export const RANK_5_PENALTY = -25;
 
 // ============================================================
-// ★ 新規: プレイ精度指標の定義（学習・評価で使用）
+// ★ プレイ精度指標の定義
 // ============================================================
 export const METRIC_KEYS = [
   'avgValueLoss', 'endgameAccuracy', 'openingAccuracy', 'sameTwoUtilization',
@@ -63,6 +62,48 @@ export const sortHand = (hand) => {
 };
 
 export const defaultStrategy = () => ({
+  // ============================================================
+  // ★ MECE戦術エンジン用: 期待値目的関数の重み
+  // ============================================================
+  W_WIN: 10.0,
+  W_POINTS: 1.0,
+  W_TRICKS: 0.3,
+  W_ALLTAKE: 20.0,
+
+  // ============================================================
+  // ★ MECE戦術エンジン用: 戦術prior計算の重み
+  // ============================================================
+  W_MATCH: 2.0,
+  W_ANALYTIC: 3.0,
+  W_EXPERIENCE: 1.5,
+  W_RISK: 1.5,
+  priorTemperature: 0.8,
+  experienceBlendRatio: 0.4,
+
+  // ============================================================
+  // ★ MECE戦術エンジン用: 決定論MCTS
+  // ============================================================
+  mctsNodeBudget: 5000,
+  useDeterministicSeed: 1.0,
+
+  // ============================================================
+  // ★ セイム2評価パラメータ
+  // ============================================================
+  sameTwoThreatWeight: 1.5,
+  sameTwoRiskWeight: 1.0,
+  sameTwoResidualWeight: 0.8,
+  aCutRiskThreshold: 0.35,
+  sameTwoAttackChance: 0.55,
+  sameTwoDefenseMargin: 0.25,
+  sameTwoTrumpBonus: 1.5,
+  sameTwoSideBonus: 1.0,
+  sameTwoTimingEarly: 1.5,
+  sameTwoTimingMid: 1.2,
+  sameTwoTimingLate: 0.8,
+
+  // ============================================================
+  // 既存パラメータ（変更なし）
+  // ============================================================
   bidThreshold: 2.0, riskTolerance: 0.5, leadAggression: 0.6, followAggression: 0.4,
   trumpBonus: 0.6, mightyBonus: 2.0, safeAceWeight: 0.7, roleCardPreservation: 0.6,
   deputyFeedBias: 0.5, opponentInferenceWeight: 0.4, suitConflictWeight: 0.6,
@@ -204,7 +245,6 @@ export const matchRatingChanges = (matchScores, abandonedSeats = [], options = {
   const abandoned = new Set(Array.isArray(abandonedSeats) ? abandonedSeats : []);
   const forceBreak = options.forceBreakTie === true;
 
-  // スコア降順、同点は席番号昇順（安定）
   const sorted = matchScores.map((s, i) => ({ score: s, seat: i }))
     .sort((a, b) => b.score - a.score || a.seat - b.seat);
 
@@ -251,7 +291,6 @@ export const matchRatingChanges = (matchScores, abandonedSeats = [], options = {
   });
 };
 
-// 4位と5位が同着かどうか（プレーオフ判定）
 export const hasBottomTie = (matchScores) => {
   const ranked = matchScores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
   if (ranked.length < 5) return false;
@@ -353,7 +392,24 @@ export const clampToBounds = (key, value) => {
   return Math.max(bounds[0], Math.min(bounds[1], value));
 };
 
+// ============================================================
+// ★ パラメータ境界（新規追加パラメータも含む）
+// ============================================================
 export const PARAM_BOUNDS = {
+  // 期待値目的関数
+  W_WIN: [5.0, 30.0], W_POINTS: [0.5, 5.0], W_TRICKS: [0.1, 2.0], W_ALLTAKE: [10.0, 50.0],
+  // 戦術prior
+  W_MATCH: [0.5, 5.0], W_ANALYTIC: [1.0, 8.0], W_EXPERIENCE: [0.5, 5.0], W_RISK: [0.5, 5.0],
+  priorTemperature: [0.3, 2.0], experienceBlendRatio: [0.0, 1.0],
+  // 決定論MCTS
+  mctsNodeBudget: [1000, 20000], useDeterministicSeed: [0.0, 1.0],
+  // セイム2
+  sameTwoThreatWeight: [0.5, 3.0], sameTwoRiskWeight: [0.5, 2.0], sameTwoResidualWeight: [0.3, 1.5],
+  aCutRiskThreshold: [0.1, 0.7], sameTwoAttackChance: [0.3, 0.8],
+  sameTwoDefenseMargin: [0.1, 0.5], sameTwoTrumpBonus: [0.5, 3.0], sameTwoSideBonus: [0.3, 2.0],
+  sameTwoTimingEarly: [0.5, 2.5], sameTwoTimingMid: [0.5, 2.0], sameTwoTimingLate: [0.3, 1.5],
+
+  // 既存パラメータ（変更なし）
   bidThreshold: [2, 3.5], riskTolerance: [0.1, 1.0], leadAggression: [0.1, 1.0],
   followAggression: [0.1, 1.0], trumpBonus: [0.1, 2.0], mightyBonus: [0.5, 5.0],
   safeAceWeight: [0.1, 1.0], roleCardPreservation: [0.1, 1.0], deputyFeedBias: [0.1, 1.0],
@@ -384,12 +440,6 @@ export const PARAM_BOUNDS = {
   napEarlyTrumpMinCount: [2, 8], deputyOvertrumpWeight: [0.0, 3.0],
   bidTimeBudgetMs: [100, 1500], bidMaxSamples: [20, 200], bidSafetyMargin: [0.5, 3.0], bidSimCount: [10, 100],
   planAccuracyWeight: [0.0, 3.0], overbidPenalty: [0.0, 5.0], underbidPenalty: [0.0, 2.0], planAccuracyBonus: [0.0, 3.0],
-  winPointMap_0: [0, 0], winPointMap_1: [1, 5], winPointMap_2: [2, 8], winPointMap_3: [3, 10],
-  winPointMap_4: [4, 12], winPointMap_5: [5, 15], winPointMap_6: [6, 18], winPointMap_7: [7, 20],
-  winPointMap_8: [8, 20], winPointMap_9: [9, 20], winPointMap_10: [10, 20],
-  lossPointMap_0: [0, 0], lossPointMap_1: [1, 5], lossPointMap_2: [2, 8], lossPointMap_3: [3, 10],
-  lossPointMap_4: [4, 12], lossPointMap_5: [5, 15], lossPointMap_6: [6, 18], lossPointMap_7: [7, 20],
-  lossPointMap_8: [8, 20], lossPointMap_9: [9, 20], lossPointMap_10: [10, 20],
   bidPacingMs: [2000, 6000], bidStartValue: [13, 13],
   tossUpSafetyMargin: [0, 1], tossUpSafetyMarginBottom: [0, 1],
   signalS1Bonus: [0, 3], signalS2Bonus: [0, 4], signalThreeRoleBonus: [0, 6], signalS3Bonus: [0, 4],
@@ -509,7 +559,7 @@ export const crossoverStrategy = (parentA, parentB) => {
 };
 
 // ============================================================
-// ★ プレイフェーズ時間制限（N40）
+// ★ プレイフェーズ時間制限
 // ============================================================
-export const PLAY_FREE_SECONDS = 5;      // 各ターンの無料枠
-export const PLAY_POOL_SECONDS = 20;      // 局共通プール
+export const PLAY_FREE_SECONDS = 5;
+export const PLAY_POOL_SECONDS = 20;
