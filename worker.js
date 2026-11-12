@@ -1,4 +1,4 @@
-// ===== [worker.js 前編 開始] =====
+// ===== [worker.js 前半 開始] =====
 import { SUITS, RANKS, SV, CALIBRATION, defaultStrategy, shuffledDeck, sortHand, sweetSpotFactor, estimatedWinRate, SWEET_SPOT_BONUS, findMaxHonestBid, matchRatingChanges, computeEloDelta, ELO_INIT, PARAM_BOUNDS, isSameColorSuit, sameColorSuitOf } from './constants.js';
 import {
   winningEntry, cardPower, shouldBid, chooseDiscard, chooseDeputyCall, chooseCardWithMCTS, chooseDeputyCard,
@@ -69,9 +69,6 @@ export const schema = [
   "ALTER TABLE ai_strategy_log ADD COLUMN deputy_signal_success_rate REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN avg_stage_count REAL DEFAULT 0",
   "ALTER TABLE ai_strategy_log ADD COLUMN role_accuracy REAL DEFAULT 0",
-  // ============================================================
-  // ★ COM戦専用（非公開・本人のみ閲覧）
-  // ============================================================
   "CREATE TABLE IF NOT EXISTS player_com_match_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, result TEXT NOT NULL, delta REAL NOT NULL, rating_after REAL NOT NULL, placement INTEGER NOT NULL, tie_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS player_com_match_history_user ON player_com_match_history(user_id, id DESC)",
   "CREATE TABLE IF NOT EXISTS player_com_performance (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, declarer_successes INTEGER NOT NULL DEFAULT 0, deputy_attempts INTEGER NOT NULL DEFAULT 0, deputy_successes INTEGER NOT NULL DEFAULT 0)",
@@ -79,7 +76,6 @@ export const schema = [
   "CREATE TABLE IF NOT EXISTS player_com_ally_feed (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_bold_bid_rate (user_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, successes INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS player_com_match_stats (user_id TEXT PRIMARY KEY, declarer_attempts INTEGER NOT NULL DEFAULT 0, bid_total INTEGER NOT NULL DEFAULT 0, nt_bids INTEGER NOT NULL DEFAULT 0, color_bids INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0, rank_1 INTEGER NOT NULL DEFAULT 0, rank_2 INTEGER NOT NULL DEFAULT 0, rank_3 INTEGER NOT NULL DEFAULT 0, rank_4 INTEGER NOT NULL DEFAULT 0, rank_5 INTEGER NOT NULL DEFAULT 0, streak_current INTEGER NOT NULL DEFAULT 0, streak_best INTEGER NOT NULL DEFAULT 0)",
-  // ★ NAPプランラボ セッション保存
   "CREATE TABLE IF NOT EXISTS nap_lab_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, seed INTEGER, record_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS nap_lab_sessions_user ON nap_lab_sessions(user_id, id DESC)",
   ...quizSchema
@@ -199,7 +195,7 @@ export default {
       }
 
       // ============================================================
-      // ★ NAPプランラボ セッション保存
+      // ★ NAPプランラボ セッション保存 & AI学習反映
       // ============================================================
       if (request.method === "POST" && url.pathname === "/api/nap-lab/save") {
         const token = request.headers.get("x-session-token");
@@ -209,12 +205,89 @@ export default {
         let body;
         try { body = await request.json(); } catch { return response({ error: "invalid" }, { status: 400 }); }
         try {
+          // 1. セッション保存
           await env.DB.prepare(
             "INSERT INTO nap_lab_sessions(user_id, seed, record_json) VALUES(?,?,?)"
           ).bind(userId, Number(body.seed) || 0, JSON.stringify(body)).run();
-          return response({ ok: true });
+
+          // 2. ★ 人間の切り順（状態経験）をAIに学習させる
+          const statements = [];
+          const stateExperiences = body.stateExperiences || [];
+          
+          for (const exp of stateExperiences) {
+            if (!exp.hash || !exp.rates) continue;
+            statements.push(
+              env.DB.prepare(
+                `INSERT INTO ai_state_experience(state_hash, card_win_rates, samples, generation, updated_at) 
+                 VALUES(?,?,?,?,CURRENT_TIMESTAMP) 
+                 ON CONFLICT(state_hash) DO UPDATE SET 
+                   card_win_rates = excluded.card_win_rates,
+                   samples = samples + excluded.samples,
+                   generation = MAX(generation, excluded.generation),
+                   updated_at = CURRENT_TIMESTAMP`
+              ).bind(exp.hash, exp.rates, Number(exp.samples) || 1, 1)
+            );
+          }
+
+          // 3. ★ プレイ判断（役割・フェーズ等）をAIに学習させる
+          const playDecisions = body.playDecisions || [];
+          if (playDecisions.length > 0) {
+            const agg = {};
+            for (const d of playDecisions) {
+              if (d.won === null || d.won === undefined) continue;
+              if (!d.role || !d.phase || !d.pointsTier || !d.rankTier) continue;
+              const key = `${d.role}:${d.phase}:${d.pointsTier}:${d.rankTier}`;
+              if (!agg[key]) agg[key] = { role: d.role, phase: d.phase, pointsTier: d.pointsTier, rankTier: d.rankTier, wins: 0, total: 0 };
+              agg[key].wins += d.won ? 1 : 0;
+              agg[key].total += 1;
+            }
+            for (const k of Object.keys(agg)) {
+              const a = agg[k];
+              statements.push(
+                env.DB.prepare(
+                  "INSERT INTO ai_play_experience(role,phase,points_tier,rank_tier,wins,samples) VALUES(?,?,?,?,?,?) ON CONFLICT(role,phase,points_tier,rank_tier) DO UPDATE SET wins=wins+excluded.wins,samples=samples+excluded.samples,updated_at=CURRENT_TIMESTAMP"
+                ).bind(a.role, a.phase, a.pointsTier, a.rankTier, a.wins, a.total)
+              );
+            }
+          }
+
+          if (statements.length > 0) {
+            await env.DB.batch(statements);
+            // キャッシュを無効化して、次回のマッチから最新の学習結果を使うようにする
+            __cachedExperience = null;
+            __cachedExperienceTime = 0;
+          }
+
+          return response({ ok: true, learnedStates: stateExperiences.length, learnedPlays: playDecisions.length });
         } catch (e) {
           console.error("nap-lab save failed", e);
+          return response({ error: e.message }, { status: 500 });
+        }
+      }
+
+      // ============================================================
+      // ★ NAPプランラボ 学習統計取得（フロントの進捗バー用）
+      // ============================================================
+      if (request.method === "GET" && url.pathname === "/api/nap-lab/learning-stats") {
+        const token = request.headers.get("x-session-token");
+        const userId = token ? await getUserIdByToken(env, token) : null;
+        if (!userId) return response({ error: "auth required" }, { status: 401 });
+
+        try {
+          const { results } = await env.DB.prepare(
+            "SELECT record_json FROM nap_lab_sessions WHERE user_id=? ORDER BY id DESC LIMIT 100"
+          ).bind(userId).all();
+
+          let approved = 0, revised = 0;
+          for (const row of (results || [])) {
+            try {
+              const record = JSON.parse(row.record_json);
+              if (record.verdict === 'APPROVED') approved++;
+              else if (record.verdict === 'REVISED') revised++;
+            } catch {}
+          }
+          return response({ approved, revised, total: approved + revised });
+        } catch (e) {
           return response({ error: e.message }, { status: 500 });
         }
       }
@@ -352,9 +425,8 @@ export default {
           history: historyPage.results
         });
       }
-
-// ===== [前編 終了。後編へ続く] =====
-// ===== [worker.js 後編 開始] =====
+// ===== [worker.js 前半 終了。後半へ続く] =====
+// ===== [worker.js 後半 開始] =====
       // ============================================================
       // /api/match/finish（レート戦 マッチ結果永続化）
       // ============================================================
@@ -692,7 +764,8 @@ export default {
     } catch (err) { return response({ error: "Global API error: " + err.message, stack: err.stack }, { status: 500 }); }
   }
 };
-// ===== [worker.js 後半 開始] =====
+
+// ===== [worker.js 後半（WebSocketロジック）] =====
 
 function makeCode() { return Math.random().toString(36).slice(2, 7).toUpperCase(); }
 
@@ -843,8 +916,6 @@ function finalAuctionRule(scores, mult = 1) {
   return { eligible: ranked.filter(x => x.score <= cutoff).map(x => x.seat), bottomSeat: ranked[0]?.seat, fourthSeat: ranked[1]?.seat, thirdSeat: ranked[2]?.seat, thirdScore: ranked[2]?.score, minBid: Math.min(20, rawMin), canOvertake: rawMin <= 20 };
 }
 
-function soloMinimumBid(gap, mult) { return 13 + Math.floor(Math.max(0, gap) / (10 * Math.max(1, mult))); }
-
 function computeTeamMinBid(scores, mult, napSeat, deputySeat) {
   const ranked = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s || a.i - b.i);
   const S5 = ranked[0].s, S4 = ranked[1].s, S3 = ranked[2].s;
@@ -874,27 +945,6 @@ function isSoloForcedInMatch(m) {
   const fourthSeat = ranked[1].i;
   const r = computeTeamMinBid(m.matchScores, m.mult, bottomSeat, fourthSeat);
   return r?.soloRequired === true;
-}
-
-function isSafeToCashAceInMatch(m, suit, seat) {
-  if (!m.contract) return false;
-  if (suit === '♠') return true;
-  if (m.trickNo > 0) {
-    const twoPlayed = m.playedCards.some(c => c.id === suit + '2') || (m.discardedKitty || []).some(c => c.id === suit + '2');
-    if (!twoPlayed) {
-      const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && m.voids[s] && m.voids[s][suit]);
-      if (!anyVoid) return false;
-    }
-  }
-  if (m.contract.suit !== 'NT' && m.contract.suit !== suit) {
-    for (let s = 0; s < 5; s++) {
-      if (s === seat) continue;
-      if (m.contract.revealedCall) { if (s === m.contract.nap || (!m.contract.solo && s === m.contract.deputy)) continue; }
-      else { if (s === m.contract.nap) continue; }
-      if (m.voids[s] && m.voids[s][suit]) return false;
-    }
-  }
-  return true;
 }
 
 function publicState(m) {
@@ -953,8 +1003,6 @@ function publish(m, room) {
     } catch (error) { console.warn("match publish failed", m.id, c.id, error); }
   }
 }
-
-function tell(m, room, text) { m.notice = text; publish(m, room); }
 
 function validBid(m, n, s) {
   const h = m.auction.high;
@@ -1741,10 +1789,6 @@ function timeoutAction(m, room) {
   }
 }
 
-// ===== [後編 2/3 終了。3/3 へ続く] =====
-
-// ===== [後編 3/3 開始] =====
-
 export const room = {
   tickMs: 500,
   async onConnect(conn, room) {
@@ -2104,10 +2148,5 @@ export const room = {
     room.broadcast(presence);
   }
 };
-
 // ===== [worker.js 完成] =====
-
-
-
-
     
