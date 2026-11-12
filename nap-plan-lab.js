@@ -1,11 +1,9 @@
-// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（前編）
-// 修正: 切り順プランは全て未配置から開始
-
+// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー
 import {
-  SUITS, RANKS, defaultStrategy, sortHand,
+  SUITS, RANKS, SV, defaultStrategy, sortHand, trickPhaseOf, pointsTierOf, rankTierOf
 } from './constants.js';
 import {
-  computeProperBid, chooseCardToPlay, chooseCardWithMCTS, winningEntry,
+  computeProperBid, chooseCardToPlay, chooseCardWithMCTS, winningEntry, getStateHash
 } from './ai-tactics.js';
 
 const $ = id => document.getElementById(id);
@@ -33,6 +31,7 @@ const S = {
   revisionDraft: null,
   selectedUnplacedId: null,
   learningStats: null,
+  stateExperiences: [], // ★ 追加: AIの状態学習用
 };
 
 function hashSeed(...args) {
@@ -114,9 +113,13 @@ async function fetchLearningStats() {
 
 function generateScenario(seed) {
   const rng = mulberry32(seed >>> 0);
-  const params = defaultStrategy();
-  const MAX_ATTEMPTS = 300;
+  const baseParams = defaultStrategy();
+  // シナリオ生成時は処理落ちを防ぐため探索時間とサンプル数を極限まで減らす
+  const fastParams = { ...baseParams, bidTimeBudgetMs: 15, bidMaxSamples: 10 };
+  const MAX_ATTEMPTS = 200;
   const category = seed % 4;
+  
+  let fallbackScenario = null;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const deck = shuffleWithRng(buildDeck(), rng);
@@ -126,11 +129,12 @@ function generateScenario(seed) {
 
     let bestSuit = null;
     let bestProper = 0;
+    
     for (const suit of SUITS.concat(['NT'])) {
       let r;
       try {
         r = computeProperBid(
-          hand10, suit, params, 0, null,
+          hand10, suit, fastParams, 0, null,
           [0, 0, 0, 0, 0], openKitty, [],
           [{}, {}, {}, {}, {}], [], 1
         );
@@ -140,37 +144,61 @@ function generateScenario(seed) {
         bestSuit = suit;
       }
     }
-    if (!bestSuit) continue;
-
-    if (category === 0) {
-      if (bestProper < 14 || bestProper > 15) continue;
-    } else if (category === 1) {
-      if (bestProper < 16 || bestProper > 17) continue;
-    } else if (category === 2) {
-      if (bestProper < 18) continue;
-    } else if (category === 3) {
-      if (bestProper < 14) continue;
-      const hasSame2 = hand10.some(c => c.rank === '2');
-      if (!hasSame2) continue;
+    
+    if (!bestSuit || bestProper < 13) {
+      let maxTrumps = -1;
+      for (const suit of SUITS) {
+        const trumps = hand10.filter(c => c.suit === suit).length;
+        if (trumps > maxTrumps) {
+          maxTrumps = trumps;
+          bestSuit = suit;
+        }
+      }
+      bestProper = 14;
     }
 
     if (bestSuit !== 'NT') {
       const trumps = hand10.filter(c => c.suit === bestSuit).length;
-      if (trumps < 4) continue;
+      if (trumps < 3) continue;
     }
-    const sideAces = hand10.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== bestSuit).length;
-    if (sideAces < 1) continue;
+    
     const points = hand10.filter(c => POINT.includes(c.rank)).length;
-    if (points < 5) continue;
+    if (points < 3) continue;
 
     const oppHands = [[], [], [], [], []];
     for (let i = 1; i < 5; i++) {
       oppHands[i] = deck.splice(0, 10).map(c => ({ ...c }));
     }
 
-    return { seed, hand10, openKitty, opponents: oppHands, category };
+    const currentScenario = { seed, hand10, openKitty, opponents: oppHands, category, bestSuit, bestProper };
+    
+    if (!fallbackScenario) fallbackScenario = currentScenario;
+
+    let matchesCategory = false;
+    if (category === 0) {
+      matchesCategory = (bestProper >= 13 && bestProper <= 15);
+    } else if (category === 1) {
+      matchesCategory = (bestProper >= 16 && bestProper <= 17);
+    } else if (category === 2) {
+      matchesCategory = (bestProper >= 17);
+    } else if (category === 3) {
+      matchesCategory = (bestProper >= 13 && hand10.some(c => c.rank === '2'));
+    }
+
+    if (matchesCategory) {
+      return currentScenario;
+    }
   }
-  return null;
+
+  if (fallbackScenario) return fallbackScenario;
+
+  const deck = shuffleWithRng(buildDeck(), rng);
+  const hand10 = deck.splice(0, 10).map(c => ({ ...c }));
+  const openKitty = deck.splice(0, 2).map(c => ({ ...c }));
+  sortHand(hand10);
+  const oppHands = [[], [], [], [], []];
+  for (let i = 1; i < 5; i++) oppHands[i] = deck.splice(0, 10).map(c => ({ ...c }));
+  return { seed, hand10, openKitty, opponents: oppHands, category, bestSuit: '♠', bestProper: 14 };
 }
 
 function createMatchState(scenario, bid, discard, call, solo) {
@@ -358,6 +386,22 @@ async function runWatchSimulation() {
 
       const legalBefore = legalCards(state, seat);
       
+      // ★ 追加: NAPのターン開始時の状態ハッシュを記録
+      let stateHash = null;
+      if (seat === 0 && state.trick.length === 0) {
+        const ctxForHash = {
+          hand: state.hands[0].slice(),
+          trick: [],
+          trickNo: state.trickNo,
+          contract: state.contract,
+          playedCards: state.playedCards.slice(),
+          voids: JSON.parse(JSON.stringify(state.voids)),
+          seat: 0,
+          legal: legalBefore
+        };
+        stateHash = getStateHash(ctxForHash);
+      }
+
       const chosen = seat === 0
         ? chooseNapCardWithPlanPriority(state)
         : chooseComCard(state, seat);
@@ -370,6 +414,22 @@ async function runWatchSimulation() {
       renderWatchStep();
       await delay(250);
       if (S.aborted) return;
+
+      // ★ 追加: NAPの出したカードと勝敗を記録
+      if (seat === 0 && stateHash) {
+        S.trickRecords.push({
+          seq: trickNo + 1,
+          handBefore: state.hands[0].map(c => c.id),
+          stateHash,
+          plannedCard: S.currentPlan?.sequence?.[trickNo]?.card?.id || null,
+          plannedOutcome: S.currentPlan?.sequence?.[trickNo]?.outcome || null,
+          actualCard: chosen.id,
+          actualOutcome: null,
+          trickWinner: null,
+          takenPoints: 0,
+          deviation: null,
+        });
+      }
     }
 
     if (state.trick.length < 5) break;
@@ -405,43 +465,53 @@ async function runWatchSimulation() {
     state.trickNo++;
     if (state.trickNo >= 10) state.finished = true;
 
-    const napCard = trickSnapshot.find(t => t.seat === 0)?.card;
-    const slot = S.currentPlan?.sequence?.[trickNo];
-    const plannedCard = slot?.card;
-    const plannedOutcome = slot?.outcome;
     const actualOutcome = winner === 0 ? 'WIN' : 'LOSE';
+    
+    // ★ 追加: NAPのレコードを更新し、学習用データを蓄積
+    const lastNapRecord = S.trickRecords[S.trickRecords.length - 1];
+    if (lastNapRecord && lastNapRecord.seq === trickNo + 1) {
+      lastNapRecord.actualOutcome = actualOutcome;
+      lastNapRecord.trickWinner = winner;
+      lastNapRecord.takenPoints = taken.length;
+      
+      const plannedCard = lastNapRecord.plannedCard;
+      const plannedOutcome = lastNapRecord.plannedOutcome;
+      const napCard = trickSnapshot.find(t => t.seat === 0)?.card;
+      
+      if (plannedCard && napCard) {
+        if (plannedCard !== napCard.id) {
+          const planWasLegal = legalBefore.some(c => c.id === plannedCard);
+          lastNapRecord.deviation = {
+            type: 'CARD_CHANGED',
+            plannedCard,
+            actualCard: napCard.id,
+            reason: planWasLegal ? 'forced_loss_avoided' : 'plan_card_illegal',
+          };
+        } else if (plannedOutcome !== actualOutcome) {
+          lastNapRecord.deviation = {
+            type: 'OUTCOME_MISMATCH',
+            plannedOutcome,
+            actualOutcome,
+            reason: 'opponent_unexpected',
+          };
+        }
+      }
 
-    let deviation = null;
-    if (plannedCard && napCard) {
-      if (plannedCard.id !== napCard.id) {
-        const planWasLegal = legalBefore.some(c => c.id === plannedCard.id);
-        deviation = {
-          type: 'CARD_CHANGED',
-          plannedCard: plannedCard.id,
-          actualCard: napCard.id,
-          reason: planWasLegal ? 'forced_loss_avoided' : 'plan_card_illegal',
-        };
-      } else if (plannedOutcome !== actualOutcome) {
-        deviation = {
-          type: 'OUTCOME_MISMATCH',
-          plannedOutcome,
-          actualOutcome,
-          reason: 'opponent_unexpected',
-        };
+      // 状態ハッシュに対する勝率を記録
+      if (lastNapRecord.stateHash && napCard) {
+        const rates = {};
+        const handBefore = lastNapRecord.handBefore || [];
+        handBefore.forEach(cid => {
+          rates[cid] = (cid === napCard.id && actualOutcome === 'WIN') ? 0.9 : 
+                       (cid === napCard.id && actualOutcome === 'LOSE') ? 0.1 : 0.3;
+        });
+        S.stateExperiences.push({
+          hash: lastNapRecord.stateHash,
+          rates: JSON.stringify(rates),
+          samples: 1,
+        });
       }
     }
-
-    S.trickRecords.push({
-      seq: trickNo + 1,
-      plannedCard: plannedCard?.id || null,
-      plannedOutcome: plannedOutcome || null,
-      actualCard: napCard?.id || null,
-      actualOutcome,
-      trickWinner: winner,
-      takenPoints: taken.length,
-      pointsAfter: state.points.slice(),
-      deviation,
-    });
 
     S.currentTrickNo = state.trickNo;
     renderWatchStep();
@@ -514,6 +584,16 @@ function computeReport() {
 
 async function persistSessionRecord(report) {
   const verdict = S.revisions.length === 0 ? 'APPROVED' : 'REVISED';
+  
+  // ★ 追加: AI学習用のプレイ判断ログを作成
+  const playDecisions = S.trickRecords.filter(r => r.actualCard).map(r => ({
+    role: 'nap',
+    phase: trickPhaseOf(r.seq - 1),
+    pointsTier: pointsTierOf(r.takenPoints || 0),
+    rankTier: rankTierOf(r.actualCard.slice(1)),
+    won: r.actualOutcome === 'WIN',
+  }));
+
   const record = {
     scenarioId: `nap-lab-${S.seed}`,
     seed: S.seed,
@@ -542,7 +622,11 @@ async function persistSessionRecord(report) {
     report,
     verdict,
     createdAt: new Date().toISOString(),
+    // ★ 追加: AI学習用データ
+    stateExperiences: S.stateExperiences,
+    playDecisions
   };
+  
   try {
     const token = localStorage.getItem('napoleon_session');
     await fetch('/api/nap-lab/save', {
@@ -564,10 +648,6 @@ async function persistSessionRecord(report) {
   }
 }
 
-// ===== [前編 終了。後編へ続く] =====
-// nap-plan-lab.js — NAP限定 プラン実行＆乖離測定コーナー（後編）
-// 後編: UI・画面遷移
-
 function resetSession() {
   S.step = 'scenario';
   S.seed = 0;
@@ -588,6 +668,7 @@ function resetSession() {
   S.aborted = false;
   S.revisionDraft = null;
   S.selectedUnplacedId = null;
+  S.stateExperiences = []; // ★ 追加
 }
 
 async function startNewScenario() {
@@ -985,7 +1066,6 @@ function renderExpectStep(shell) {
 // 切り順プラン（全て未配置から開始）
 // ============================================================
 function renderPlanStep(shell) {
-  // ★ 修正: AIの初期案は使わず、全て未配置で初期化
   if (!S.initialPlan) {
     S.initialPlan = {
       sequence: Array.from({ length: 10 }, (_, i) => ({
@@ -1157,12 +1237,24 @@ function renderWatchStep() {
     const isWinner = lastWinner === i;
     const role = state.contract.nap === i ? 'ナポレオン' : (!state.contract.solo && state.contract.revealedCall && state.contract.deputy === i ? '副官' : '連合軍');
     const name = i === 0 ? 'あなた' : `COM ${i}`;
-    const points = state.taken[i] ? state.taken[i].length : 0;
+    const taken = state.taken[i] || [];
+    const handCount = state.hands[i] ? state.hands[i].length : 0;
+    
+    let takenHTML = '';
+    if (taken.length) {
+      const tags = taken.slice().sort((a,b) => SV[a.suit]-SV[b.suit] || RANKS.indexOf(a.rank)-RANKS.indexOf(b.rank)).map(c => {
+        const isRed = c.suit === '♦' || c.suit === '♥';
+        return `<span class="taken-card ${isRed ? 'red' : ''}">${c.suit}${c.rank}</span>`;
+      }).join('');
+      takenHTML = `<div class="taken-cards"><span class="taken-label">獲得 ${taken.length}</span>${tags}</div>`;
+    }
+    
     return `
-      <div class="player-seat player-color-${i} pos-${i} ${isActive ? 'active' : ''} ${isWinner ? 'trick-winner' : ''} ${i === 0 ? 'me' : ''}" style="padding: 6px 8px;">
-        <div class="seat-name" style="font-size: 11px;">${name}</div>
-        <div class="seat-role ${role === '副官' ? 'deputy-status' : ''}" style="font-size: 8px;">${role}</div>
-        <div class="taken-cards"><span class="taken-label">獲得 ${points}</span></div>
+      <div class="player-seat player-color-${i} pos-${i} ${isActive ? 'active' : ''} ${isWinner ? 'trick-winner' : ''} ${i === 0 ? 'me' : ''}" style="padding: 4px 6px;">
+        <div class="seat-name" style="font-size: 10px; margin-bottom:2px;">${name}</div>
+        <div class="seat-role ${role === '副官' ? 'deputy-status' : ''}" style="font-size: 8px; margin-bottom:2px;">${role}</div>
+        <div style="font-size: 9px; color: #93a69a;">手札 ${handCount}枚</div>
+        ${takenHTML}
       </div>`;
   }).join('');
 
@@ -1566,5 +1658,3 @@ export function __setScenarioForTest(handIds, kittyIds) {
   S.step = 'scenario';
   renderStep();
 }
-
-// ===== [後編 終了] =====
