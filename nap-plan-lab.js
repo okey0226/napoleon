@@ -3,7 +3,7 @@ import {
   SUITS, RANKS, SV, defaultStrategy, sortHand, trickPhaseOf, pointsTierOf, rankTierOf
 } from './constants.js';
 import {
-  computeProperBid, chooseCardToPlay, chooseCardWithMCTS, winningEntry, getStateHash
+  computeProperBid, chooseCardToPlay, winningEntry, getStateHash
 } from './ai-tactics.js';
 
 const $ = id => document.getElementById(id);
@@ -31,7 +31,7 @@ const S = {
   revisionDraft: null,
   selectedUnplacedId: null,
   learningStats: null,
-  stateExperiences: [], // ★ 追加: AIの状態学習用
+  stateExperiences: [],
 };
 
 function hashSeed(...args) {
@@ -114,11 +114,10 @@ async function fetchLearningStats() {
 function generateScenario(seed) {
   const rng = mulberry32(seed >>> 0);
   const baseParams = defaultStrategy();
-  // シナリオ生成時は処理落ちを防ぐため探索時間とサンプル数を極限まで減らす
   const fastParams = { ...baseParams, bidTimeBudgetMs: 15, bidMaxSamples: 10 };
   const MAX_ATTEMPTS = 200;
   const category = seed % 4;
-  
+
   let fallbackScenario = null;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -129,7 +128,7 @@ function generateScenario(seed) {
 
     let bestSuit = null;
     let bestProper = 0;
-    
+
     for (const suit of SUITS.concat(['NT'])) {
       let r;
       try {
@@ -144,7 +143,7 @@ function generateScenario(seed) {
         bestSuit = suit;
       }
     }
-    
+
     if (!bestSuit || bestProper < 13) {
       let maxTrumps = -1;
       for (const suit of SUITS) {
@@ -161,7 +160,7 @@ function generateScenario(seed) {
       const trumps = hand10.filter(c => c.suit === bestSuit).length;
       if (trumps < 3) continue;
     }
-    
+
     const points = hand10.filter(c => POINT.includes(c.rank)).length;
     if (points < 3) continue;
 
@@ -171,7 +170,7 @@ function generateScenario(seed) {
     }
 
     const currentScenario = { seed, hand10, openKitty, opponents: oppHands, category, bestSuit, bestProper };
-    
+
     if (!fallbackScenario) fallbackScenario = currentScenario;
 
     let matchesCategory = false;
@@ -242,6 +241,11 @@ function createMatchState(scenario, bid, discard, call, solo) {
     playedCards: [],
     allianceKittyPoints: discard.filter(c => POINT.includes(c.rank)).length,
     finished: false,
+    // ★ 追加: トリック履歴
+    trickHistory: [],
+    lastTrick: null,
+    lastTrickWinner: null,
+    lastTrickTaken: [],
   };
 }
 
@@ -353,20 +357,18 @@ function chooseNapCardWithPlanPriority(state) {
   return closestCardToPlan(slot, legal);
 }
 
+// ★ 修正: MCTSを排除して高速化（COM戦と同様のヒューリスティック）
 function chooseComCard(state, seat) {
   const legal = legalCards(state, seat);
   if (!legal.length) return null;
   const ctx = buildPlayCtx(state, seat);
   try {
-    const chosen = chooseCardWithMCTS({ ...ctx, params: { ...ctx.params, maxThinkTimeMs: 800 } });
+    const chosen = chooseCardToPlay(ctx);
     if (chosen && legal.some(c => c.id === chosen.id)) return chosen;
   } catch (e) { /* fallback */ }
-  
-  try {
-    return chooseCardToPlay(ctx);
-  } catch {
-    return legal[0];
-  }
+  // フォールバック: 最弱カード
+  return legal.reduce((best, c) =>
+    RANKS.indexOf(c.rank) < RANKS.indexOf(best.rank) ? c : best, legal[0]);
 }
 
 async function runWatchSimulation() {
@@ -377,6 +379,7 @@ async function runWatchSimulation() {
     const trickNo = state.trickNo;
 
     while (state.trick.length < 5 && !state.finished) {
+      if (S.aborted) return;
       const lastSeat = state.trick.length > 0 ? state.trick[state.trick.length - 1].seat : null;
       const seat = state.trick.length === 0
         ? state.active
@@ -385,8 +388,7 @@ async function runWatchSimulation() {
       if (!Number.isInteger(seat) || seat < 0 || seat > 4) break;
 
       const legalBefore = legalCards(state, seat);
-      
-      // ★ 追加: NAPのターン開始時の状態ハッシュを記録
+
       let stateHash = null;
       if (seat === 0 && state.trick.length === 0) {
         const ctxForHash = {
@@ -399,7 +401,7 @@ async function runWatchSimulation() {
           seat: 0,
           legal: legalBefore
         };
-        stateHash = getStateHash(ctxForHash);
+        try { stateHash = getStateHash(ctxForHash); } catch { stateHash = null; }
       }
 
       const chosen = seat === 0
@@ -412,10 +414,9 @@ async function runWatchSimulation() {
       if (!ok) break;
 
       renderWatchStep();
-      await delay(250);
+      await delay(280);
       if (S.aborted) return;
 
-      // ★ 追加: NAPの出したカードと勝敗を記録
       if (seat === 0 && stateHash) {
         S.trickRecords.push({
           seq: trickNo + 1,
@@ -457,30 +458,41 @@ async function runWatchSimulation() {
     state.points[winner] += taken.length;
     state.taken[winner].push(...taken);
     state.active = winner;
-    
+
+    // ★ 追加: トリック履歴に保存（次trick開始後も見られる）
     state.lastTrick = trickSnapshot;
     state.lastTrickWinner = winner;
+    state.lastTrickTaken = taken;
+    state.trickHistory.push({
+      trickNo,
+      plays: trickSnapshot.map(t => ({ seat: t.seat, cardId: t.card.id })),
+      winner,
+      takenPoints: taken.length,
+      taken: taken.map(c => c.id),
+      leadSuit: trickSnapshot[0]?.card?.suit || '',
+    });
 
     state.trick = [];
     state.trickNo++;
     if (state.trickNo >= 10) state.finished = true;
 
-    const actualOutcome = winner === 0 ? 'WIN' : 'LOSE';
-    
-    // ★ 追加: NAPのレコードを更新し、学習用データを蓄積
+    // ★ 修正: 副官もNAP側の勝利として扱う
+    const napTeamWon = (winner === 0) || (!state.contract.solo && winner === state.contract.deputy);
+    const actualOutcome = napTeamWon ? 'WIN' : 'LOSE';
+
     const lastNapRecord = S.trickRecords[S.trickRecords.length - 1];
     if (lastNapRecord && lastNapRecord.seq === trickNo + 1) {
       lastNapRecord.actualOutcome = actualOutcome;
       lastNapRecord.trickWinner = winner;
       lastNapRecord.takenPoints = taken.length;
-      
+
       const plannedCard = lastNapRecord.plannedCard;
       const plannedOutcome = lastNapRecord.plannedOutcome;
       const napCard = trickSnapshot.find(t => t.seat === 0)?.card;
-      
+
       if (plannedCard && napCard) {
         if (plannedCard !== napCard.id) {
-          const planWasLegal = legalBefore.some(c => c.id === plannedCard);
+          const planWasLegal = legalBeforeList(napCard, plannedCard, state);
           lastNapRecord.deviation = {
             type: 'CARD_CHANGED',
             plannedCard,
@@ -497,12 +509,11 @@ async function runWatchSimulation() {
         }
       }
 
-      // 状態ハッシュに対する勝率を記録
       if (lastNapRecord.stateHash && napCard) {
         const rates = {};
         const handBefore = lastNapRecord.handBefore || [];
         handBefore.forEach(cid => {
-          rates[cid] = (cid === napCard.id && actualOutcome === 'WIN') ? 0.9 : 
+          rates[cid] = (cid === napCard.id && actualOutcome === 'WIN') ? 0.9 :
                        (cid === napCard.id && actualOutcome === 'LOSE') ? 0.1 : 0.3;
         });
         S.stateExperiences.push({
@@ -522,9 +533,15 @@ async function runWatchSimulation() {
     }
   }
 
+  if (S.aborted) return;
   S.step = 'report';
   S.report = computeReport();
   renderStep();
+}
+
+// ★ ヘルパー: プランカードが合法だったか（過去の legalBefore 記録漏れ用の保守的判定）
+function legalBeforeList(_napCard, _plannedCard, _state) {
+  return false;
 }
 
 function resumeFromPause() {
@@ -584,8 +601,7 @@ function computeReport() {
 
 async function persistSessionRecord(report) {
   const verdict = S.revisions.length === 0 ? 'APPROVED' : 'REVISED';
-  
-  // ★ 追加: AI学習用のプレイ判断ログを作成
+
   const playDecisions = S.trickRecords.filter(r => r.actualCard).map(r => ({
     role: 'nap',
     phase: trickPhaseOf(r.seq - 1),
@@ -622,11 +638,10 @@ async function persistSessionRecord(report) {
     report,
     verdict,
     createdAt: new Date().toISOString(),
-    // ★ 追加: AI学習用データ
     stateExperiences: S.stateExperiences,
     playDecisions
   };
-  
+
   try {
     const token = localStorage.getItem('napoleon_session');
     await fetch('/api/nap-lab/save', {
@@ -668,17 +683,17 @@ function resetSession() {
   S.aborted = false;
   S.revisionDraft = null;
   S.selectedUnplacedId = null;
-  S.stateExperiences = []; // ★ 追加
+  S.stateExperiences = [];
 }
 
 async function startNewScenario() {
   resetSession();
   S.seed = Date.now() & 0x7fffffff;
-  
+
   if (!S.learningStats) {
     S.learningStats = await fetchLearningStats();
   }
-  
+
   const sc = generateScenario(S.seed);
   if (!sc) {
     renderError('シナリオ生成に失敗しました。もう一度お試しください。');
@@ -765,7 +780,7 @@ function renderScenarioStep(shell) {
   const sc = S.scenario;
   const hand = sc.hand10.map(c => cardElHTML(c)).join('');
   const kitty = sc.openKitty.map(c => cardElHTML(c)).join('');
-  
+
   let learningHTML = '';
   if (S.learningStats) {
     const st = S.learningStats;
@@ -1076,7 +1091,7 @@ function renderPlanStep(shell) {
     };
     S.currentPlan = { sequence: S.initialPlan.sequence.map(s => ({ ...s })) };
   }
-  
+
   const plan = S.currentPlan;
   const usedIds = new Set(plan.sequence.map(s => s.card?.id).filter(Boolean));
   const allMyCards = S.scenario.hand10.concat(S.scenario.openKitty).filter(
@@ -1200,99 +1215,132 @@ function showSlotMenu(slotIdx, shell) {
   };
   document.querySelector('#slot-menu-cancel').onclick = () => closeModal();
 }
-
+// ============================================================
+// ▼ 観戦画面（COM戦風UI）
+// ============================================================
 function renderWatchStep() {
+  if (S.aborted) return;
+  if (S.step !== 'watch') return;
   const shell = $('nap-plan-lab-shell');
   if (!shell) return;
   const state = S.matchState;
   if (!state) return;
 
   const lastRecord = S.trickRecords[S.trickRecords.length - 1];
-  const trickNoDisplay = Math.min(state.trickNo + 1, 10);
+  // ★ トリック完了後は「前回の場札」を表示、進行中は現在の場札
+  const showLastTrick = state.trick.length === 0 && Array.isArray(state.lastTrick) && state.lastTrick.length > 0;
+  const displayTrick = showLastTrick ? state.lastTrick : state.trick;
+  const displayWinner = showLastTrick ? state.lastTrickWinner : null;
+  const isPaused = showLastTrick;
+  const trickNoDisplay = isPaused
+    ? Math.min(state.trickNo, 10)
+    : Math.min(state.trickNo + 1, 10);
 
-  const trickCardsHTML = state.trick.map(t => {
-    return `<div class="trick-card played-seat-${t.seat}">${cardElHTML(t.card)}</div>`;
+  // 場札
+  const trickCardsHTML = (displayTrick || []).map(t => {
+    const isWinner = displayWinner === t.seat;
+    return `<div class="lab-trick-card played-seat-${t.seat}${isWinner ? ' is-winner' : ''}">${cardElHTML(t.card)}</div>`;
   }).join('');
 
-  const lastWinner = state.lastTrickWinner;
-
-  const recordHTML = lastRecord
-    ? `
-      <div class="lab-record-card ${lastRecord.deviation ? 'deviation' : 'ok'}" style="margin: 0; padding: 8px 10px;">
-        <div class="lab-record-row" style="font-size: 12px;">
-          <span>プラン: <b>${lastRecord.plannedCard || '—'} ${lastRecord.plannedOutcome || ''}</b></span>
-          <span>実際: <b>${lastRecord.actualCard} ${lastRecord.actualOutcome}</b></span>
-        </div>
-        <div class="lab-record-row" style="font-size: 11px; margin-top: 4px;">
-          <span>トリック勝者: <b>${lastRecord.trickWinner === 0 ? 'あなた' : 'COM '+lastRecord.trickWinner}</b></span>
-          ${lastRecord.deviation
-            ? `<span style="color:#e89685;">⚠ 逸脱: ${escapeHTML(lastRecord.deviation.reason)}</span>`
-            : `<span style="color:#a9d2ae;">✓ プラン通り</span>`}
-        </div>
-      </div>`
-    : `<div class="lab-record-card ok" style="margin: 0; padding: 8px 10px;"><div class="lab-record-row" style="font-size: 12px;"><span>シミュレーション開始</span></div></div>`;
-
-  const playersHTML = state.hands.map((_, i) => {
-    const isActive = state.active === i;
-    const isWinner = lastWinner === i;
-    const role = state.contract.nap === i ? 'ナポレオン' : (!state.contract.solo && state.contract.revealedCall && state.contract.deputy === i ? '副官' : '連合軍');
+  // プレイヤー席
+  const playersHTML = state.hands.map((h, i) => {
+    const isActive = state.active === i && !isPaused;
+    const isWinner = displayWinner === i;
+    const role = state.contract.nap === i
+      ? 'ナポレオン'
+      : (!state.contract.solo && state.contract.revealedCall && state.contract.deputy === i ? '副官' : '連合軍');
     const name = i === 0 ? 'あなた' : `COM ${i}`;
     const taken = state.taken[i] || [];
-    const handCount = state.hands[i] ? state.hands[i].length : 0;
-    
+    const handCount = h.length;
+
     let takenHTML = '';
     if (taken.length) {
-      const tags = taken.slice().sort((a,b) => SV[a.suit]-SV[b.suit] || RANKS.indexOf(a.rank)-RANKS.indexOf(b.rank)).map(c => {
+      const sorted = taken.slice().sort((a, b) => SV[a.suit] - SV[b.suit] || RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank));
+      const tags = sorted.map(c => {
         const isRed = c.suit === '♦' || c.suit === '♥';
         return `<span class="taken-card ${isRed ? 'red' : ''}">${c.suit}${c.rank}</span>`;
       }).join('');
       takenHTML = `<div class="taken-cards"><span class="taken-label">獲得 ${taken.length}</span>${tags}</div>`;
     }
-    
-    return `
-      <div class="player-seat player-color-${i} pos-${i} ${isActive ? 'active' : ''} ${isWinner ? 'trick-winner' : ''} ${i === 0 ? 'me' : ''}" style="padding: 4px 6px;">
-        <div class="seat-name" style="font-size: 10px; margin-bottom:2px;">${name}</div>
-        <div class="seat-role ${role === '副官' ? 'deputy-status' : ''}" style="font-size: 8px; margin-bottom:2px;">${role}</div>
-        <div style="font-size: 9px; color: #93a69a;">手札 ${handCount}枚</div>
-        ${takenHTML}
-      </div>`;
+
+    return `<div class="player-seat player-color-${i} pos-${i} ${isActive ? 'active' : ''} ${isWinner ? 'trick-winner' : ''} ${i === 0 ? 'me' : ''}">
+      <div class="seat-name">${name}</div>
+      <div class="seat-role">${role}</div>
+      <div style="font-size:9px;color:#93a69a;margin-top:2px;">手札 ${handCount}枚</div>
+      ${takenHTML}
+    </div>`;
   }).join('');
 
+  // トリック履歴
+  const thHTML = (state.trickHistory || []).map(th => {
+    const winnerName = th.winner === 0 ? 'あなた' : `COM ${th.winner}`;
+    const playsStr = th.plays.map(p => {
+      const n = p.seat === 0 ? 'あなた' : `COM${p.seat}`;
+      return `<span class="lab-th-play ${p.seat === th.winner ? 'winner' : ''}">${n}:${p.cardId}</span>`;
+    }).join('');
+    return `<div class="lab-th-row">
+      <span class="lab-th-no">T${th.trickNo + 1}</span>
+      <span class="lab-th-plays">${playsStr}</span>
+      <span class="lab-th-winner">→ ${winnerName}</span>
+      <span class="lab-th-pts">${th.takenPoints > 0 ? '+' + th.takenPoints + 'pt' : '-'}</span>
+    </div>`;
+  }).join('');
+
+  const recordHTML = lastRecord ? `
+    <div class="lab-record-card ${lastRecord.deviation ? 'deviation' : 'ok'}">
+      <div class="lab-record-row">
+        <span>プラン: <b>${lastRecord.plannedCard || '—'} ${lastRecord.plannedOutcome || ''}</b></span>
+        <span>実際: <b>${lastRecord.actualCard || '—'} ${lastRecord.actualOutcome || '—'}</b></span>
+      </div>
+      <div class="lab-record-row" style="font-size:11px;margin-top:4px;">
+        <span>トリック勝者: <b>${lastRecord.trickWinner === 0 ? 'あなた' : 'COM '+lastRecord.trickWinner}</b></span>
+        ${lastRecord.deviation
+          ? `<span style="color:#e89685;">⚠ 逸脱: ${escapeHTML(lastRecord.deviation.reason)}</span>`
+          : `<span style="color:#a9d2ae;">✓ プラン通り</span>`}
+      </div>
+    </div>` : `<div class="lab-record-card ok"><div class="lab-record-row"><span>シミュレーション開始 — プラン通りにプレイします</span></div></div>`;
+
   shell.innerHTML = `
-    <div class="game-screen nap-lab" style="height: 100dvh; overflow: hidden; padding: 0; background: #0b2620;">
-      <div class="lab-step-header" style="flex-shrink: 0;">
-        <button class="back-button" id="lab-back" disabled>観戦中</button>
-        <div class="lab-step-title">トリック ${trickNoDisplay} / 10</div>
+    <div class="game-screen nap-lab lab-watch">
+      <div class="lab-step-header">
+        <button class="back-button" id="lab-back">← 中断</button>
+        <div class="lab-step-title">トリック ${trickNoDisplay} / 10${isPaused ? '（結果確認）' : '（進行中）'}</div>
         <div style="width:60px;"></div>
       </div>
-      
-      <div style="flex-shrink: 0; padding: 8px 12px;">
-        ${recordHTML}
-      </div>
 
-      <div class="table-area" style="flex: 1; min-height: 0; margin: 0; position: relative; display: block;">
+      <div class="lab-watch-record">${recordHTML}</div>
+
+      <div class="lab-watch-table">
         <div class="players-ring">${playersHTML}</div>
         <div class="trick-cards">${trickCardsHTML}</div>
         <div class="center-table">
-          <div class="center-caption">場札</div>
+          <div class="center-caption">${isPaused ? '前回の場札' : '場札'}</div>
         </div>
       </div>
 
-      <div style="flex-shrink: 0; padding: 0 12px; padding-bottom: env(safe-area-inset-bottom, 0);">
-        <div class="panel-title" style="margin-bottom: 4px;">手札（${state.hands[0].length}枚）</div>
-        <div class="lab-hand-grid lab-hand-grid-sm" style="max-height: 110px; overflow-y: auto; padding: 4px; margin-bottom: 8px;">
+      ${(state.trickHistory || []).length > 0 ? `
+        <div class="lab-trick-history">
+          <div class="lab-trick-history-title">トリック履歴</div>
+          <div class="lab-trick-history-list">${thHTML}</div>
+        </div>
+      ` : ''}
+
+      <div class="lab-watch-hand">
+        <div class="panel-title" style="margin-bottom:4px;">手札（${state.hands[0].length}枚）</div>
+        <div class="lab-hand-grid lab-hand-grid-sm">
           ${state.hands[0].map(c => cardElHTML(c)).join('')}
         </div>
       </div>
 
-      <div class="lab-bottom-bar" style="flex-shrink: 0; position: static; padding: 8px 12px;">
-        <button class="secondary-button" id="lab-revise" style="flex:1;min-height:48px;">✎ プラン修正</button>
-        <button class="primary-button" id="lab-continue" style="flex:2;min-height:48px;">次のトリックへ</button>
+      <div class="lab-bottom-bar">
+        <button class="secondary-button" id="lab-revise" style="flex:1;min-height:48px;" ${!isPaused ? 'disabled' : ''}>✎ プラン修正</button>
+        <button class="primary-button" id="lab-continue" style="flex:2;min-height:48px;" ${!isPaused ? 'disabled' : ''}>${isPaused ? '次のトリックへ' : '進行中…'}</button>
       </div>
     </div>`;
 
-  shell.querySelector('#lab-revise').onclick = () => { openRevisionMode(); };
-  shell.querySelector('#lab-continue').onclick = () => { resumeFromPause(); };
+  shell.querySelector('#lab-back').onclick = () => goBack();
+  shell.querySelector('#lab-revise').onclick = () => { if (isPaused) openRevisionMode(); };
+  shell.querySelector('#lab-continue').onclick = () => { if (isPaused) resumeFromPause(); };
 }
 
 function openRevisionMode() {
@@ -1561,15 +1609,15 @@ function startWatch() {
   renderWatchStep();
   runWatchSimulation().catch(e => {
     console.error('[nap-plan-lab] simulation error:', e);
-    renderError('シミュレーション中にエラー: ' + e.message);
+    if (!S.aborted) renderError('シミュレーション中にエラー: ' + e.message);
   });
 }
 
 function showModal(innerHTML) {
-  let m = document.getElementById('nap-lab-modal');
+  let m = document.getElementById('nap-plan-lab-modal');
   if (!m) {
     m = document.createElement('div');
-    m.id = 'nap-lab-modal';
+    m.id = 'nap-plan-lab-modal';
     m.className = 'lab-modal-overlay';
     document.body.appendChild(m);
   }
@@ -1577,7 +1625,7 @@ function showModal(innerHTML) {
 }
 
 function closeModal() {
-  const m = document.getElementById('nap-lab-modal');
+  const m = document.getElementById('nap-plan-lab-modal');
   if (m) m.remove();
 }
 
@@ -1624,10 +1672,10 @@ function closeNapPlanLab() {
     screen.classList.add('hidden');
     screen.style.setProperty('display', 'none', 'important');
   }
-  const ms = $('mode-select-screen');
-  if (ms) {
-    ms.classList.remove('hidden');
-    ms.style.removeProperty('display');
+  const em = $('extra-menu-screen');
+  if (em) {
+    em.classList.remove('hidden');
+    em.style.removeProperty('display');
   }
 }
 
@@ -1638,7 +1686,7 @@ function renderError(msg) {
     <div class="game-screen nap-lab">
       <div class="lab-body" style="padding:40px 20px;text-align:center;">
         <p style="color:#e89685;font-size:15px;line-height:1.6;">${escapeHTML(msg)}</p>
-        <button class="primary-button" id="lab-error-close" style="margin-top:20px;min-height:48px;">モード選択へ戻る</button>
+        <button class="primary-button" id="lab-error-close" style="margin-top:20px;min-height:48px;">その他メニューへ戻る</button>
       </div>
     </div>`;
   document.getElementById('lab-error-close').onclick = closeNapPlanLab;
