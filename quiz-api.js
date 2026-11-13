@@ -8,7 +8,6 @@ export const quizSchema = [
   "CREATE TABLE IF NOT EXISTS quiz_insights (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL UNIQUE, human_majority INTEGER NOT NULL, ai_answer INTEGER NOT NULL, agreement_rate REAL NOT NULL, total_answers INTEGER NOT NULL, synced_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE TABLE IF NOT EXISTS quiz_candidates (id TEXT PRIMARY KEY, category TEXT NOT NULL DEFAULT 'play', scenario_json TEXT NOT NULL, options_json TEXT NOT NULL, ai_answer_index INTEGER NOT NULL, reason TEXT NOT NULL, explanation TEXT, generation INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS quiz_candidates_reason ON quiz_candidates(reason)",
-  // ★ 新規: 捨て札戦略評価指標テーブル
   "CREATE TABLE IF NOT EXISTS ai_discard_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, generation INTEGER NOT NULL, strategy_index INTEGER NOT NULL, avg_ev_loss REAL NOT NULL DEFAULT 0, optimal_rate REAL NOT NULL DEFAULT 0, void_choice_rate REAL NOT NULL DEFAULT 0, close_call_rate REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS ai_discard_metrics_gen ON ai_discard_metrics(generation DESC)"
 ];
@@ -30,7 +29,6 @@ function noCacheJson(data, init = {}) {
   return new Response(JSON.stringify(data), Object.assign({}, init, { headers }));
 }
 
-// ★ 修正: 静的クイズと動的候補を統合して解決する関数
 async function resolveQuestion(id, env) {
   if (!id) return null;
   if (id.startsWith('gen-')) {
@@ -76,15 +74,12 @@ export async function handleQuizRequest(request, env, url) {
       let grandTotal = 0;
       let grandAnswered = 0;
 
-      // 静的クイズの集計
+      // ★ 静的クイズの集計（getQuestionを呼ばない高速版）
       for (const c of QUIZ_CATEGORIES) {
         let answered = 0;
-        let validTotal = 0;
+        const validTotal = QUIZ_COUNTS[c];
         for (let i = 0; i < QUIZ_COUNTS[c]; i++) {
           const id = makeQuestionId(c, i);
-          // ★ 修正: discard カテゴリは生成失敗する可能性があるため、存在チェック
-          if (c === 'discard' && !getQuestion(id)) continue;
-          validTotal++;
           if (answeredIds.has(id)) answered++;
           else unanswered.push(id);
         }
