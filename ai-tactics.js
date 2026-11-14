@@ -1,6 +1,6 @@
 // ===== [ai-tactics.js 前半 開始] =====
-// ai-tactics.js (MECE戦術エンジン統合版・トリック分析統合版)
-// 修正: trick-analysis.js の絶対判断を最優先で組み込み
+// ai-tactics.js (MECE戦術エンジン + trick-analysis + bid-strategy 完全統合版)
+// 修正: bid-strategy.js をラップ統合。立ち精度を負けシナリオ分析で強化
 
 import { SUITS, RANKS, SV, defaultStrategy, isSameColorSuit, FACE, sameColorSuitOf, playExperienceKey, rankTierOf, trickPhaseOf, pointsTierOf, experienceConfidence, blendWithExperience } from './constants.js';
 import { classifySituation, hashSituation, deriveSeedFromSituation } from './situation.js';
@@ -13,6 +13,15 @@ import {
   pickWeakestNonCovering,
   analyzeTrickSituation,
 } from './trick-analysis.js';
+import {
+  computeProperBidByStrategy,
+  shouldBidByStrategy,
+  analyzeHandForBid,
+  evaluateKittyChoices,
+  evaluateDeputyCallForBid,
+  computeOptimalBidStrategy,
+  debugBidStrategy,
+} from './bid-strategy.js';
 
 // ============================================================
 // 決定論rngヘルパー
@@ -676,73 +685,70 @@ export function analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistor
   return { adjustment, forcePass };
 }
 
+// ==========================================
+// ★ 修正1: computeProperBid を bid-strategy 統合版に置き換え
+// ==========================================
 export function computeProperBid(hand, trump, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, bidHistory, round = 1) {
-  const archetype = classifyHandArchetype(hand, trump, params);
-  if (archetype === 'WEAK') return { properBid: 0, archetype, plan: null };
-  const plan = evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards, voids);
-  const deputy = evaluateDeputyValue(hand, trump, mySeat, bidSignals?.received || [], bidHistory);
-  const context = analyzeBiddingContext(mySeat, matchScores, bidSignals, bidHistory, round);
-  if (context.forcePass) return { properBid: 0, archetype, context, plan };
-  const baseRanges = {
-    ROLE_OVERWHELM: [17, 20],
-    TRUMP_DOMINANT: [15, 19],
-    SIDE_ACE_HEAVY: [14, 17],
-    RUN_SUIT: [14, 16],
-    BALANCED: [13, 15]
-  };
-  const [min, max] = baseRanges[archetype] || [13, 15];
-  const expectedRatio = Math.min(1, Math.max(0, (plan.expectedWins - 13) / 7));
-  let baseBid = min + Math.round((max - min) * expectedRatio);
-  baseBid += Math.min(1, Math.floor(deputy.ev / 3));
-  baseBid += context.adjustment;
-  const properBid = Math.max(13, Math.min(20, baseBid));
-  return { properBid, baseBid, archetype, plan, deputy, context, expected: properBid, pMake20: plan.pMake?.[20] ?? 0, roleCardCount: getRoleCards(hand, trump).count, signalBonus: 0, safetyMargin: params.tossUpSafetyMargin ?? 0.4 };
+  // bidPlan用途に plan を別途計算（runSuits等を維持）
+  let plan = null;
+  try {
+    plan = evaluateBidPlan(hand, trump, params, bidHistory, mySeat, openKitty, playedCards, voids);
+  } catch (e) { plan = null; }
+
+  // bid-strategy: 負けシナリオ・集中投下・2周/3周負けを考慮した properBid
+  try {
+    const strategy = computeProperBidByStrategy(
+      hand, trump, params, mySeat, bidSignals, matchScores,
+      openKitty, playedCards, voids, bidHistory, round, null
+    );
+    if (strategy.error) {
+      return { properBid: 0, plan, error: strategy.error };
+    }
+    return {
+      properBid: strategy.properBid,
+      baseBid: strategy.baseBid,
+      archetype: 'MECE',
+      plan,
+      deputy: null,
+      context: { adjustment: 0, forcePass: false },
+      analysis: strategy.analysis,
+      strategy: strategy.strategy,
+      expected: strategy.properBid,
+      pMake20: strategy.pMake20,
+      roleCardCount: strategy.roleCardCount,
+      safetyMargin: strategy.safetyMargin,
+    };
+  } catch (e) {
+    console.error('[computeProperBid] bid-strategy error, falling back', e);
+    const archetype = classifyHandArchetype(hand, trump, params);
+    if (archetype === 'WEAK') return { properBid: 0, archetype, plan };
+    return { properBid: 13, archetype, plan };
+  }
 }
 
 // ==========================================
-// 選択関数
+// ★ 修正2: shouldBid を bid-strategy 統合版に置き換え
 // ==========================================
-
 export function shouldBid(hand, currentHigh, minBid, params, bidHistory = [], mySeat = 0, experience = null, matchScores = null, openKitty = null, playedCards = [], voids = [{},{},{},{},{}]) {
   if (!Array.isArray(hand) || !hand.length) return null;
   if (!params) params = defaultStrategy();
-  const bidSignals = params.bidSignals || { sent: null, received: [], sameColorCount: 0, lastBidAt: 0 };
-  const isFirstBid = (!currentHigh || currentHigh.num < 13);
-  const currentHighNum = currentHigh?.num ?? 12;
-  const baseStr = handStrength(hand);
-  const firstBidThreshold = Math.max(2.3, (params.bidThreshold ?? 3.5) - 1.2);
-  if (isFirstBid && baseStr < firstBidThreshold) return null;
-  const suitScores = SUITS.map(suit => ({ suit, score: colorStrength(hand, suit, params) }));
-  suitScores.sort((a, b) => b.score - a.score);
-  const topSuits = suitScores.slice(0, 2).map(x => x.suit);
-  const ntScore = ntHandStrength(hand, params);
-  const currentRound = Math.max(0, ...(bidHistory || []).map(b => b?.round || 0));
-  const currentBids = (bidHistory || []).filter(b => b && b.round === currentRound);
-  const candidates = [];
-  for (const suit of topSuits) {
-    const proper = computeProperBid(hand, suit, params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, currentBids);
-    const minViable = Math.max(minBid, currentHighNum + 1, 13);
-    if (proper.properBid >= minViable) candidates.push({ suit, properBid: proper.properBid, expected: proper.expected, baseExpected: proper.baseExpected, plan: proper.plan, isOverwhelming: proper.isOverwhelming });
-  }
-  if (ntScore > 6) {
-    const ntProper = computeProperBid(hand, 'NT', params, mySeat, bidSignals, matchScores, openKitty, playedCards, voids, currentBids);
-    const minViable = Math.max(minBid, currentHighNum + 1, 13);
-    if (ntProper.properBid >= minViable) candidates.push({ suit: 'NT', properBid: ntProper.properBid, expected: ntProper.expected, baseExpected: ntProper.baseExpected, plan: ntProper.plan, isOverwhelming: ntProper.isOverwhelming });
-  }
-  if (!candidates.length) {
-    if (isFirstBid && baseStr >= firstBidThreshold) return { num: Math.max(minBid, 13), suit: topSuits[0], solo: false, plan: null };
+
+  try {
+    const result = shouldBidByStrategy(
+      hand, currentHigh, minBid, params, bidHistory, mySeat,
+      experience, matchScores, openKitty, playedCards, voids
+    );
+    // plan が null なら evaluateBidPlan で補完（bidPlan用途）
+    if (result && !result.plan) {
+      try {
+        result.plan = evaluateBidPlan(hand, result.suit, params, bidHistory, mySeat, openKitty, playedCards, voids);
+      } catch (e) { /* skip */ }
+    }
+    return result;
+  } catch (e) {
+    console.error('[shouldBid] bid-strategy error', e);
     return null;
   }
-  const overwhelming = candidates.find(c => c.isOverwhelming);
-  if (overwhelming && currentHighNum < 20) return { num: 20, suit: overwhelming.suit, solo: false, plan: overwhelming.plan };
-  candidates.sort((a, b) => b.expected - a.expected);
-  const best = candidates[0];
-  if (currentHighNum >= 13 && best.properBid <= currentHighNum) {
-    if (currentHigh.suit !== best.suit && !isSameColorSuit(currentHigh.suit, best.suit)) return null;
-    return { num: Math.min(20, currentHighNum + 1), suit: best.suit, solo: false, plan: best.plan };
-  }
-  const targetNum = Math.min(best.properBid, Math.max(minBid, currentHighNum + 1));
-  return { num: targetNum, suit: best.suit, solo: false, plan: best.plan };
 }
 
 // ==========================================
@@ -859,11 +865,45 @@ export function analyzeDiscardOptions(hand, trump, context = {}, params = defaul
   return { bestOption, options, suitInfo };
 }
 
+// ==========================================
+// ★ 修正3: chooseDiscard を bid-strategy のキティ評価統合版に置き換え
+// ==========================================
 export function chooseDiscard(hand, trump, context = {}) {
   if (!Array.isArray(hand) || hand.length <= 2) return hand.slice();
   const params = context.params || defaultStrategy();
+
+  // 基本分析（ボイド vs 全スート維持）
   const { bestOption } = analyzeDiscardOptions(hand, trump, context, params);
-  return bestOption.cards;
+  const basicChoice = bestOption?.cards || hand.slice(0, 2);
+
+  // bid-strategy: キティ候補を立ち上限で比較
+  try {
+    const kittyEval = evaluateKittyChoices(hand, trump, {
+      params,
+      calledCard: context.protectedCallId ? { id: context.protectedCallId } : null,
+      playedCards: context.playedCards || [],
+    });
+
+    if (kittyEval && kittyEval.best) {
+      // 基本候補での立ち上限
+      const remainingBasic = hand.filter(c => !basicChoice.some(d => d.id === c.id));
+      const basicAnalysis = analyzeHandForBid(remainingBasic, trump, {
+        params,
+        discardedKitty: basicChoice,
+        playedCards: context.playedCards || [],
+      });
+      const basicMaxBid = basicAnalysis.bidOutcome?.safeBid ?? 13;
+
+      // bid-strategy最良候補の立ち上限が上回るなら採用
+      if (kittyEval.best.maxWinnableBid > basicMaxBid) {
+        return kittyEval.best.candidate.cards;
+      }
+    }
+  } catch (e) {
+    console.warn('[chooseDiscard] bid-strategy kitty eval failed', e);
+  }
+
+  return basicChoice;
 }
 
 export function chooseSoloCall(hand, trump) {
@@ -876,17 +916,18 @@ export function chooseSoloCall(hand, trump) {
   return { suit: sorted[0].suit, rank: sorted[0].rank, id: sorted[0].id };
 }
 // ===== [ai-tactics.js 前半 終了。後半へ続く] =====
+
+
 // ===== [ai-tactics.js 後半 開始] =====
 
 // ==========================================
-// プレイ関数群 ★ 全関数 rng 対応済み
+// プレイ関数群（trick-analysis.js 統合済み）
 // ==========================================
 
 function isFace(c) { return FACE.includes(c.rank); }
 function isOnNapSide(ctx) { return ctx.seat === ctx.contract.nap || (!ctx.contract.solo && ctx.contract.deputy === ctx.seat); }
 function countVoidSeats(voids, suit, excludeSeat) { let count = 0; for (let s = 0; s < 5; s++) if (s !== excludeSeat && voids[s]?.[suit]) count++; return count; }
 
-// ★ trick-analysis から winnerEntry を受け取る際の契約ブリッジ
 function cardPowerLocalByContract(contract, trickNo, card, trick) {
   try { return cardPower(contract, trickNo, card, trick); }
   catch (e) { return 0; }
@@ -2239,7 +2280,7 @@ function executeVoidCreateDiscard(ctx) {
 }
 
 // ==========================================
-// ★ メインエントリーポイント（トリック分析統合版）
+// ★ メインエントリーポイント（trick-analysis + bid-strategy 統合版）
 // ==========================================
 export function chooseCardToPlay(ctx) {
   const { seat, contract, legal, hand } = ctx;
@@ -3193,7 +3234,28 @@ export function decideNextBid(hand, currentHigh, role, params = defaultStrategy(
   return { type: 'PASS', num: 0, suit: '', intent: 'PASS', reason: '連合軍（降り）' };
 }
 
+// ==========================================
+// ★ 修正4: chooseDeputyCall を bid-strategy 統合版に置き換え
+// ==========================================
 export function chooseDeputyCall(hand, kitty, trump, level, num, params, experience, receivedSignals = []) {
+  // bid-strategy: 副官指名の立ち貢献を評価
+  try {
+    const deputyEval = evaluateDeputyCallForBid(hand, trump, {
+      playedCards: [],
+      discardedKitty: kitty || [],
+    });
+    if (deputyEval.best && deputyEval.best.type !== 'FALLBACK') {
+      return {
+        suit: deputyEval.best.suit,
+        rank: deputyEval.best.rank,
+        id: deputyEval.best.id,
+      };
+    }
+  } catch (e) {
+    console.warn('[chooseDeputyCall] bid-strategy error, falling back', e);
+  }
+
+  // 旧ロジック（フォールバック）
   const isTrumpSuit = trump !== 'NT';
   const sameColor = isTrumpSuit ? sameColorSuitOf(trump) : '♠';
   const isIn = id => hand.some(c => c.id === id);
