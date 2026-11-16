@@ -1,6 +1,6 @@
 // ===== [tactics.js 前半 開始] =====
 // tactics.js — MECE戦術カタログ層（期待値動的化版）
-// 修正: W2/W3/W5/W6/W8/W9/C2/C3/C5/C6/C8/G1/G2/PS4 の analytic を動的化
+// 修正: W1影狩り（敵マイティ例外狩り／味方マイティ温存条件）、H10よろめき温存（enemyフォロー対応）
 
 import {
   SUITS, RANKS, FACE, SV, sameColorSuitOf,
@@ -199,6 +199,46 @@ function trumpStateBonus(situation) {
 }
 
 // ============================================================
+// ★ 追加: ♥Q影狩り判定用ヘルパー
+//   - 敵マイティ → 例外なく狩る
+//   - 味方マイティ → 温存条件（♥契約 / ♥A・♥K既出）を判定
+// ============================================================
+
+// 自分がNAP側か（situation.role 由来。deputy_hiddenもNAP側）
+function amIKnownNapSide(situation) {
+  const r = situation?.role;
+  return r === 'nap' || r === 'deputy_revealed' || r === 'deputy_hidden';
+}
+
+// 対象席が「公開情報で確定NAP側」か（NAP本人 or 公開済み副官）
+function isSeatDefinitelyNapSide(targetSeat, contract) {
+  if (!contract) return false;
+  if (targetSeat === contract.nap) return true;
+  if (!contract.solo && contract.revealedCall && targetSeat === contract.deputy) return true;
+  return false;
+}
+
+// 場の♠Aホルダーが「自分にとって味方」と確定しているか
+//   - NAP側視点: 確定NAP側（NAP本人/公開副官）なら味方
+//   - 連合軍視点: 場の♠A保有者は常に敵/不明 → false（狩る）
+//   - 未公開副官の♠Aは不明 → 敵扱いで狩る
+function isMightyHolderMyAlly(mightySeat, situation, contract) {
+  if (amIKnownNapSide(situation)) {
+    return isSeatDefinitelyNapSide(mightySeat, contract);
+  }
+  return false;
+}
+
+// ♥Aと♥Kが既に消費済みか（場・現在トリック・捨て札を含む）
+function heartAceKingGone(ctx) {
+  const playedIds    = new Set((ctx?.playedCards    || []).map(c => c.id));
+  const trickIds     = new Set((ctx?.trick          || []).map(t => t.card?.id));
+  const discardedIds = new Set((ctx?.discardedKitty || []).map(c => c.id));
+  const gone = (id) => playedIds.has(id) || trickIds.has(id) || discardedIds.has(id);
+  return gone('♥A') && gone('♥K');
+}
+
+// ============================================================
 // UNIVERSAL_FALLBACK
 // ============================================================
 const UNIVERSAL_FALLBACK = {
@@ -219,16 +259,35 @@ const PRIMITIVE_CATALOG = [
   // ─────────────────────────────────────
   // W: WIN/Cash（14戦術）★ 動的化
   // ─────────────────────────────────────
-  { id: 'W1', name: '影狩り', category: 'W', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
-    turns: ['follow_enemy_win', 'follow_ally_win', 'follow_self_win'], phases: ['early', 'mid', 'late', 'final'],
+  // ★ 修正: 影狩り（敵マイティは例外狩り／味方マイティは温存条件）
+  { id: 'W1', name: '影狩り', category: 'W',
+    roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
+    turns: ['follow_enemy_win', 'follow_ally_win', 'follow_self_win'],
+    phases: ['early', 'mid', 'late', 'final'],
     analytic: (s, ctx) => {
-      const trick = ctx?.trick || [];
-      const hasMightyInTrick = trick.some(t => t.card?.id === '♠A');
-      const legalHasShadow = (ctx?.legal || []).some(c => c.id === '♥Q');
-      if (!hasMightyInTrick || !legalHasShadow) return -5.0;
-      const base = 3.0;
+      const trick    = ctx?.trick || [];
+      const legal    = ctx?.legal || [];
+      const contract = ctx?.contract;
+
+      const mightyEntry = trick.find(t => t.card?.id === '♠A');
+      if (!mightyEntry) return -5.0;
+      if (!legal.some(c => c.id === '♥Q')) return -5.0;
+
+      // ♠Aが場にある時点で最低1点確定（♠A自体が点札）
       const pts = trick.filter(t => t.card && FACE.includes(t.card.rank)).length;
-      return base + pts * 0.5;
+
+      // 敵マイティ → 例外なく狩る
+      const mightyIsAlly = isMightyHolderMyAlly(mightyEntry.seat, s, contract);
+      if (!mightyIsAlly) {
+        return 3.5 + pts * 0.5;
+      }
+
+      // 味方マイティ → 温存条件なら出さない
+      if (contract?.suit === '♥')  return -1.0;
+      if (heartAceKingGone(ctx))   return -1.0;
+
+      // 味方マイティ・温存条件なし → 点が高いほど出す価値あり
+      return 1.0 + pts * 0.5;
     },
   },
   { id: 'W1b', name: '影狩り抑制', category: 'W', roles: ['nap', 'deputy_revealed', 'deputy_hidden', 'alliance'],
@@ -697,9 +756,29 @@ const PRIMITIVE_CATALOG = [
     turns: ['lead', 'follow_ally_win'], phases: ['early', 'mid'],
     analytic: () => 0.5,
   },
-  { id: 'H10', name: 'よろめき温存', category: 'H', roles: ['nap', 'deputy_revealed', 'alliance'],
-    turns: ['lead', 'follow_ally_win'], phases: ['early', 'mid'],
-    analytic: (s, ctx) => (ctx?.hand || []).some(c => c.id === '♥Q') ? 1.0 : 0,
+  // ★ 修正: よろめき温存（enemyフォロー対応／味方マイティ＋温存条件で強く温存）
+  { id: 'H10', name: 'よろめき温存', category: 'H',
+    roles: ['nap', 'deputy_revealed', 'alliance'],
+    turns: ['lead', 'follow_ally_win', 'follow_enemy_win'],
+    phases: ['early', 'mid'],
+    analytic: (s, ctx) => {
+      const hasShadow = (ctx?.hand || []).some(c => c.id === '♥Q');
+      if (!hasShadow) return 0;
+
+      const contract = ctx?.contract;
+      const trick    = ctx?.trick || [];
+
+      // 味方マイティ ＋ 温存条件 → 強く温存
+      const mightyEntry = trick.find(t => t.card?.id === '♠A');
+      if (mightyEntry) {
+        const mightyIsAlly = isMightyHolderMyAlly(mightyEntry.seat, s, contract);
+        if (mightyIsAlly && (contract?.suit === '♥' || heartAceKingGone(ctx))) {
+          return 2.5;
+        }
+      }
+      // 通常温存（♥契約なら高め）
+      return contract?.suit === '♥' ? 1.5 : 1.0;
+    },
   },
   { id: 'H11', name: 'リード権温存', category: 'H', roles: ['nap', 'deputy_revealed', 'alliance'],
     turns: ['lead'], phases: ['mid', 'late'],
