@@ -1,10 +1,7 @@
-// bid-strategy.js — 立ち精度を極限まで高める戦略エンジン（v3・rollout統合版）
-// 修正: 実際のプレイエンジンでロールアウト → 得点分布から pMake を算出
-//      弱手（セイム2ゼロ・切札なし等）は pMake[13] < 0.4 で強制PASS
+// bid-strategy.js — 立ち精度を極限まで高める戦略エンジン（修正版）
+// 修正: 攻撃資産の反映、仮副官による2対3ロールアウト、openKitty反映、NAP倍率(2x)修正
 
 import { SUITS, RANKS, FACE, SV, sameColorSuitOf, defaultStrategy } from './constants.js';
-
-const EPS = 1e-9;
 
 function groupBySuit(hand) {
   const g = {};
@@ -35,7 +32,7 @@ function analyzeOffensive(hand, trump, context) {
 
   if (hasMighty) {
     if (!hasShadow && shadowSafe) absolute.push({ cardId: '♠A', type: 'mighty', certainty: 1.0, expectedPoints: 0.3 });
-    else if (!hasShadow && !shadowSafe) conditional.push({ cardId: '♠A', type: 'mighty_shadow_risk', certainty: 0.55, expectedPoints: 0.3 });
+    else if (!hasShadow && !shadowSafe) conditional.push({ cardId: '♠A', type: 'mighty_shadow_risk', certainty: 0.72, expectedPoints: 0.3 });
     else absolute.push({ cardId: '♠A', type: 'mighty_defended', certainty: 1.0, expectedPoints: 0.3 });
   }
   if (trumpJ) absolute.push({ cardId: trumpJ.id, type: 'trumpJ', certainty: 1.0, expectedPoints: 0.5 });
@@ -52,7 +49,7 @@ function analyzeOffensive(hand, trump, context) {
     if (!ace) continue;
     const two = groups[suit].find(c => c.rank === '2');
     const twoPlayed = playedCards.some(c => c.id === suit + '2') || discardedKitty.some(c => c.id === suit + '2');
-    const cutRisk = two ? 0 : twoPlayed ? 0 : 0.15;
+    const cutRisk = two ? 0 : twoPlayed ? 0 : 0.18;
     conditional.push({ cardId: ace.id, type: cutRisk === 0 ? 'sideA_safe' : 'sideA_cut_risk', certainty: 1 - cutRisk, expectedPoints: 0.8 });
   }
   for (const suit of SUITS) {
@@ -111,8 +108,8 @@ function analyzeDefensive(hand, trump, context) {
     if (deficit >= 1) {
       losses.push({
         type: 'TRUMP_EXHAUSTED', trickBand: [Math.max(6, 11 - deficit), 10],
-        probability: Math.min(0.92, 0.45 + deficit * 0.13),
-        expectedPointsLost: Math.min(4, deficit * 0.9), severity: deficit >= 2 ? 'high' : 'mid',
+        probability: Math.min(0.95, 0.45 + deficit * 0.13),
+        expectedPointsLost: Math.min(5, deficit * 1.1), severity: deficit >= 2 ? 'high' : 'mid',
       });
     }
   }
@@ -151,6 +148,10 @@ function analyzeDefensive(hand, trump, context) {
   const myLongest = sideSuits.reduce((best, s) => { const cnt = groups[s].length; return cnt > best.cnt ? { suit: s, cnt } : best; }, { suit: null, cnt: 0 });
   if (!isNT && myLongest.cnt < 3) {
     losses.push({ type: 'LONG_SUIT_RUN', trickBand: [4, 8], probability: 0.4, expectedPointsLost: 1.5, severity: 'mid' });
+  }
+  if (isNT) {
+    const minLen = Math.min(...SUITS.map(s => groups[s].length));
+    if (minLen === 0) losses.push({ type: 'NT_VOID_WEAKNESS', trickBand: [1, 5], probability: 0.75, expectedPointsLost: 2.5, severity: 'high' });
   }
   return {
     losses: losses.sort((a, b) => b.expectedPointsLost * b.probability - a.expectedPointsLost * a.probability),
@@ -229,13 +230,21 @@ function cardPowerLocal(contract, trickNo, card, trick) {
 }
 
 function simulateFullRoundWithTactics(myHand, trump, context, playRolloutFn, rng) {
-  const calledCard = context.calledCard || null;
-  const isSolo = context.isSolo === true || !calledCard;
-  const bidNum = context.bidNum || 15;
+  // 競り中で calledCard が未定なら、最適な副官候補を仮定して 2対3 として評価する
+  let calledCard = context.calledCard || null;
+  if (!calledCard && context.isSolo !== true) {
+    const depEval = evaluateDeputyCallForBid(myHand, trump, context);
+    if (depEval && depEval.best && depEval.best.type !== 'FALLBACK') {
+      calledCard = depEval.best;
+    }
+  }
+  const isSolo = context.isSolo === true || !calledCard || myHand.some(c => c.id === calledCard.id);
+  const bidNum = context.bidNum || 14;
   const kittyPoints = (context.discardedKitty || []).filter(c => FACE.includes(c.rank)).length;
 
   const seen = new Set(myHand.map(c => c.id));
   (context.discardedKitty || []).forEach(c => seen.add(c.id));
+  (context.playedCards || []).forEach(c => seen.add(c.id));
   const unseen = [];
   for (const s of SUITS) for (const r of RANKS) {
     const id = s + r;
@@ -256,8 +265,13 @@ function simulateFullRoundWithTactics(myHand, trump, context, playRolloutFn, rng
       if (hands[s].some(c => c.id === calledCard.id)) { deputy = s; break; }
     }
   }
-  const napSide = isSolo ? new Set([0]) : new Set([0, deputy].filter(x => x >= 0));
-  const contract = { nap: 0, num: bidNum, suit: trump, solo: isSolo, deputy: isSolo ? 0 : deputy, revealedCall: true, call: calledCard };
+  if (!isSolo && deputy < 0) deputy = 0;
+  const effectiveSolo = isSolo || deputy === 0;
+  const napSide = effectiveSolo ? new Set([0]) : new Set([0, deputy]);
+  const contract = {
+    nap: 0, num: bidNum, suit: trump, solo: effectiveSolo,
+    deputy: effectiveSolo ? 0 : deputy, revealedCall: false, call: calledCard,
+  };
 
   const points = [0, 0, 0, 0, 0];
   const played = [];
@@ -272,16 +286,16 @@ function simulateFullRoundWithTactics(myHand, trump, context, playRolloutFn, rng
       const hand = hands[seat];
       if (!hand.length) break;
       const led = trick.length ? trick[0].card.suit : null;
-      const legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
+      let legal = !led ? hand : (hand.some(c => c.suit === led) ? hand.filter(c => c.suit === led) : hand);
       if (!legal.length) break;
 
       const ctx = {
         hand, legal, trick, trickNo: t, contract, playedCards: played, voids, seat,
         deputy: contract.deputy,
-        params: { ...(context.params || defaultStrategy()), enableTrickAnalysis: true, enableEndgameSearch: false },
+        params: { ...(context.params || defaultStrategy()), enableTacticEngine: false, enableTrickAnalysis: true, enableEndgameSearch: false },
         call: calledCard, discardedKitty: context.discardedKitty || [],
-        isRevealed: true, isRollout: true,
-        currentNapPoints: points[0] + (isSolo ? 0 : (points[deputy] || 0)),
+        isRevealed: contract.revealedCall, isRollout: false,
+        currentNapPoints: points[0] + (effectiveSolo ? 0 : (points[deputy] || 0)),
         points: points.slice(), allianceKittyPoints: kittyPoints,
         players: hands.map(h => ({ handCount: h.length })),
       };
@@ -289,12 +303,22 @@ function simulateFullRoundWithTactics(myHand, trump, context, playRolloutFn, rng
       let chosen = null;
       try { chosen = playRolloutFn(ctx); } catch (e) { chosen = null; }
       if (!chosen || !legal.some(c => c.id === chosen.id)) {
-        chosen = legal.reduce((b, c) => cardPowerLocal(contract, t, c, trick) < cardPowerLocal(contract, t, b, trick) ? c : b, legal[0]);
+        const pool = (t === 0 && trick.length === 0 && legal.some(c => c.rank !== '2'))
+          ? legal.filter(c => c.rank !== '2')
+          : legal;
+        chosen = pool.reduce((b, c) => cardPowerLocal(contract, t, c, trick) < cardPowerLocal(contract, t, b, trick) ? c : b, pool[0]);
       }
+      if (t === 0 && trick.length === 0 && chosen.rank === '2' && legal.some(c => c.rank !== '2')) {
+        chosen = legal.filter(c => c.rank !== '2')[0];
+      }
+
       hands[seat] = hand.filter(c => c.id !== chosen.id);
       if (trick.length > 0) {
         const ledSuit = trick[0].card.suit;
         if (chosen.suit !== ledSuit) { if (!voids[seat]) voids[seat] = {}; voids[seat][ledSuit] = true; }
+      }
+      if (!contract.revealedCall && calledCard && chosen.id === calledCard.id) {
+        contract.revealedCall = true;
       }
       played.push({ id: chosen.id, suit: chosen.suit, rank: chosen.rank, seat });
       trick.push({ seat, card: chosen });
@@ -305,20 +329,21 @@ function simulateFullRoundWithTactics(myHand, trump, context, playRolloutFn, rng
     const taken = trick.filter(e => FACE.includes(e.card.rank)).length;
     points[w] += taken;
     active = w;
-    const napPts = points[0] + (isSolo ? 0 : (points[deputy] || 0));
+    const napPts = points[0] + (effectiveSolo ? 0 : (points[deputy] || 0));
     const allyPts = points.reduce((sum, p, i) => sum + (napSide.has(i) ? 0 : p), 0) + kittyPoints;
     if (napPts >= bidNum && (bidNum === 20 || allyPts >= 1)) break;
     if (allyPts > 20 - bidNum) break;
   }
-  const finalNap = points[0] + (isSolo ? 0 : (points[deputy] || 0));
+  const finalNap = points[0] + (effectiveSolo ? 0 : (points[deputy] || 0));
   return { napPoints: finalNap, made: finalNap >= bidNum && (bidNum === 20 || finalNap < 20) };
 }
 
 function computePMakeFromRollouts(myHand, trump, context, playRolloutFn, sampleCount) {
-  const n = Math.max(4, Math.min(20, sampleCount || 6));
+  const n = Math.max(4, Math.min(16, sampleCount || 6));
   const results = [];
-  const key = myHand.map(c => c.id).sort().join('|') + '|' + trump + '|' + (context.bidNum || 15);
+  const key = myHand.map(c => c.id).sort().join('|') + '|' + trump + '|' + (context.bidNum || 14);
   const baseSeed = hashSeed(key);
+  const kittyPoints = (context.discardedKitty || []).filter(c => FACE.includes(c.rank)).length;
 
   for (let i = 0; i < n; i++) {
     const rng = makeRng((baseSeed + i * 8191) >>> 0);
@@ -330,6 +355,11 @@ function computePMakeFromRollouts(myHand, trump, context, playRolloutFn, sampleC
 
   const pMake = {};
   for (let b = 13; b <= 20; b++) {
+    // キティで連合軍に点札が入っていれば (20 - kittyPoints) 超えは不可能
+    if (b > 20 - kittyPoints) {
+      pMake[b] = 0;
+      continue;
+    }
     let wins = 0;
     for (const pts of results) {
       if (b === 20) { if (pts >= 20) wins++; }
@@ -347,21 +377,56 @@ function computePMakeFromRollouts(myHand, trump, context, playRolloutFn, sampleC
 }
 
 // ============================================================
-// フォールバック: シナリオベース pMake
+// ★ 修正: 攻撃資産 + 防御欠陥 + 捨て札点数を統合したシナリオベース pMake
 // ============================================================
-function computePMakeFromScenarios(defensiveLosses) {
+function computePMakeFromScenarios(offensive, defensive, points, trump, hand) {
   const pMake = {};
-  const exp = defensiveLosses.totalExpectedLostPoints;
-  const napExpected = 20 - exp;
-  const stdDev = Math.max(1.2, Math.sqrt(exp + 1.5));
+  const isNT = trump === 'NT';
+
+  // 攻撃資産からの獲得コントロール力（勝ちトリック期待数）
+  const ctrlTricks =
+    (offensive?.totalAbsolute || 0) * 1.0 +
+    (offensive?.totalConditional || 0) * 0.78 +
+    (offensive?.totalPotential || 0) * 0.55 +
+    (!isNT ? Math.max(0, (defensive?.myTrumps || 0) - 2) * 0.45 : 0);
+
+  // 切札枚数不足・NT欠陥ペナルティ
+  let structuralPenalty = 0;
+  if (!isNT) {
+    const tc = defensive?.myTrumps || 0;
+    if (tc === 0) structuralPenalty = 5.5;
+    else if (tc === 1) structuralPenalty = 3.5;
+    else if (tc === 2) structuralPenalty = 1.8;
+  } else {
+    const lengths = SUITS.map(s => (hand || []).filter(c => c.suit === s).length);
+    const minLen = Math.min(...lengths);
+    if (minLen === 0) structuralPenalty = 2.5;
+    else if (minLen === 1) structuralPenalty = 1.0;
+  }
+
+  const deputyPts = points?.deputyExpected ?? 2.0;
+  const myFacePts = (points?.myFaceCount || 0) * 0.3;
+  const kittyLostPts = points?.kittyFaces || 0;
+  const defLost = defensive?.totalExpectedLostPoints || 0;
+
+  // 基礎期待得点：コントロール1回ごとに約1.75点＋副官寄与＋自点札 − 構造ペナルティ − 防御欠陥
+  const rawExpected = 3.5 + ctrlTricks * 1.75 + deputyPts * 0.85 + myFacePts - structuralPenalty - defLost * 0.55;
+  const maxPossible = Math.max(0, 20 - kittyLostPts);
+  const napExpected = Math.max(2.0, Math.min(maxPossible, rawExpected));
+  const stdDev = Math.max(1.5, Math.sqrt(defLost + 2.0));
+
   for (let n = 13; n <= 20; n++) {
+    if (n > maxPossible) {
+      pMake[n] = 0;
+      continue;
+    }
     const z = (n - napExpected) / stdDev;
     let p = 1 - 0.5 * (1 + erf(z / Math.sqrt(2)));
-    if (n < 20) {
+    if (n < 20 && kittyLostPts === 0) {
       const z20 = (20 - napExpected) / stdDev;
       p -= (1 - 0.5 * (1 + erf(z20 / Math.sqrt(2))));
     }
-    pMake[n] = Math.max(0, Math.min(0.99, p));
+    pMake[n] = Math.max(0, Math.min(0.98, p));
   }
   return { pMake, avgNapPoints: napExpected, stdDev, sampleCount: 0 };
 }
@@ -380,19 +445,46 @@ function erf(x) {
 // ============================================================
 export function analyzeHandForBid(hand, trump, context = {}) {
   if (!Array.isArray(hand) || hand.length === 0) return { error: 'empty_hand' };
-  const bidNum = context.bidNum || 15;
+  const bidNum = context.bidNum || 14;
   const playRolloutFn = context.playRolloutFn || null;
 
-  const offensive = analyzeOffensive(hand, trump, context);
-  const defensive = analyzeDefensive(hand, trump, context);
-  const points = analyzePoints(hand, trump, context);
+  // ★ openKitty があり手札10枚なら、オープン2枚を取り込んで最良2枚を捨てた仮想10枚で評価する
+  let evalHand = hand;
+  let evalDiscarded = context.discardedKitty || [];
+  if (!context._skipKittyOpt && Array.isArray(context.openKitty) && context.openKitty.length > 0 && hand.length === 10) {
+    try {
+      const combined12 = hand.concat(context.openKitty);
+      const bestDep = evaluateDeputyCallForBid(combined12, trump, context).best;
+      const kittyEval = evaluateKittyChoices(combined12, trump, {
+        ...context,
+        calledCard: context.calledCard || (bestDep && bestDep.type !== 'FALLBACK' ? bestDep : null),
+        _skipKittyOpt: true,
+        playRolloutFn: null, // キティ候補比較は高速なシナリオ評価を使用
+      });
+      if (kittyEval && kittyEval.best && kittyEval.best.candidate?.cards?.length === 2) {
+        const dropIds = new Set(kittyEval.best.candidate.cards.map(c => c.id));
+        evalHand = combined12.filter(c => !dropIds.has(c.id));
+        evalDiscarded = kittyEval.best.candidate.cards;
+      }
+    } catch (e) { /* フォールバック: 元の10枚のまま */ }
+  }
+
+  const evalCtx = { ...context, discardedKitty: evalDiscarded };
+  const offensive = analyzeOffensive(evalHand, trump, evalCtx);
+  const defensive = analyzeDefensive(evalHand, trump, evalCtx);
+  const points = analyzePoints(evalHand, trump, evalCtx);
 
   let rollout = null;
-  if (playRolloutFn) {
+  if (playRolloutFn && context.sampleCount !== 0) {
     try {
-      rollout = computePMakeFromRollouts(hand, trump,
-        { ...context, bidNum, calledCard: context.calledCard || null, isSolo: context.isSolo === true,
-          discardedKitty: context.discardedKitty || [], playedCards: context.playedCards || [] },
+      rollout = computePMakeFromRollouts(
+        evalHand, trump,
+        {
+          ...evalCtx, bidNum,
+          calledCard: context.calledCard || null,
+          isSolo: context.isSolo === true,
+          playedCards: context.playedCards || [],
+        },
         playRolloutFn, context.sampleCount || 6
       );
     } catch (e) { rollout = null; }
@@ -405,20 +497,21 @@ export function analyzeHandForBid(hand, trump, context = {}) {
     stdDev = rollout.stdDev;
     usedRollout = true;
   } else {
-    const scen = computePMakeFromScenarios(defensive);
+    const scen = computePMakeFromScenarios(offensive, defensive, points, trump, evalHand);
     pMake = scen.pMake;
     napExpected = scen.avgNapPoints;
     stdDev = scen.stdDev;
   }
 
-  const safeBid = [20, 19, 18, 17, 16, 15, 14, 13].find(n => pMake[n] >= 0.75) || 13;
-  const riskyBid = [20, 19, 18, 17, 16, 15, 14, 13].find(n => pMake[n] >= 0.40) || 13;
+  const safeBid = [20, 19, 18, 17, 16, 15, 14, 13].find(n => (pMake[n] || 0) >= 0.72) || 13;
+  const riskyBid = [20, 19, 18, 17, 16, 15, 14, 13].find(n => (pMake[n] || 0) >= 0.42) || 13;
 
-  let bestBid = { n: 13, ev: -Infinity };
+  let bestBid = { n: 13, ev: -Infinity, p: pMake[13] || 0 };
   for (let n = 13; n <= 20; n++) {
-    const p = pMake[n];
-    const E = (2 * p - 1) * (n - 12);
-    const risk = 0.1 * Math.sqrt(Math.max(0, p * (1 - p))) * (n - 12);
+    const p = pMake[n] || 0;
+    // ナポレオンの得点変動は ±2 * (n - 12)
+    const E = 2 * (2 * p - 1) * (n - 12);
+    const risk = 0.15 * Math.sqrt(Math.max(0, p * (1 - p))) * (n - 12);
     const adjE = E - risk;
     if (adjE > bestBid.ev) bestBid = { n, ev: adjE, p };
   }
@@ -430,6 +523,7 @@ export function analyzeHandForBid(hand, trump, context = {}) {
 
   return {
     trump, isNT: trump === 'NT', offensive, defensive, points, rollout,
+    effectiveHand: evalHand, effectiveDiscarded: evalDiscarded,
     bidOutcome: {
       napExpected, stdDev, pMake, safeBid, riskyBid,
       optimalBid: bestBid.n, optimalEV: bestBid.ev, optimalP: bestBid.p,
@@ -478,7 +572,7 @@ export function evaluateKittyChoices(hand12, trump, context = {}) {
 
   const results = candidates.map(cand => {
     const remaining = hand12.filter(c => !cand.cards.some(d => d.id === c.id));
-    const a = analyzeHandForBid(remaining, trump, { ...context, discardedKitty: cand.cards });
+    const a = analyzeHandForBid(remaining, trump, { ...context, discardedKitty: cand.cards, _skipKittyOpt: true, playRolloutFn: null });
     return {
       candidate: cand, analysis: a,
       kittyPoints: cand.cards.filter(c => FACE.includes(c.rank)).length,
@@ -508,7 +602,10 @@ export function evaluateDeputyCallForBid(hand, trump, context = {}) {
     if (isIn(suit + 'A')) continue;
     if (isPlayed(suit + 'A')) continue;
     const suitLen = groups[suit].length;
-    candidates.push({ id: suit + 'A', suit, rank: 'A', value: suitLen <= 1 ? 2.5 : suitLen <= 2 ? 2.0 : 1.5, type: 'SIDE_ACE' });
+    const hasTwo = groups[suit].some(c => c.rank === '2');
+    // 自分が短いスートのAまたは自分が2を持っているスートのAを優先
+    const bonus = (hasTwo ? 0.4 : 0) + (suitLen <= 1 ? 2.4 : suitLen <= 2 ? 2.0 : 1.5);
+    candidates.push({ id: suit + 'A', suit, rank: 'A', value: bonus, type: 'SIDE_ACE' });
   }
   candidates.sort((a, b) => b.value - a.value);
   return { candidates, best: candidates[0] || { id: '♠2', suit: '♠', rank: '2', value: 0.5, type: 'FALLBACK' } };
@@ -531,15 +628,15 @@ export function computeOptimalBidStrategy(hand, trump, context = {}) {
   const { bidOutcome } = analysis;
   const currentHighNum = currentHigh?.num ?? 12;
 
-  // ★ 弱手強制PASS: 初手で pMake[13] < 0.4 なら立たない
-  if ((!currentHigh || currentHigh.num < 13) && (bidOutcome.pMake[13] || 0) < 0.4) {
+  // 弱手強制PASS: 初手で pMake[13] < 0.45 なら立たない
+  if ((!currentHigh || currentHigh.num < 13) && (bidOutcome.pMake[13] || 0) < 0.45) {
     return {
       analysis, bidEVs: [], passEV: 0, bestBid: 13, bestBidEV: 0,
       shouldBid: false,
       safeBid: bidOutcome.safeBid, riskyBid: bidOutcome.riskyBid,
       recommended: {
         type: 'PASS', num: 0, suit: '',
-        reason: `弱手強制PASS: pMake[13]=${((bidOutcome.pMake[13] || 0) * 100).toFixed(0)}% < 40%`,
+        reason: `弱手強制PASS: pMake[13]=${((bidOutcome.pMake[13] || 0) * 100).toFixed(0)}% < 45%`,
       },
     };
   }
@@ -556,6 +653,13 @@ export function computeOptimalBidStrategy(hand, trump, context = {}) {
     }
   }
 
+  const effectiveHand = analysis.effectiveHand || hand;
+  const pBeDeputyIfLose = Math.min(0.65,
+    0.15 +
+    (effectiveHand.some(c => c.id === '♠A') ? 0.3 : 0) +
+    (effectiveHand.filter(c => c.rank === 'J').length >= 2 ? 0.15 : 0.05)
+  );
+
   const bidEVs = [];
   for (let n = 13; n <= 20; n++) {
     const p = bidOutcome.pMake[n] || 0;
@@ -565,8 +669,8 @@ export function computeOptimalBidStrategy(hand, trump, context = {}) {
       if (opp.p90 > n) pAuctionWin *= (1 - Math.min(1, (opp.p90 - n) / 3) * 0.7);
     }
     const unit = n - 12;
-    const napEV = (2 * p - 1) * unit;
-    const pBeDeputyIfLose = 0.3 + (hand.some(c => c.id === '♠A') ? 0.3 : 0) + (hand.filter(c => c.rank === 'J').length >= 2 ? 0.15 : 0);
+    // ナポレオンの得点変動は ±2 * unit
+    const napEV = 2 * (2 * p - 1) * unit;
     let oppMaxBid = n;
     for (const s in oppBids) { if (oppBids[s].expected > oppMaxBid) oppMaxBid = oppBids[s].expected; }
     const oppPMake = Math.max(0.15, Math.min(0.95, 0.55 - (oppMaxBid - 13) * 0.05));
@@ -583,7 +687,6 @@ export function computeOptimalBidStrategy(hand, trump, context = {}) {
     let oppMaxBid = currentHighNum;
     for (const s in oppBids) { if (oppBids[s].expected > oppMaxBid) oppMaxBid = oppBids[s].expected; }
     const oppPMake = Math.max(0.15, Math.min(0.95, 0.55 - (oppMaxBid - 13) * 0.05));
-    const pBeDeputyIfLose = 0.3 + (hand.some(c => c.id === '♠A') ? 0.3 : 0);
     const deputyEV = unit * (2 * oppPMake - 1);
     const allianceEV = -unit * (2 * oppPMake - 1);
     passEV = pBeDeputyIfLose * deputyEV + (1 - pBeDeputyIfLose) * allianceEV;
@@ -594,7 +697,7 @@ export function computeOptimalBidStrategy(hand, trump, context = {}) {
   const bestBid = viableBids.length > 0
     ? viableBids.reduce((best, b) => b.totalEV > best.totalEV ? b : best)
     : bidEVs[bidEVs.length - 1];
-  const shouldBid = bestBid && bestBid.totalEV > passEV + 0.1;
+  const shouldBid = !!(bestBid && bestBid.totalEV > passEV + 0.15 && (bidOutcome.pMake[bestBid.bid] || 0) >= 0.35);
 
   return {
     analysis, bidEVs, passEV,
