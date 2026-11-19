@@ -1,4 +1,5 @@
-// ===== [app.js Part 1/3 開始] =====
+
+// ===== [app.js 全体] =====
 import { matchRatingChanges, computeEloDelta, ELO_INIT, quantizeStrength, rankTierOf, trickPhaseOf, pointsTierOf, isSameColorSuit, sameColorSuitOf, hasBottomTie, PLAYOFF_MAX_ITERATIONS, PLAY_FREE_SECONDS, PLAY_POOL_SECONDS } from './constants.js';
 import {
   shouldBid, chooseDiscard, chooseDeputyCall, chooseSoloCall, chooseCardWithMCTS, chooseDeputyCard,
@@ -9,6 +10,7 @@ import {
   determineRole, decideNextBid, inferIntentFromBid, estimateDeputyDPoints,
   computeNScore, computeDScore, computeDPoints, computeSupportLimit
 } from './ai-tactics.js';
+import { decidePlayFromTrickAnalysis } from './trick-analysis.js';
 
 // ============================================================
 // Web Worker（MCTS並列計算 + N33 ホスト端末COM計算）
@@ -148,7 +150,6 @@ function escapeHTML(value) { return String(value ?? '').replace(/[&<>"']/g, c =>
 
 function toast(t) { const e = $('toast'); if (!e) return; e.textContent = t; e.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => e.classList.remove('show'), 2600); }
 
-// ★ 修正1: 'nap-plan-lab-screen' を配列に追加
 function screen(id) {
   ['home-screen', 'mode-select-screen', 'extra-menu-screen', 'profile-screen', 'game-screen', 'records-screen', 'strategy-screen', 'quiz-screen', 'training-screen', 'past-games-screen', 'nap-plan-lab-screen'].forEach(x => {
     const el = $(x);
@@ -179,7 +180,6 @@ function screen(id) {
   if (id !== 'game-screen') stopTurnTimer();
 }
 
-// ★ ロビー接続（死んだWS検知・自動リトライ付き）
 async function connectLobby() {
   if (g.room) {
     const ws = g.room.ws;
@@ -221,9 +221,7 @@ async function connectLobby() {
   }
 }
 
-function startPresence() {
-  // connectLobby に統合済み
-}
+function startPresence() {}
 
 async function stopPresence() {
   if (g.presenceRoom) {
@@ -293,7 +291,7 @@ function sanitizeForLog(obj, depth = 0) {
 function buildLogPayload() {
   const contract = g.contract ? { nap: g.contract.nap, num: g.contract.num, suit: g.contract.suit, deputy: g.contract.deputy, solo: g.contract.solo, call: g.contract.call, revealedCall: g.contract.revealedCall, revealTrickNo: g.contract.revealTrickNo, strengthAtBid: g.contract.strengthAtBid, bidPlan: g.contract.bidPlan } : null;
   return {
-    version: 'v1.7', timestamp: new Date().toISOString(), userAgent: navigator.userAgent, url: location.href,
+    version: 'v1.8', timestamp: new Date().toISOString(), userAgent: navigator.userAgent, url: location.href,
     phase: g.phase, round: g.round, botLevel: g.botLevel, aiWeights: sanitizeForLog(g.aiWeights),
     account: g.account ? { id: g.account.id, rating: g.account.rating, com_rating: g.account.com_rating } : null,
     contract, allianceKittyPoints: g.allianceKittyPoints,
@@ -432,27 +430,6 @@ function isSoloForced() {
   return r?.soloRequired === true;
 }
 
-function isSafeToCashAce(suit, seat) {
-  if (!g.contract) return false;
-  if (suit === '♠') return true;
-  if (g.trickNo > 0) {
-    const twoPlayed = g.playedCards.some(c => c.id === suit + '2') || (g.discardedKitty || []).some(c => c.id === suit + '2');
-    if (!twoPlayed) {
-      const anyVoid = [0, 1, 2, 3, 4].some(s => s !== seat && g.voids[s] && g.voids[s][suit]);
-      if (!anyVoid) return false;
-    }
-  }
-  if (g.contract.suit !== 'NT' && g.contract.suit !== suit) {
-    for (let s = 0; s < 5; s++) {
-      if (s === seat) continue;
-      if (g.contract.revealedCall) { if (s === g.contract.nap || (!g.contract.solo && s === g.contract.deputy)) continue; }
-      else { if (s === g.contract.nap) continue; }
-      if (g.voids[s] && g.voids[s][suit]) return false;
-    }
-  }
-  return true;
-}
-
 async function loadTopStrategy() {
   try {
     const res = await fetch('/api/ai/top-strategy');
@@ -461,7 +438,7 @@ async function loadTopStrategy() {
     if (data && data.strategy && typeof data.strategy === 'object') {
       for (const [k, v] of Object.entries(data.strategy)) if (typeof v === 'number' && Number.isFinite(v)) g.aiWeights[k] = v;
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 }
 async function loadExperience() {
   try {
@@ -469,7 +446,7 @@ async function loadExperience() {
     if (!res.ok) return;
     const { data } = await readResponse(res);
     if (data && typeof data === 'object') g.aiExperience = data;
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 }
 
 function sendRoundLearn(wonRound) {
@@ -477,8 +454,8 @@ function sendRoundLearn(wonRound) {
     if (!g.humanRoundLog) return;
     const payload = { round: g.round, wonRound: wonRound === true, bid: g.humanRoundLog.bid || null, call: g.humanRoundLog.call || null, playDecisions: (g.humanRoundLog.playDecisions || []).filter(d => d.won !== null) };
     if (!payload.bid && !payload.call && !payload.playDecisions.length) return;
-    fetch('/api/ai/learn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(() => loadExperience()).catch(() => { });
-  } catch (e) { /* ignore */ }
+    fetch('/api/ai/learn', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(() => loadExperience()).catch(() => {});
+  } catch (e) {}
 }
 
 // ============================================================
@@ -546,8 +523,8 @@ function resetAuctionTimer() {
 function dialog(title, text, cb) {
   let d = $('message-dialog'), card = $('dialog-card');
   if (!d || !card) return;
-  document.querySelectorAll('dialog[open]').forEach(dlg => { try { if (dlg !== d) dlg.close(); } catch { } });
-  try { if (d.open) d.close(); } catch { }
+  document.querySelectorAll('dialog[open]').forEach(dlg => { try { if (dlg !== d) dlg.close(); } catch {} });
+  try { if (d.open) d.close(); } catch {}
   card.classList.add('hidden'); card.replaceChildren();
   const de = $('dialog-eyebrow'); if (de) { de.classList.remove('hidden'); de.textContent = 'Napoleon'; }
   const dok = $('dialog-ok'); if (dok) dok.textContent = 'OK';
@@ -727,9 +704,9 @@ async function renderQuickStats() {
   } catch { el.textContent = ''; }
 }
 
-// ===== [app.js Part 1/3 終了] =====
-// ===== [app.js Part 2/3 開始] =====
-
+// ============================================================
+// ローカルCOM戦
+// ============================================================
 function startLocal() {
   const wasRankedQueuing = g.rankedQueuing;
 
@@ -1052,7 +1029,7 @@ function auctionStart() {
       const role = determineRole(g.players[seat].hand, g.aiWeights);
       if (role.role === 'NAP') {
         const proper = computeProperBid(g.players[seat].hand, role.bestSuit || '♠', g.aiWeights, seat, g.bidSignals[seat], g.matchScores, g.kitty, g.playedCards, g.voids, [], g.round);
-        g.properBids[seat] = proper.properBid > 0 ? proper.properBid : 13;
+        g.properBids[seat] = proper.properBid > 0 ? proper.properBid : 0;
         g.properPlans[seat] = proper.plan || null;
       }
     } catch (e) { console.warn('determineRole failed', seat, e?.message); }
@@ -1232,28 +1209,7 @@ function humanApprove(forced = false) {
     const humanPending = g.auction.active.some(s => s !== g.mySeat && !g.players[s]?.bot && !g.auction.approved[s]);
     const allApproved = !humanPending && (others.length === 0 || others.every(s => g.auction.approved[s]));
     if (allApproved) {
-      const properBid = g.properBids[g.mySeat] || 13;
-      if (g.auction.high.num < properBid) {
-        const pacingMs = g.aiWeights.bidPacingMs ?? 4000;
-        message(`${name(g.mySeat)}が適正値（${properBid}）まで段階上げ中…`);
-        setTimeout(() => {
-          if (g.phase !== 'auction') return;
-          if (g.auction.high.player !== g.mySeat) return;
-          const nextNum = Math.min(properBid, g.auction.high.num + 1);
-          const suit = g.auction.high.suit;
-          g.bidHistory.push({ round: g.round, seat: g.mySeat, num: nextNum, suit });
-          if (g.bidHistory.length > 50) g.bidHistory.shift();
-          g.auction.high = { num: nextNum, suit, player: g.mySeat, solo: false };
-          g.bidSignals[g.mySeat].lastBidAt = Date.now();
-          g.auction.bidPlans[g.mySeat] = g.properPlans[g.mySeat];
-          addGameLog(`${name(g.mySeat)}が${nextNum}${suit}を宣言（適正値まで）`);
-          message(`${name(g.mySeat)}が${nextNum}${suit}を宣言しました`);
-          drawAuction(); drawSeats();
-          auctionEnd(g.mySeat);
-        }, pacingMs);
-        return;
-      }
-      auctionEnd(g.mySeat);
+      auctionEnd(g.mySeat, true);
     } else if (forced) {
       g.auction.autoApprove[g.mySeat] = true;
       message('30秒操作がなかったため、宣言者は自動承認待ちです');
@@ -1275,7 +1231,7 @@ function humanApprove(forced = false) {
       drawAuction(); drawSeats();
       return;
     }
-    auctionEnd(g.auction.high.player);
+    auctionEnd(g.auction.high.player, true);
     return;
   }
   g.auction.active.filter(i => i !== g.mySeat).forEach(i => g.auction.botSeen[i] = g.auction.version - 1);
@@ -1318,7 +1274,7 @@ function humanBid() {
 
   scheduleObservationPeriod(g.mySeat);
   message('あなたが' + g.bid + g.suit + 'を宣言しました');
-  if (g.bid === 20 && g.suit === 'NT') { auctionEnd(g.mySeat); return; }
+  if (g.bid === 20 && g.suit === 'NT') { auctionEnd(g.mySeat, true); return; }
   drawAuction(); drawSeats(); scheduleComBids();
 }
 
@@ -1330,7 +1286,7 @@ function comBid(i, version) {
   g.auction.botSeen[i] = version;
 
   if (g.auction.high.player === i) {
-    if (g.auction.active.length === 1) auctionEnd(i);
+    if (g.auction.active.length === 1) auctionEnd(i, true);
     return;
   }
 
@@ -1342,8 +1298,12 @@ function comBid(i, version) {
   catch (e) { role = { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' }; }
 
   let decision;
-  try { decision = decideNextBid(hand, g.auction.high, role, params, g.bidSignals[i].received || []); }
-  catch (e) { decision = { type: 'PASS', reason: 'error' }; }
+  try {
+    decision = decideNextBid(hand, g.auction.high, role, params, g.bidSignals[i].received || [], {
+      bidHistory: g.bidHistory, mySeat: i, openKitty: g.kitty, playedCards: g.playedCards,
+      voids: g.voids, matchScores: g.matchScores, round: g.round
+    });
+  } catch (e) { decision = { type: 'PASS', reason: 'error' }; }
 
   if (decision.type === 'BID' && beatsBid(decision.num, decision.suit)) {
     const prevBid = { ...g.auction.high };
@@ -1371,7 +1331,7 @@ function comBid(i, version) {
     addGameLog(name(i) + 'が' + decision.num + decision.suit + 'を宣言（' + decision.reason + '）');
     message(name(i) + 'が' + decision.num + decision.suit + 'を宣言しました');
 
-    if (decision.num === 20 && decision.suit === 'NT') { auctionEnd(i); return; }
+    if (decision.num === 20 && decision.suit === 'NT') { auctionEnd(i, true); return; }
     drawAuction(); drawSeats(); scheduleComBids();
     return;
   }
@@ -1390,20 +1350,20 @@ function comBid(i, version) {
       drawAuction(); drawSeats();
       return;
     }
-    auctionEnd(g.auction.high.player);
+    auctionEnd(g.auction.high.player, true);
     return;
   }
   scheduleObservationPeriod(i);
   drawAuction(); drawSeats(); scheduleComBids();
 }
 
-function auctionEnd(w, skipProperRaise = false) {
+function auctionEnd(w, skipProperRaise = true) {
   if (g.auction) g.auction.needsHumanConfirm = false;
   clearTimeout(g.auction?.humanTimeout);
   stopTurnTimer();
 
   if (w >= 0 && g.auction && !g.auction.properRecomputed) {
-    const proper = computeProperBid(g.players[w].hand, g.auction.high.suit, g.aiWeights, w, g.bidSignals[w], g.matchScores, g.kitty, g.playedCards, g.voids, g.bidHistory);
+    const proper = computeProperBid(g.players[w].hand, g.auction.high.suit, g.aiWeights, w, g.bidSignals[w], g.matchScores, g.kitty, g.playedCards, g.voids, g.bidHistory, g.round);
     g.properBids[w] = proper.properBid > 0 ? proper.properBid : 13;
     g.properPlans[w] = proper.plan || null;
     g.auction.properRecomputed = true;
@@ -1418,31 +1378,6 @@ function auctionEnd(w, skipProperRaise = false) {
       dialog('流局', '宣言がありませんでした。配り直します。', roundStart);
       return;
     }
-  }
-
-  const properBid = g.properBids[w] || 13;
-  if (!skipProperRaise && g.auction.high.num < properBid && g.auction.high.player === w) {
-    if (!g.auction.active.includes(w)) g.auction.active.push(w);
-    const pacingMs = g.aiWeights.bidPacingMs ?? 4000;
-    message(`${name(w)}が適正値（${properBid}）まで段階上げ中…`);
-    $('auction-panel')?.classList.remove('hidden');
-    drawAuction(); drawSeats();
-    setTimeout(() => {
-      if (g.phase !== 'auction') return;
-      if (g.auction.high.player !== w) return;
-      const nextNum = Math.min(properBid, g.auction.high.num + 1);
-      const suit = g.auction.high.suit;
-      g.bidHistory.push({ round: g.round, seat: w, num: nextNum, suit });
-      if (g.bidHistory.length > 50) g.bidHistory.shift();
-      g.auction.high = { num: nextNum, suit, player: w, solo: false };
-      g.bidSignals[w].lastBidAt = Date.now();
-      g.auction.bidPlans[w] = g.properPlans[w];
-      addGameLog(`${name(w)}が${nextNum}${suit}を宣言（適正値まで）`);
-      message(`${name(w)}が${nextNum}${suit}を宣言しました`);
-      drawAuction(); drawSeats();
-      auctionEnd(w);
-    }, pacingMs);
-    return;
   }
 
   $('auction-panel')?.classList.add('hidden'); showDiscardedKitty(); $('auction-clock')?.classList.add('hidden');
@@ -1745,6 +1680,12 @@ async function computeBotPlay(seat) {
   const hand = g.players[seat].hand;
   const legalCardsList = legal(seat);
   if (!legalCardsList.length) return { card: null, source: 'エラー(手札なし)' };
+  if (legalCardsList.length === 1) return { card: legalCardsList[0], source: '1枚のみ' };
+
+  const isLeadFirstTrick = g.trickNo === 0 && g.trick.length === 0;
+  const playableLegal = (isLeadFirstTrick && legalCardsList.some(c => c.rank !== '2'))
+    ? legalCardsList.filter(c => c.rank !== '2')
+    : legalCardsList;
 
   const contract = { nap: g.contract.nap, num: g.contract.num, suit: g.contract.suit, solo: g.contract.solo, deputy: g.contract.deputy, revealedCall: g.contract.revealedCall, call: g.contract.call, bidPlan: g.contract.bidPlan };
   const trick = g.trick.map(x => ({ seat: x.player, card: x.card }));
@@ -1752,9 +1693,9 @@ async function computeBotPlay(seat) {
   const currentNapPoints = (g.points[g.contract.nap] || 0) + deputyPts;
 
   const ctx = {
-    hand, legal: legalCardsList, trick, trickNo: g.trickNo, contract, playedCards: g.playedCards, voids: g.voids, seat, deputy: g.contract.deputy,
+    hand, legal: playableLegal, trick, trickNo: g.trickNo, contract, playedCards: g.playedCards, voids: g.voids, seat, deputy: g.contract.deputy,
     params: g.aiWeights, call: g.contract.call, discardedKitty: g.discardedKitty || [],
-    isMySideNap: seat === contract.nap || (contract.revealedCall && seat === contract.deputy),
+    isMySideNap: seat === contract.nap || (!contract.solo && seat === contract.deputy),
     isCurrentNapWinning: false, isRevealed: contract.revealedCall, isNapLeading: false, lastSeat: trick.length === 4, currentNapPoints,
     experience: g.aiExperience,
     points: g.players.map(p => p.roundPoints || 0),
@@ -1769,6 +1710,23 @@ async function computeBotPlay(seat) {
       ctx.isCurrentNapWinning = winner.seat === contract.nap || (!contract.solo && winner.seat === contract.deputy);
       ctx.isNapLeading = trick[0].seat === contract.nap;
     }
+    // ★ 味方確定勝ち（locked）は即座に確定（オーバーキル防止＆高速化）
+    try {
+      const ta = decidePlayFromTrickAnalysis(ctx);
+      if (ta && ta.locked === true && ta.card && playableLegal.some(c => c.id === ta.card.id)) {
+        return { card: ta.card, source: '確定トリック判断' };
+      }
+    } catch (e) {}
+  }
+
+  // Workerが使えない環境では直接同期計算
+  if (aiWorkers.length === 0) {
+    try {
+      const chosen = chooseCardWithMCTS({ ...ctx, params: { ...ctx.params, maxThinkTimeMs: 2500 } });
+      if (chosen && playableLegal.some(c => c.id === chosen.id)) return { card: chosen, source: 'ローカルMCTS' };
+    } catch (e) {}
+    const fb = chooseCardToPlay(ctx);
+    return { card: (fb && playableLegal.some(c => c.id === fb.id)) ? fb : playableLegal[0], source: '戦術フォールバック' };
   }
 
   return new Promise((resolve) => {
@@ -1781,9 +1739,11 @@ async function computeBotPlay(seat) {
       if (isResolved) return;
       isResolved = true;
       handlers.forEach(({ worker, handler }) => worker.removeEventListener('message', handler));
-      const randomCard = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
-      resolve({ card: randomCard, source: 'タイムアウト(ランダム)' });
-    }, 6500);
+      let fb = null;
+      try { fb = chooseCardToPlay(ctx); } catch (e) { fb = null; }
+      const safeFb = (fb && playableLegal.some(c => c.id === fb.id)) ? fb : playableLegal[0];
+      resolve({ card: safeFb, source: '戦術フォールバック(時間制限)' });
+    }, 5500);
 
     const handleAllResults = () => {
       if (isResolved) return;
@@ -1792,37 +1752,38 @@ async function computeBotPlay(seat) {
       clearTimeout(timeoutTimer);
 
       const mergedN = {}, mergedW = {};
-      legalCardsList.forEach(c => { mergedN[c.id] = 0; mergedW[c.id] = 0; });
+      playableLegal.forEach(c => { mergedN[c.id] = 0; mergedW[c.id] = 0; });
       let totalIterations = 0;
       for (const res of results) {
         if (!res || !res.N || !res.W) continue;
         totalIterations += res.iterations || 0;
-        for (const c of legalCardsList) {
+        for (const c of playableLegal) {
           mergedN[c.id] += res.N[c.id] || 0;
           mergedW[c.id] += res.W[c.id] || 0;
         }
       }
 
-      let bestCard = legalCardsList[0];
+      let bestCard = playableLegal[0];
       let bestScore = -1;
-      for (const c of legalCardsList) {
-        if (mergedN[c.id] === 0) continue;
+      for (const c of playableLegal) {
+        if (mergedN[c.id] < 5) continue;
         const winRate = mergedW[c.id] / mergedN[c.id];
-        const confidence = Math.min(1.0, mergedN[c.id] / (totalIterations / legalCardsList.length));
-        const adjustedScore = winRate * (0.8 + 0.2 * confidence);
+        const confidence = Math.min(1.0, mergedN[c.id] / Math.max(1, totalIterations / playableLegal.length));
+        const adjustedScore = winRate * (0.85 + 0.15 * confidence);
         if (adjustedScore > bestScore) { bestScore = adjustedScore; bestCard = c; }
       }
 
       if (bestScore === -1) {
-        const fallback = chooseCardToPlay(ctx);
-        resolve({ card: fallback || legalCardsList[0], source: '並列MCTS(フォールバック)' });
+        let fallback = null;
+        try { fallback = chooseCardToPlay(ctx); } catch (e) {}
+        resolve({ card: (fallback && playableLegal.some(c => c.id === fallback.id)) ? fallback : playableLegal[0], source: '並列MCTS(戦術フォールバック)' });
       } else {
-        resolve({ card: bestCard, source: `並列MCTS(${numWorkers}Threads)` });
+        resolve({ card: bestCard, source: `並列MCTS(${aiWorkers.length}Threads)` });
       }
     };
 
-    const workerCtx = { ...ctx, params: { ...ctx.params, maxThinkTimeMs: 6000 } };
-    aiWorkers.forEach((worker) => {
+    aiWorkers.forEach((worker, idx) => {
+      const workerCtx = { ...ctx, _workerIndex: idx, params: { ...ctx.params, maxThinkTimeMs: 4000 } };
       const handler = (e) => {
         if (isResolved) return;
         if (e.data.type === 'result') { worker.removeEventListener('message', handler); results.push(e.data.stats); completed++; handleAllResults(); }
@@ -1919,9 +1880,9 @@ function playTurn() {
         logPlayDecision(seat, result.card, { reason: 'ai-tactics-' + result.source }, buildPlayContext(seat));
         play(seat, result.card);
       } else {
-        const fallback = legalCardsList[Math.floor(Math.random() * legalCardsList.length)];
-        addDebugLog('play-fallback-random', { seat, fallback: fallback.id });
-        addGameLog(`[COM思考] ${name(seat)} : ランダム(エラー)`);
+        const fallback = legalCardsList[0];
+        addDebugLog('play-fallback', { seat, fallback: fallback.id });
+        addGameLog(`[COM思考] ${name(seat)} : フォールバック`);
         play(seat, fallback);
       }
     } catch (e) {
@@ -1930,7 +1891,7 @@ function playTurn() {
       addDebugLog('bot-error', { seat: errSeat, message: e?.message });
       addGameLog("⚠️ COM思考エラー: " + (e?.message || String(e)));
       const l = legal(errSeat);
-      if (l.length) { const random = l[Math.floor(Math.random() * l.length)]; play(errSeat, random); }
+      if (l.length) play(errSeat, l[0]);
       else { g.active = (errSeat + 1) % 5; playTurn(); }
     }
   }, 650 + Math.random() * 550);
@@ -2105,10 +2066,6 @@ function finishGame() {
     g.playoff = false;
   }
 
-  const format = n => (n > 0 ? '+' : '') + (Number.isInteger(n) ? n : n.toFixed(1));
-  const role = i => i === c.nap ? 'NAP' : (!c.solo && i === c.deputy ? 'DEPUTY' : 'ALLY');
-  const rows = g.players.map((_, i) => '<div class="round-score-row"><span>' + name(i) + ' · ' + role(i) + '</span><strong class="' + (scores[i] < 0 ? 'score-down' : 'score-up') + '">ROUND Δ ' + format(scores[i]) + '<small>TOTAL ' + format(g.matchScores[i]) + '</small></strong></div>').join('');
-
   const ratings = final ? matchRatingChanges(g.matchScores, [], { forceBreakTie: forceBreak }) : null;
   let combinedDelta = 0;
 
@@ -2163,6 +2120,10 @@ function finishGame() {
     const rankLabel = result.tie ? result.placement + '位（' + result.tie.count + '人同着）' : result.placement + '位';
     return '<div class="round-score-row"><span>' + name(i) + ' · MATCH ' + format(g.matchScores[i]) + '</span><strong class="' + (result.delta < 0 ? 'score-down' : 'score-up') + '">RATE Δ ' + format(result.delta) + '<small>順位 ' + rankLabel + (forceBreak && result.tie?.broken ? ' · タイブレーク' : '') + '</small></strong></div>';
   }).join('') : '';
+
+  const format = n => (n > 0 ? '+' : '') + (Number.isInteger(n) ? n : n.toFixed(1));
+  const role = i => i === c.nap ? 'NAP' : (!c.solo && i === c.deputy ? 'DEPUTY' : 'ALLY');
+  const rows = g.players.map((_, i) => '<div class="round-score-row"><span>' + name(i) + ' · ' + role(i) + '</span><strong class="' + (scores[i] < 0 ? 'score-down' : 'score-up') + '">ROUND Δ ' + format(scores[i]) + '<small>TOTAL ' + format(g.matchScores[i]) + '</small></strong></div>').join('');
 
   const r = $('result-panel');
   if (!r) return;
@@ -2344,15 +2305,12 @@ function announceCall(card, onConfirm, online = false) {
     if (dok) dok.textContent = 'OK';
     if (onConfirm) onConfirm();
   };
-  try { if (d.open) d.close(); } catch { }
+  try { if (d.open) d.close(); } catch {}
   d.showModal();
 }
 
-// ===== [app.js Part 2/3 終了] =====
-// ===== [app.js Part 3/3 開始] =====
-
 // ============================================================
-// ★ N33: ホスト端末COM計算のWorkerバインド
+// ホスト端末COM計算のWorkerバインド
 // ============================================================
 function bindHostBotWorker() {
   const w = aiWorkers[0];
@@ -2480,7 +2438,6 @@ function buildMatchRecord(mode) {
   };
 }
 
-// finishGame / showOnlineResult をラップして自動保存
 const __origFinishGame = finishGame;
 finishGame = function () {
   const before = g.phase;
@@ -2611,7 +2568,7 @@ async function renderRankedRecords(rc, token) {
     const { data: d, parseError } = await readResponse(response);
     if (!response.ok || parseError || !d) throw Error('UNABLE TO LOAD');
     g.account = d; if (d.rating) g.rate = d.rating; renderAccount();
-    const perf = d.performance || {}, prec = d.precision || {}, ally = d.allyFeed || {}, bold = d.boldBid || {}, art = d.artRate || {}, ms = d.matchStats || {};
+    const perf = d.performance || {}, ms = d.matchStats || {};
     const napAtt = Number(perf.declarer_attempts) || 0, napWins = Number(perf.declarer_successes) || 0, napWinRate = napAtt ? napWins / napAtt : 0;
     const bidTotal = Number(ms.bid_total) || 0, avgBid = napAtt ? bidTotal / napAtt : 0, matchCount = Number(ms.match_count) || 0, napRatio = matchCount ? (napAtt / (matchCount * 10)) : 0;
     const r1 = Number(ms.rank_1) || 0, r2 = Number(ms.rank_2) || 0, r3 = Number(ms.rank_3) || 0, r4 = Number(ms.rank_4) || 0, r5 = Number(ms.rank_5) || 0;
@@ -2683,7 +2640,7 @@ async function renderComRecords(rc, token) {
     const response = await fetch('/api/account/me/com', { headers: { 'x-session-token': token } });
     const { data: d, parseError } = await readResponse(response);
     if (!response.ok || parseError || !d) throw Error('UNABLE TO LOAD COM STATS');
-    const perf = d.performance || {}, prec = d.precision || {}, ally = d.allyFeed || {}, bold = d.boldBid || {}, ms = d.matchStats || {};
+    const perf = d.performance || {}, ms = d.matchStats || {};
     const napAtt = Number(perf.declarer_attempts) || 0, napWins = Number(perf.declarer_successes) || 0, napWinRate = napAtt ? napWins / napAtt : 0;
     const bidTotal = Number(ms.bid_total) || 0, avgBid = napAtt ? bidTotal / napAtt : 0, matchCount = Number(ms.match_count) || 0, napRatio = matchCount ? (napAtt / (matchCount * 10)) : 0;
     const r1 = Number(ms.rank_1) || 0, r2 = Number(ms.rank_2) || 0, r3 = Number(ms.rank_3) || 0, r4 = Number(ms.rank_4) || 0, r5 = Number(ms.rank_5) || 0;
@@ -2844,7 +2801,7 @@ async function joinGameRoom() {
     return { roomInstance: ws, send: (m) => ws.send(typeof m === 'string' ? m : JSON.stringify(m)), close: () => ws.close() };
   }
   const healthUrl = WS_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/ws$/, '/healthz');
-  try { await fetch(healthUrl, { mode: 'no-cors', cache: 'no-store' }); } catch { }
+  try { await fetch(healthUrl, { mode: 'no-cors', cache: 'no-store' }); } catch {}
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -3139,9 +3096,6 @@ async function online(mode, roomCode, bots, botLevel = 3) {
   }
 }
 
-// ============================================================
-// U1: 離脱確認
-// ============================================================
 function confirmLeaveGame() {
   if (g.rankedQueuing) {
     g.phase = '';
@@ -3184,8 +3138,6 @@ $('start-training')?.addEventListener('click', async () => {
   try { const mod = await import('./training-app.js?v=1'); mod.openTrainingScreen(); }
   catch (err) { alert('トレーニングモードの読み込みに失敗しました: ' + err.message); }
 });
-
-// ★ 修正2: NAPプランラボのボタンバインド
 $('open-nap-plan-lab')?.addEventListener('click', async () => {
   try {
     const mod = await import('./nap-plan-lab.js');
@@ -3242,7 +3194,6 @@ if (window.visualViewport) {
 window.addEventListener('error', (e) => { try { addDebugLog('global-error', { message: e.message, stack: e.error?.stack, filename: e.filename, line: e.lineno, col: e.colno, phase: g.phase, round: g.round }); } catch {} });
 window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhandled-rejection', { message: e.reason?.message || String(e.reason), phase: g.phase, round: g.round }); } catch {} });
 
-// ★ 起動: 永続化したチャットログを復元してから画面初期化
 (async () => {
   try { await getUser(); } catch {}
   loadChatLog();
@@ -3251,8 +3202,3 @@ window.addEventListener('unhandledrejection', (e) => { try { addDebugLog('unhand
   bindChatInputFocus();
   screen('home-screen');
 })();
-
-// ===== [app.js 完全版 終わり] =====
-
-
-
