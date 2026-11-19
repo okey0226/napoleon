@@ -1,6 +1,5 @@
-// ai-simulator.js (MECE戦術エンジン統合版・不具合修正版)
-// 修正①: bidTacticExperienceQueue を made 確定後に push
-// 修正⑥: simRound に isPlayoff パラメータ追加、プレーオフループ実装
+// ai-simulator.js (MECE戦術エンジン統合版・修正版)
+// 修正: 経験DBの勝敗ベース化、auction/playコンテキスト補完、オラクル計算コスト制御
 
 import { SUITS, RANKS, SV, defaultStrategy, shuffledDeck, sortHand, mutateStrategy, crossoverStrategy, rateRound, RANK_1_BONUS, RANK_2_BONUS, RANK_4_PENALTY, RANK_5_PENALTY, updateStrategyFromExperience, isSameColorSuit, PLAYOFF_MAX_ITERATIONS } from './constants.js';
 import {
@@ -24,7 +23,6 @@ function safeJsonParse(str, fallback = null) {
   catch (e) { return fallback; }
 }
 
-// ★ 新規: finalAuctionRule（worker.js と同ロジック、シミュレーション用）
 function finalAuctionRuleLocal(scores, mult = 1) {
   const ranked = scores.map((score, seat) => ({ score, seat })).sort((a, b) => a.score - b.score || a.seat - b.seat);
   const cutoff = ranked[1]?.score ?? 0;
@@ -112,7 +110,7 @@ let quizCandidateQueue = [];
 const MAX_QUIZ_CANDIDATES_PER_MATCH = 3;
 
 function detectQuizCandidate(ctx) {
-  const { legal, trick, trickNo, contract, hand, points, allianceKittyPoints } = ctx;
+  const { legal, trick, trickNo, contract, hand, points } = ctx;
   if (!legal || legal.length < 2) return null;
   const allNonFace = legal.every(c => !['10', 'J', 'Q', 'K', 'A'].includes(c.rank));
   const allSameSuit = legal.every(c => c.suit === legal[0].suit);
@@ -320,11 +318,13 @@ export async function flushExperience(env) {
   }
 }
 
-function computeCardWinRates(legal, chosenCard, ctx) {
+// ★ 修正: 実際のラウンド勝敗に基づく勝率生成（確証バイアスの解消）
+function computeOutcomeBasedWinRates(legalIds, chosenId, seatWonRound) {
   const rates = {};
-  for (const c of legal) {
-    if (c.id === chosenCard.id) rates[c.id] = 0.8 + Math.random() * 0.15;
-    else rates[c.id] = 0.2 + Math.random() * 0.4;
+  const chosenRate = seatWonRound ? 0.75 : 0.25;
+  const otherRate = seatWonRound ? 0.45 : 0.55;
+  for (const id of legalIds) {
+    rates[id] = id === chosenId ? chosenRate : otherRate;
   }
   return JSON.stringify(rates);
 }
@@ -375,11 +375,12 @@ function getIntentCategory(tacticId) {
       || tacticId.startsWith('EV') || tacticId.startsWith('RC') || tacticId.startsWith('TS')
       || tacticId.startsWith('AI')) return 'META';
   if (tacticId === 'GAME_END' || tacticId === 'OPENING_BOOK' || tacticId === 'SAME_TWO_TRAP'
-      || tacticId === 'ENDGAME_SEARCH' || tacticId === 'FALLBACK' || tacticId === 'ENGINE_ERROR') return 'SPECIAL';
+      || tacticId === 'ENDGAME_SEARCH' || tacticId === 'FALLBACK' || tacticId === 'ENGINE_ERROR'
+      || tacticId.startsWith('TRICK_')) return 'SPECIAL';
   return 'UNKNOWN';
 }
 
-function detectSameTwoEvent(matchId, round, trickNo, trick, contract, seat) {
+function detectSameTwoEvent(matchId, round, trickNo, trick, contract) {
   if (!trick || trick.length < 2) return null;
   if (trickNo === 0) return null;
   const ledSuit = trick[0].card?.suit;
@@ -418,10 +419,10 @@ function detectSameTwoEvent(matchId, round, trickNo, trick, contract, seat) {
 }
 
 // ==========================================
-// 競りシミュレーション（bid_tactic_id 記録付き）
+// 競りシミュレーション（コンテキスト補完済み）
 // ==========================================
 
-function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1, matchId = null) {
+function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, round = 1, matchId = null, matchScores = [0, 0, 0, 0, 0]) {
   const roles = seatParams.map((p, i) => {
     try { return determineRole(hands[i], p); }
     catch (e) { return { role: 'ALLIANCE', nScore: 0, dScore: 0, dPoints: 0, bestSuit: null, reason: 'error' }; }
@@ -451,7 +452,15 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, ro
     const role = roles[seat];
 
     try {
-      const decision = decideNextBid(hands[seat], high, role, p, bidSignals[seat].received || []);
+      const decision = decideNextBid(hands[seat], high, role, p, bidSignals[seat].received || [], {
+        bidHistory: bidHistoryOut,
+        mySeat: seat,
+        openKitty,
+        playedCards: [],
+        voids: [{}, {}, {}, {}, {}],
+        matchScores,
+        round,
+      });
 
       if (decision.type === 'PASS') {
         seatState[seat] = 'holding';
@@ -525,8 +534,7 @@ function simulateAuction(hands, params, seatParams, openKitty, bidHistoryOut, ro
 }
 
 // ==========================================
-// ★ 修正⑥: 1ラウンドのシミュレーション（isPlayoff パラメータ追加）
-// ★ 修正①: bidTacticExperienceQueue を made 確定後に push
+// 1ラウンドのシミュレーション
 // ==========================================
 
 const MAX_EXP_QUEUE_PER_MATCH = 5;
@@ -539,7 +547,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   for (let i = 0; i < 5; i++) { hands[i] = d.splice(0, 10); sortHand(hands[i]); }
   const kitty = d.splice(0, 2);
   const bidHistoryLocal = [];
-  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal, round, matchId);
+  const high = simulateAuction(hands, params, params, kitty, bidHistoryLocal, round, matchId, matchScores);
 
   let nap, trump, num, isSoloBid, plan, winningBidTacticId, winningSameTwoRisk = 0;
   if (high.player < 0) {
@@ -553,7 +561,6 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     winningSameTwoRisk = high.sameTwoRisk || 0;
   }
 
-  // ★ 修正①: bid situation hash をここで計算（キティ追加前の10枚時点）
   let pendingBidSituationHash = '';
   if (high.player >= 0) {
     try {
@@ -578,7 +585,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     pMakeAtFinal = planForNap.pMake?.[num] ?? 0;
   } catch (e) { /* fallback */ }
 
-  const contractBase = { nap, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
+  const contractBase = { nap, num, suit: trump, solo: isSoloBid, deputy: -1, revealedCall: false, bidPlan: plan };
   hands[nap].push(...kitty); sortHand(hands[nap]);
 
   const discardContext = {
@@ -618,6 +625,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
     if (deputy < 0) { contractBase.solo = true; deputy = nap; call = chooseSoloCall(hands[nap]); }
     contractBase.deputy = deputy;
   }
+  contractBase.call = call;
 
   const roundPts = [0, 0, 0, 0, 0];
   const played = [], voids = [{}, {}, {}, {}, {}];
@@ -625,6 +633,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   let napTricks = 0, deputyTricks = 0;
   let overkillCount = 0, feedSuccessCount = 0, goldenFormationCount = 0;
   let matchExpCount = 0;
+  const pendingStateExp = []; // ★ 修正: ラウンド終了後に勝敗紐付けして experienceQueue へ流す
   const playDecisions = [];
   let decisionIndex = 0;
   const tacticByTrick = {};
@@ -655,10 +664,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       const seat = (active + i) % 5;
       const hand = hands[seat];
       if (!hand.length) break;
-      const legal = trick.length === 0 ? hand : (hand.filter(c => c.suit === trick[0].card.suit).length ? hand.filter(c => c.suit === trick[0].card.suit) : hand);
+      const rawLegal = trick.length === 0 ? hand : (hand.filter(c => c.suit === trick[0].card.suit).length ? hand.filter(c => c.suit === trick[0].card.suit) : hand);
+      const legal = (trickNo === 0 && trick.length === 0 && rawLegal.some(c => c.rank !== '2'))
+        ? rawLegal.filter(c => c.rank !== '2')
+        : rawLegal;
       const currentWinner = trick.length ? winningEntry(contractBase, trickNo, trick) : null;
       const isMyTeam = seat === nap || (!contractBase.solo && seat === deputy);
       const isCurrentWinnerMyTeam = currentWinner ? (currentWinner.seat === nap || (!contractBase.solo && currentWinner.seat === deputy)) : false;
+      const currentNapPoints = roundPts[nap] + (contractBase.solo ? 0 : (roundPts[deputy] || 0));
 
       if (trick.length === 0 && !contractBase.solo) {
         const leadSeat = trick[0]?.seat;
@@ -666,13 +679,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         if (leadSeat === deputy && (i === 4 && seat === nap)) goldenFormationCount++;
       }
 
-      // ★ 修正⑥: isPlayoff を ctx.playoff に渡す
       const ctx = {
         hand, legal, trick, trickNo, contract: contractBase, playedCards: played, voids, seat, deputy,
-        params: { ...(params[seat] || defaultStrategy()), enableTacticEngine: true },
+        params: { ...(params[seat] || defaultStrategy()), enableTacticEngine: true, enableTrickAnalysis: true },
         discardedKitty: discard, isMySideNap: isMyTeam, isCurrentNapWinning: isCurrentWinnerMyTeam,
         isRevealed: revealed, isNapLeading: trick.length > 0 && trick[0].seat === nap, lastSeat: trick.length === 4,
         call, bidHistory: matchBidHistory, matchScores: matchScores, points: roundPts, allianceKittyPoints: allianceKittyPts,
+        currentNapPoints,
+        players: hands.map(h => ({ handCount: h.length })),
         experience: null, round, playoff: isPlayoff, playoffCount,
       };
 
@@ -704,7 +718,7 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
       });
 
       let valueLossRate = null;
-      if (legal.length >= 2 && trick.length < 5 && (trickNo >= 6 || trickNo === 0)) {
+      if (legal.length >= 2 && trick.length < 5 && (trickNo >= 7 || trickNo === 0)) {
         const cat = categorizeDecision(ctx);
         try {
           const vl = computeValueLossRate(ctx, chosen, matchId, round, trickNo, decisionIndex, params[seat] || defaultStrategy());
@@ -726,13 +740,15 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
         if (candidate) { quizCandidateQueue.push(candidate); matchExpCount++; }
       }
 
-      if (trick.length > 0 && trick.length < 4 && matchExpCount < MAX_EXP_QUEUE_PER_MATCH && legal.length >= 2) {
+      if (trick.length > 0 && trick.length < 4 && pendingStateExp.length < MAX_EXP_QUEUE_PER_MATCH && legal.length >= 2) {
         const isKoukyou = (pointsInTrick === 0 && trickNo >= 2 && trickNo <= 7);
         if (isKoukyou) {
-          const hash = getStateHash(ctx);
-          const rates = computeCardWinRates(legal, chosen, ctx);
-          experienceQueue.push({ hash, rates, samples: 1, gen: generation });
-          matchExpCount++;
+          pendingStateExp.push({
+            hash: getStateHash(ctx),
+            legalIds: legal.map(c => c.id),
+            chosenId: chosen.id,
+            seat,
+          });
         }
       }
 
@@ -748,14 +764,14 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
 
       if (trick.length && chosen.suit !== trick[0].card.suit) { if (!voids[seat]) voids[seat] = {}; voids[seat][trick[0].card.suit] = true; }
       played.push({ suit: chosen.suit, rank: chosen.rank, id: chosen.id, seat });
-      if (!revealed && chosen.id === call.id) { revealed = true; revealTrickNo = trickNo; }
+      if (!revealed && chosen.id === call.id) { revealed = true; contractBase.revealedCall = true; revealTrickNo = trickNo; }
       trick.push({ seat, card: chosen });
       hands[seat] = hand.filter(c => c.id !== chosen.id);
       pointsInTrick = trick.filter(e => ['10', 'J', 'Q', 'K', 'A'].includes(e.card.rank)).length;
     }
     if (trick.length < 5) break;
 
-    const sameTwoEv = detectSameTwoEvent(matchId, round, trickNo, trick, contractBase, active);
+    const sameTwoEv = detectSameTwoEvent(matchId, round, trickNo, trick, contractBase);
     if (sameTwoEv) sameTwoEvents.push(sameTwoEv);
 
     const w = winningEntry(contractBase, trickNo, trick);
@@ -792,6 +808,19 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
 
   const napPts = roundPts[nap] + (contractBase.solo ? 0 : roundPts[deputy]);
   const made = napPts >= num && (num === 20 || napPts < 20);
+
+  // ★ 修正: 勝敗確定後に実際の勝敗に応じて stateExperience へ投入
+  for (const pe of pendingStateExp) {
+    const seatIsNapSide = pe.seat === nap || (!contractBase.solo && pe.seat === deputy);
+    const seatWon = seatIsNapSide ? made : !made;
+    experienceQueue.push({
+      hash: pe.hash,
+      rates: computeOutcomeBasedWinRates(pe.legalIds, pe.chosenId, seatWon),
+      samples: 1,
+      gen: generation,
+    });
+  }
+
   const unit = Math.max(0, num - 12) * (round >= 10 ? 2 : 1);
   const sign = made ? 1 : -1;
   const sc = [0, 0, 0, 0, 0];
@@ -799,14 +828,11 @@ function simRound(hands, round, matchScores, params, matchBidHistory, env, gener
   if (contractBase.solo) { for (let i = 0; i < 5; i++) if (i !== nap) sc[i] = -sign * unit; }
   else { sc[deputy] = sign * unit; for (let i = 0; i < 5; i++) if (i !== nap && i !== deputy) sc[i] = -sign * unit; }
 
-  // ★ 修正⑥: replayAllLast を計算する前に matchScores を更新
   for (let i = 0; i < 5; i++) matchScores[i] += sc[i];
 
-  // ★ 修正⑥: replayAllLast 判定（matchScores 更新後）
   const finalRule = round >= 10 ? finalAuctionRuleLocal(matchScores, 1) : null;
   const replayAllLast = !!(finalRule && sc[finalRule.bottomSeat] > 0 && matchScores[finalRule.bottomSeat] === matchScores[finalRule.fourthSeat]);
 
-  // ★ 修正①: bid tactic experience を made 確定後に push
   if (high.player >= 0 && winningBidTacticId) {
     bidTacticExperienceQueue.push({
       bidTacticId: winningBidTacticId,
@@ -889,6 +915,8 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     sp.maxThinkTimeMs = Math.min(sp.maxThinkTimeMs || 3000, 50);
     sp.mctsSimulations = Math.min(sp.mctsSimulations || 150, 50);
     sp.mctsNodeBudget = Math.min(sp.mctsNodeBudget || 5000, 500);
+    sp.oracleSamples = Math.min(sp.oracleSamples || 200, 12);
+    sp.oracleMctsTimeMs = Math.min(sp.oracleMctsTimeMs || 200, 25);
     sp.enableTacticEngine = true;
     return sp;
   };
@@ -944,13 +972,11 @@ export async function runSelfPlayBatch(env, matchCount = 5) {
     const matchBidHistory = [];
     const contracts = [];
 
-    // ★ 修正⑥: 通常10局
     for (let r = 1; r <= 10; r++) {
       const result = simRound(hands, r, matchScores, seatParams, matchBidHistory, env, generation, matchId, { isPlayoff: false, playoffCount: 0 });
       contracts.push(result);
     }
 
-    // ★ 修正⑥: round 10 で replayAllLast なら プレーオフループ
     let lastResult = contracts[contracts.length - 1];
     let playoffIter = 0;
     while (lastResult && lastResult.replayAllLast && playoffIter < PLAYOFF_MAX_ITERATIONS) {
