@@ -1,5 +1,5 @@
-// same-two.js — セイム2評価層（既存ファイル修正）
-// 既存ファイル修正: A切りリスク動的計算、切札2区別、味方ボイド対応
+// same-two.js — セイム2評価層（修正版）
+// 修正: ♠A除外、スート残存枚数連動の動的リスク計算、ボイド時の切札カットリスク考慮
 
 import { SUITS, RANKS, FACE } from './constants.js';
 
@@ -35,11 +35,11 @@ export function shouldAvoidACut(ctx, situation, params) {
   const p = params || {};
   const sit = situation || {};
 
-  // 1トリック目は完全無効化
+  // 1トリック目はセイム2無効
   if ((ctx?.trickNo ?? 0) === 0) return { avoid: false, reason: 'trick_no_0', risk: 0 };
 
   const aCutRisk = evaluateACutRisk(ctx, sit, p);
-  const threshold = p.aCutRiskThreshold ?? 0.65;  // ★ 0.65デフォルト
+  const threshold = p.aCutRiskThreshold ?? 0.65;
   const avoid = aCutRisk.score >= threshold;
 
   return {
@@ -80,11 +80,8 @@ export function generateSameTwoTactics(ctx, situation, params) {
 function generateQ1Tactics(ctx, sit, p) {
   const tactics = [];
   const trickNo = ctx?.trickNo ?? 0;
-  const contract = ctx?.contract;
 
-  // ★ 修正: sit.selfHasSameTwo で切札/サイドを区別
   const isTrump2 = sit.selfHasSameTwo === 'trump';
-  const isSide2 = sit.selfHasSameTwo === 'side';
 
   // Q1-0: 切札セイム2温存（切札2のみ）
   if (isTrump2) {
@@ -183,7 +180,7 @@ function generateQ3Tactics(ctx, sit, p) {
 
   // Q3-2: ボイド作成後にA切り
   if (sit.followFeasibility === 'impossible' || sit.followFeasibility === 'uncertain') {
-    tactics.push({ id: 'Q3-2', name: 'ボイド作成後にA切り', description: '敵がボイドしてからAを切る。セイム2不成立', score: 3.0, situation: 'void_then_ace' });
+    tactics.push({ id: 'Q3-2', name: 'ボイド作成後にA切り', description: '誰かがボイドしてからAを切る。セイム2不成立', score: 2.5, situation: 'void_then_ace' });
   }
 
   // Q3-3: 2先行処理
@@ -191,9 +188,9 @@ function generateQ3Tactics(ctx, sit, p) {
     tactics.push({ id: 'Q3-3', name: '2先行処理', description: '2をリードして敵に消費させる', score: 2.0, situation: 'two_consume' });
   }
 
-  // Q3-4: A温存（★ 修正: 新閾値で判定）
+  // Q3-4: A温存
   if (aCutRisk.score >= threshold) {
-    tactics.push({ id: 'Q3-4', name: 'A温存', description: '終盤までAを切らない。セイム2狩りリスク回避', score: 2.5 + aCutRisk.score, situation: 'ace_hold' });
+    tactics.push({ id: 'Q3-4', name: 'A温存', description: '安全確認までAを切らない。セイム2/カット狩りリスク回避', score: 2.5 + aCutRisk.score, situation: 'ace_hold' });
   }
 
   // Q3-5: セイム2持ちsuit回避
@@ -223,7 +220,7 @@ function generateQ4Tactics(ctx, sit, p) {
 }
 
 // ============================================================
-// 内部: セイム2攻撃力評価（Q1用、★ 切札2/サイド2区別）
+// 内部: セイム2攻撃力評価（Q1用）
 // ============================================================
 function evaluateSameTwoAttack(ctx, sit, p) {
   const hand = ctx?.hand || [];
@@ -233,7 +230,6 @@ function evaluateSameTwoAttack(ctx, sit, p) {
   if (trickNo === 0) return { score: 0, reason: 'trick_no_0' };
   if (!sit.selfHasSameTwo || sit.selfHasSameTwo === 'none') return { score: 0, reason: 'no_self_two' };
 
-  // ★ 修正: sit.selfHasSameTwo を直接参照
   const isTrump = sit.selfHasSameTwo === 'trump';
   const selfTwos = hand.filter(c => c.rank === '2');
   if (selfTwos.length === 0) return { score: 0, reason: 'no_self_two_hand' };
@@ -246,7 +242,13 @@ function evaluateSameTwoAttack(ctx, sit, p) {
     const trumpBonus = isThisTrump ? (p.sameTwoTrumpBonus ?? 1.5) : (p.sameTwoSideBonus ?? 1.0);
 
     const voidCount = countVoidsInSuit(ctx, suit);
-    const followProb = voidCount === 0 ? 0.9 : voidCount === 1 ? 0.6 : 0.2;
+    const playedInSuit = (ctx?.playedCards || []).filter(c => c.suit === suit).length;
+    const selfInSuit = hand.filter(c => c.suit === suit).length;
+    const remInSuit = Math.max(0, 13 - playedInSuit - selfInSuit);
+
+    // 誰かがボイド、またはそのスートの残り枚数が少なければ全員フォロー成功率は低い
+    let followProb = voidCount === 0 ? 0.9 : voidCount === 1 ? 0.4 : 0.1;
+    if (voidCount === 0 && remInSuit < 4) followProb *= 0.45;
 
     const enemyAcesInSuit = countEnemyAcesInSuit(ctx, suit);
     const pointCardsInSuit = countPointCardsInSuit(ctx, suit);
@@ -268,7 +270,7 @@ function evaluateSameTwoAttack(ctx, sit, p) {
 function evaluateSameTwoThreat(ctx, sit, p) {
   const played2 = countPlayedTwos(ctx);
   const hand2 = countSelfTwos(ctx);
-  const remainingTwos = 4 - played2 - hand2;
+  const remainingTwos = Math.max(0, 4 - played2 - hand2);
   if (remainingTwos <= 0) return { score: 0, reason: 'no_remaining_twos' };
 
   const enemyProb = Math.min(1.0, remainingTwos / 4);
@@ -284,8 +286,24 @@ function evaluateSameTwoThreat(ctx, sit, p) {
 }
 
 // ============================================================
-// ★ 修正: A切りリスク評価（動的確率計算）
+// ★ 修正: A切りリスク評価（♠A除外・残存連動・ボイド時カット考慮）
 // ============================================================
+function isKnownEnemySeat(targetSeat, mySeat, contract) {
+  if (!contract) return true;
+  if (targetSeat === mySeat) return false;
+  const myIsNapSide = mySeat === contract.nap || (!contract.solo && mySeat === contract.deputy);
+  if (myIsNapSide) {
+    if (targetSeat === contract.nap) return false;
+    if (!contract.solo && targetSeat === contract.deputy) return false;
+    return true;
+  } else {
+    if (targetSeat === contract.nap) return true;
+    if (contract.revealedCall && !contract.solo && targetSeat === contract.deputy) return true;
+    // 未公開時でも残り席の中に副官がいる可能性があるため敵側リスクあり
+    return !contract.revealedCall;
+  }
+}
+
 function evaluateACutRisk(ctx, sit, p) {
   const hand = ctx?.hand || [];
   const contract = ctx?.contract;
@@ -298,20 +316,24 @@ function evaluateACutRisk(ctx, sit, p) {
   if (trickNo === 0) return { score: 0, reason: 'trick_no_0', primaryReason: 'trick_no_0' };
   if (!contract) return { score: 0, reason: 'no_contract', primaryReason: 'no_contract' };
 
-  const selfAces = hand.filter(c => c.rank === 'A' && c.suit !== contract.suit);
+  // 切札Aと♠A（マイティ）はセイム2被弾対象外
+  const selfAces = hand.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== contract.suit);
   if (selfAces.length === 0) return { score: 0, reason: 'no_self_ace', primaryReason: 'no_self_ace' };
 
-  // ★ 修正: 役割に応じた敵手札数の動的計算
-  const isNapSide = seat === contract.nap || (!contract.solo && seat === contract.deputy);
-  let enemyHands;
-  if (isNapSide) {
-    // NAP側: 副官判明なら3、不明なら4（保守的）
-    enemyHands = (contract.revealedCall && !contract.solo) ? 3 : 4;
+  const isNT = contract.suit === 'NT';
+  const myIsNapSide = seat === contract.nap || (!contract.solo && seat === contract.deputy);
+
+  // 敵が特定の「2」を保有している確率
+  let enemyShare;
+  if (myIsNapSide) {
+    enemyShare = contract.solo ? 1.0 : 0.75;
   } else {
-    // 連合軍側: NAP + 副官 = 2
-    enemyHands = 2;
+    enemyShare = 0.55;
   }
-  const enemy2Prob = enemyHands / 4;
+
+  const playedTrumps = isNT ? 0 : playedCards.filter(c => c.suit === contract.suit).length;
+  const selfTrumps = isNT ? 0 : hand.filter(c => c.suit === contract.suit).length;
+  const enemyTrumpsRemain = isNT ? 0 : Math.max(0, 13 - playedTrumps - selfTrumps);
 
   const details = [];
   let maxRisk = 0;
@@ -320,38 +342,62 @@ function evaluateACutRisk(ctx, sit, p) {
   for (const ace of selfAces) {
     const suit = ace.suit;
     const twoId = suit + '2';
-    const isTrump2 = contract.suit === suit && contract.suit !== 'NT';
 
-    // 2が既に場/捨て札にある
+    // 誰かがそのスートでボイドならセイム2自体は不成立。
+    // ただし切札契約で敵（または未知席）がボイドかつ敵に切札が残っていれば「切札カットリスク」がある。
+    let anyVoidInSuit = 0;
+    let enemyVoidInSuit = 0;
+    for (let s = 0; s < 5; s++) {
+      if (s === seat) continue;
+      if (voids[s] && voids[s][suit]) {
+        anyVoidInSuit++;
+        if (isKnownEnemySeat(s, seat, contract)) enemyVoidInSuit++;
+      }
+    }
+
+    if (anyVoidInSuit > 0) {
+      if (!isNT && enemyVoidInSuit > 0 && enemyTrumpsRemain > 0) {
+        const trumpCutRisk = Math.min(0.95, 0.70 + 0.1 * enemyVoidInSuit);
+        details.push({ suit, risk: trumpCutRisk, reason: 'enemy_void_trump_cut' });
+        if (trumpCutRisk > maxRisk) {
+          maxRisk = trumpCutRisk;
+          primaryReason = 'trump_cut_in_' + suit;
+        }
+      } else {
+        details.push({ suit, risk: 0, reason: 'safe_void_breaks_same_two' });
+      }
+      continue;
+    }
+
+    // 2が既に場・捨て札・自分の手札にあるならセイム2は飛んでこない
     if (playedCards.some(c => c.id === twoId) || discardedKitty.some(c => c.id === twoId)) {
       details.push({ suit, risk: 0, reason: 'two_played' });
       continue;
     }
-    // 2が自分の手札にある
     if (hand.some(c => c.id === twoId)) {
       details.push({ suit, risk: 0, reason: 'two_in_self' });
       continue;
     }
-    // ★ 修正: 誰か（味方含む）がボイド → セイム2不成立
-    let anyVoidInSuit = 0;
-    for (let s = 0; s < 5; s++) {
-      if (s === seat) continue;
-      if (voids[s] && voids[s][suit]) anyVoidInSuit++;
-    }
-    if (anyVoidInSuit > 0) {
-      details.push({ suit, risk: 0, reason: 'any_void_breaks_same_two' });
-      continue;
-    }
 
-    // ★ 修正: 動的リスク計算
+    // そのスートの残り枚数に応じた全員フォロー成立見込み
+    const playedInSuit = playedCards.filter(c => c.suit === suit).length;
+    const discardedInSuit = discardedKitty.filter(c => c.suit === suit).length;
+    const selfInSuit = hand.filter(c => c.suit === suit).length;
+    const remInSuit = Math.max(0, 13 - playedInSuit - discardedInSuit - selfInSuit);
+
+    // 残り枚数が少ないほど誰かが欠けている（＝セイム2不成立）確率が高い
+    const followAllProb = remInSuit >= 8 ? 0.95
+                        : remInSuit >= 6 ? 0.85
+                        : remInSuit >= 4 ? 0.65
+                        : 0.35;
+
     const riskWeight = p.sameTwoRiskWeight ?? 1.0;
-    const trumpBonus = isTrump2 ? (p.sameTwoTrumpBonus ?? 1.5) : 1.0;
-    const risk = riskWeight * enemy2Prob * trumpBonus;
+    const risk = riskWeight * enemyShare * followAllProb;
 
-    details.push({ suit, risk, enemy2Prob, isTrump2, reason: isTrump2 ? 'trump_two_threat' : 'side_two_threat' });
+    details.push({ suit, risk, enemyShare, followAllProb, remInSuit, reason: 'side_two_threat' });
     if (risk > maxRisk) {
       maxRisk = risk;
-      primaryReason = isTrump2 ? 'trump_two_in_' + suit : 'side_two_in_' + suit;
+      primaryReason = 'side_two_in_' + suit;
     }
   }
 
@@ -396,7 +442,7 @@ function countSelfAces(ctx) {
   const contract = ctx?.contract;
   const hand = ctx?.hand || [];
   if (!contract) return 0;
-  return hand.filter(c => c.rank === 'A' && c.suit !== contract.suit).length;
+  return hand.filter(c => c.rank === 'A' && c.id !== '♠A' && c.suit !== contract.suit).length;
 }
 
 function countSelfTwos(ctx) {
@@ -463,7 +509,6 @@ function countPointCardsInSuit(ctx, suit) {
   return count;
 }
 
-// ★ 修正: 危険suit検出で切札2を優先
 function detectDangerSuits(ctx, sit) {
   const contract = ctx?.contract;
   if (!contract) return [];
@@ -480,11 +525,10 @@ function detectDangerSuits(ctx, sit) {
     if (!hand.some(c => c.id === aceId)) continue;
     const twoId = suit + '2';
     if (played.some(c => c.id === twoId) || discarded.some(c => c.id === twoId)) continue;
-    if (hand.some(c => c.id === twoId)) continue;  // 自分の2は安全
+    if (hand.some(c => c.id === twoId)) continue;
     danger.push(suit);
   }
 
-  // 切札2が残存する場合、切札suitも危険
   if (contract.suit !== 'NT') {
     const trumpTwoId = contract.suit + '2';
     const twoPlayed = played.some(c => c.id === trumpTwoId) || discarded.some(c => c.id === trumpTwoId);
